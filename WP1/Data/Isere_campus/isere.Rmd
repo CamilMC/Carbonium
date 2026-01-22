@@ -1,0 +1,592 @@
+---
+title: "isere"
+output: html_document
+date: "2025-06-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+
+library(ggplot2)
+library(ggpubr)
+
+library(dplyr)
+library(readxl)
+library(lubridate)
+
+```
+
+
+# Isère Campus
+
+Les données dont on dispose pour la station de mesures d'Isère - campus sont: 
+
+* débits horaires de 2005 à 2025
+* CMES de 2006 à 2025
+* POC mesuré (et non calculé): 
+    - Carbonisère: suivi hebdo de 2006 à 2008 + crue du 19 mai 2006  + chasse du 27/06/2006 + crue du 30/08/2006 + chasse du 5/06/2006
+    - crues du 19/08/2022 (lave torrentielle) et chasse du 22/06/2022
+    - suivi hebdo Carbonium (pas encore disponible)
+* DOC: 
+  - Carbonisère: suivi hebdo de 2006 à 2008 + crue du 19 mai 2006  + chasse du 27/06/2006 + crue du 30/08/2006 + chasse du 5/06/2006
+  - suivi hebdo Carbonium (pas encore dispo)
+
+
+
+```{r data}
+
+# Crues
+carbonisere <- read_xlsx("Bilan carbonisère.xlsx")
+
+
+crues_2022 <- read_xlsx(path = "Crues_Isère_2022.xlsx", sheet = "test_match") 
+crues_2022$mes_mg.L <- NA
+crues_2022$debit_m3.s <- NA
+crues_2022$doc_mg.L <- NA
+
+doc_isere_2011 <- read_excel("doc_isere_2011-2012.xls")
+doc_isere_2011$name <- "DOC 2011"
+doc_isere_2011$poc_percent <- NA
+doc_isere_2011$mes_mg.L <- doc_isere_2011$mes_g.L * 1e3
+
+poc_isere_2011 <- read_excel("poc_isere_2011-2012.xls")
+poc_isere_2011$doc_mg.L <- NA
+poc_isere_2011$name <- "POC 2011"
+poc_isere_2011$mes_mg.L <- poc_isere_2011$mes_g.L * 1e3
+
+crues <- rbind(select(carbonisere, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent", "doc_mg.L")),select(crues_2022, c("DateHeure","name","debit_m3.s", "mes_mg.L","poc_percent", "doc_mg.L"))) %>%
+  rbind(select(doc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent", "doc_mg.L"))) %>% rbind(select(poc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent", "doc_mg.L")))
+
+# Chroniques BDOH
+cmes <- readxl::read_xlsx(path = "isere.xlsx", sheet = "cmes", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+debit <- readxl::read_xlsx(path = "isere.xlsx", sheet = "debit", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+  
+#crues <- crues %>% group_by(Crue) %>% mutate(period = as.numeric(-(Date - lead(Date)))) # period in hours
+
+
+isere <- merge(debit, cmes, by="DateHeure") %>% merge(crues, by = "DateHeure", all = T) 
+isere$year <- year(isere$DateHeure)
+isere$commondate <- as.Date(paste0("2000-", format(isere$Date,"%j")), "%Y-%j")
+
+```
+
+```{r annual-doc-poc, fig.dim = c(10, 10)}
+
+ggarrange(
+ggplot(isere, aes(x = commondate)) + 
+  geom_point(aes(y = q_m3.s), col = "lightblue") +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "Q, m3/s") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ggplot(isere, aes(x = commondate)) + 
+  geom_point(aes(y = cmes_g.L), col = "palegreen4") +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "CMES, g/L") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ncol = 2
+)
+
+
+
+```
+```{r annual, fig.dim = c(10, 5)}
+
+ggarrange(
+
+ggplot(subset(isere, !is.na(doc_mg.L)), aes(x = commondate)) + 
+  geom_point(aes(y = doc_mg.L), col = "orange") +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "DOC, mg/L") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ggplot(subset(isere, !is.na(poc_percent)), aes(x = commondate)) + 
+  geom_point(aes(y = poc_percent), col = "darkred") +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "POC, %") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ncol = 2
+)
+
+
+
+```
+
+```{r compare-cmes-and-mes}
+ggplot(isere)+
+  geom_point(aes(x=cmes_g.L, y = mes_mg.L, col = name))+
+  geom_abline(slope = 1000, intercept = 0)+
+  scale_colour_viridis_d()+
+  theme_minimal()
+```
+
+
+## Carbonisere
+
+```{r view-fluxes}
+
+ggplot(carbonisere)+
+  geom_point(aes(x=as.Date(DateHeure), y = debit_m3.s), col = "cadetblue4")+
+  geom_abline(slope = 0, intercept = mean(carbonisere$debit_m3.s, na.rm = T), col = "darkred")+
+ annotate(geom = "label", label = round(mean(carbonisere$debit_m3.s, na.rm = T), 2), x= as.Date("2008-01-01"), y = 250)+
+   scale_x_date(labels = function(x) format(x, "%d-%b-%y"), date_breaks = "1 year", date_minor_breaks = "1 month",name = "", limits = c(as.Date("2006-01-01"), as.Date("2008-03-31")))+ 
+  labs(y = "Débit, m3/s")+
+  theme_minimal(base_size = 15)
+
+isere678 <- subset(isere, year == c(2006,2007,2008))
+
+ggplot(isere678)+
+  geom_point(aes(x=as.Date(DateHeure), y = q_m3.s), col = "cadetblue4", size = 1)+
+  geom_abline(slope = 0, intercept = mean(isere678$q_m3.s, na.rm = T), col = "darkred")+
+ annotate(geom = "label", label = round(mean(isere678$q_m3.s, na.rm = T), 2), x= as.Date("2006-01-01"), y = 200)+
+   scale_x_date(labels = function(x) format(x, "%d-%b-%y"), date_breaks = "1 year", date_minor_breaks = "1 month",name = "", limits = c(as.Date("2006-01-01"), as.Date("2008-03-31")))+ 
+  labs(y = "Débit, m3/s")+
+  theme_minimal(base_size = 15)
+
+ggplot(carbonisere)+
+  geom_point(aes(x=as.Date(DateHeure), y = doc_mg.L), col = "darkolivegreen4")+
+  geom_abline(slope = 0, intercept = mean(carbonisere$doc_mg.L, na.rm = T), col = "darkred")+
+ annotate(geom = "label", label = round(mean(carbonisere$doc_mg.L, na.rm = T), 2), x= as.Date("2008-01-01"), y = 3)+
+   scale_x_date(labels = function(x) format(x, "%d-%b-%y"), date_breaks = "1 year", date_minor_breaks = "1 month",name = "", limits = c(as.Date("2006-01-01"), as.Date("2008-03-31")))+ 
+  labs(y = "Carbone Organique Dissous, mg/L")+
+  theme_minimal(base_size = 15)
+
+
+ggplot(carbonisere)+
+  geom_point(aes(x=as.Date(DateHeure), y = poc_percent*mes_mg.L), col = "darkolivegreen4")+
+ #  geom_abline(slope = 0, intercept = mean(carbonisere$poc_percent * carbonisere$mes_mg.L, na.rm = T), col = "darkred")+
+ # annotate(geom = "label", label = round(mean(carbonisere$poc_percent * carbonisere$mes_mg.L, na.rm = T), 2), x= as.Date("2008-01-01"), y = 3)+
+   scale_x_date(labels = function(x) format(x, "%d-%b-%y"), date_breaks = "1 year", date_minor_breaks = "1 month",name = "", limits = c(as.Date("2006-01-01"), as.Date("2008-03-31")))+ 
+  labs(y = "Carbone Organique Particulaire, mg/L")+
+  theme_minimal(base_size = 15)
+
+```
+
+
+
+
+# Method - which relation MES-POC to choose?
+Is there a difference between fitting a POC-MES relation when it is event-specific or when we use all values?
+
+```{r fit-cmes-poc}
+
+ggplot(subset(isere, !is.na(poc_percent)))+
+  geom_point(aes(x = cmes_g.L, y = poc_percent, col = name))+
+  scale_colour_viridis_d()+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+fit_mes_poc <- lm(data = isere, log(poc_percent)~log(cmes_g.L))
+summary(fit_mes_poc)
+
+isere$poc_percent_fit <- predict(fit_mes_poc, newdata = isere) %>% exp()
+isere$poc_percent_fit_se <- predict(fit_mes_poc, newdata = isere, se.fit = T)$se.fit %>% exp()
+
+rmse <- sqrt(mean((isere$poc_percent - isere$poc_percent_fit)^2, na.rm = T))
+
+ggarrange(
+ggplot(subset(isere, !is.na(poc_percent)), aes(x = cmes_g.L))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
+  scale_color_manual(values = c("lightblue" ,"orange"))+
+  labs(title = "only floods", subtitle = paste("RMSE", round(rmse,2), sep = " = "))+
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ggplot(isere, aes(x = cmes_g.L))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
+  scale_color_manual(values = c("lightblue", "orange"))+
+  labs(title = "All cmes")+
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+ncol = 2
+)
+
+```
+
+```{r fit-mes-poc}
+
+ggplot(subset(isere, !is.na(poc_percent)))+
+  geom_point(aes(x = mes_mg.L, y = poc_percent, col = name))+
+  scale_colour_viridis_d()+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+fit_mes_poc <- lm(data = subset(isere, !is.na(mes_mg.L) & poc_percent > 0), log(poc_percent)~log(mes_mg.L))
+summary(fit_mes_poc)
+
+isere$poc_percent_fit <- predict(fit_mes_poc, newdata = isere) %>% exp()
+isere$poc_percent_fit_se <- predict(fit_mes_poc, newdata = isere, se.fit = T)$se.fit %>% exp()
+
+rmse <- sqrt(mean((isere$poc_percent - isere$poc_percent_fit)^2, na.rm = T))
+
+ggarrange(
+ggplot(subset(isere, !is.na(poc_percent)), aes(x = cmes_g.L))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
+  scale_color_manual(values = c("lightblue" ,"orange"))+
+  labs(title = "only floods", subtitle = paste("RMSE", round(rmse,2), sep = " = "))+
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ggplot(isere, aes(x = cmes_g.L))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
+  scale_color_manual(values = c("lightblue", "orange"))+
+  labs(title = "All cmes")+
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+ncol = 2
+)
+
+```
+
+```{r fit-by-event, eval = F}
+name_crues <- subset(isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
+
+for(i in name_crues){
+  df <- isere
+  dfi <- subset(isere, name == i &!is.na(poc_percent))
+  fiti <- lm(data = dfi, log(poc_percent)~log(cmes_g.L))
+  
+  rmse <- sqrt(mean((dfi$poc_percent - dfi$poc_percent_fit)^2, na.rm = T))
+  
+  df$poc_percent_fiti <- predict(fiti, newdata = df) %>% exp()
+  df$poc_percent_fiti_se <- predict(fiti, newdata = df, se.fit = T)$se.fit %>% exp()
+  
+  g1 <- ggplot(subset(df, name ==i), aes(x = cmes_g.L))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fiti, col = "fitted only with event"))+
+  geom_point(aes(y = poc_percent_fit, col = "fitted with all events"))+
+  labs(title = i, subtitle = paste("RMSE fit", round(rmse,2), sep = " = "))+
+  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+  
+  g2 <- ggplot(df, aes(x = cmes_g.L))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fiti, col = "fitted"))+
+  labs(title = i, subtitle = paste("RMSE",  round(sqrt(mean((df$poc_percent - df$poc_percent_fit)^2, na.rm = T)),2), sep = " = "))+
+  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+  
+  print(ggarrange(g1,g2,ncol = 2, common.legend = T, legend = "bottom"))
+}
+
+# should I leave out the data on which the model is fitted?
+
+```
+
+```{r leave-one-out-event-to-fit-the-last, fig.dim = c(10, 5)}
+name_crues <- subset(isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
+
+for(i in name_crues){
+  df <- isere
+  dfi <- subset(isere, name != i &!is.na(poc_percent))
+  fiti <- lm(data = dfi, log(poc_percent)~log(cmes_g.L))
+  
+  df$poc_percent_fiti <- predict(fiti, newdata = df) %>% exp()
+  df$poc_percent_fiti_se <- predict(fiti, newdata = df, se.fit = T)$se.fit %>% exp()
+  
+  g1 <- ggplot(subset(df, name ==i), aes(x = cmes_g.L))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fiti, col = "fitted without this event"))+
+  geom_point(aes(y = poc_percent_fit, col = "fitted with all events"))+
+  #labs(title = i, subtitle = paste("RMSE fit", round(rmse,2), sep = " = "))+
+  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
+  theme_minimal(base_size = 12)+
+  theme(legend.position = "bottom")
+  
+  g2 <- ggplot(df, aes(x = cmes_g.L))+
+  geom_ribbon(aes(ymin = poc_percent_fiti - poc_percent_fiti_se, ymax = poc_percent_fiti + poc_percent_fiti_se), fill = "grey80", alpha = 0.5)+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fiti, col = "fitted with all but one event"))+
+  #geom_errorbar(aes(ymin = poc_percent_fiti - poc_percent_fiti_se, ymax = poc_percent_fiti + poc_percent_fiti_se))+
+  labs(title = i, subtitle = paste("RMSE",  round(sqrt(mean((df$poc_percent - df$poc_percent_fit)^2, na.rm = T)),2), sep = " = "), x = MES, mg/L)+
+  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
+  theme_minimal(base_size = 10)+
+  theme(legend.position = "bottom")
+  
+  print(ggarrange(g1,g2,ncol = 2, common.legend = T, legend = "bottom"))
+}
+
+```
+
+```{r fit-poc-mes-forcing-end-value}
+poc_isere <- isere %>% subset(!is.na(poc_percent))
+dim(poc_isere)
+hist(poc_isere$poc_percent)
+poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% plot()
+#mygoal: reproduce up in ggplot to see events
+
+
+rank <- order(poc_isere$cmes_g.L, decreasing = T) 
+poc_isere[rank, ]
+
+
+poc_isere$rank_cmes <- rank
+
+ggplot(poc_isere)+geom_point(aes(x = rank_cmes, y = poc_percent, col = name))+scale_color_viridis_d()+theme_minimal()
+ggplot(poc_isere)+geom_point(aes(x = rank_cmes, y = cmes_g.L, col = name))+scale_color_viridis_d()+theme_minimal()
+
+ggplot(isere)+geom_point(aes(x = cmes_g.L, y = poc_percent, col =name))+
+  scale_x_continuous(transform = "log") + scale_y_continuous(transform = "log") 
+```
+
+
+```{r exit}
+knitr::knit_exit()
+```
+
+
+
+# Archives
+
+```{r yearly-fluxes, eval = F}
+crues$year <- year(crues$Date) %>% as.character()
+
+crues$poc_mg.L <- with(crues, MES_mg.L*COP_percent) # CMES converted from mg/L to kg/L, POC obtained in g is converted to mg
+crues$fpoc_kg.h <- with(crues, debit_m3.s * 1e3 * poc_mg.L * 3600 * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s and converted to kg/h
+
+yearly_fluxes <- crues %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.h*period, na.rm = T), 
+                              percent_poc_included = sum(!is.na(fpoc_kg.h))/n()*100,
+                              nb_days_sampled = length(unique(Date)),
+                              nb_days_sampled_poc = length(unique(Date[!is.na(fpoc_kg.h)])),
+                              sum_discharge.year = sum(debit_m3.s, na.rm = T),  # faut-il inclure les débits correspondants à des heures où le POC n'est pas mesuré?
+                              mean_discharge.year = mean(debit_m3.s, na.rm = T), 
+                              sd_discharge.year = sd(debit_m3.s, na.rm = T),
+                              sum_discharge_poc = sum(debit_m3.s[!is.na(fpoc_kg.h)], na.rm = T),
+                              mean_discharge_poc = mean(debit_m3.s[!is.na(fpoc_kg.h)], na.rm = T),
+                              average_fpoc = mean(fpoc_kg.h, na.rm = T)) 
+# discharge is converted from m3/s to L/h before being summed, as in the formula for fpoc
+
+bv <- 5570
+  
+# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$fpoc_kg.year.km2 <- yearly_fluxes$fpoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+yearly_fluxes$fpoc_ww_kg.year.km2 <- with(yearly_fluxes, fpoc_kg.year/sum_discharge.year*mean_discharge.year) * 24 * 365 / bv
+
+yearly_fluxes$fpoc_wwpoc_kg.year.km2 <- with(yearly_fluxes, fpoc_kg.year/sum_discharge_poc*mean_discharge_poc) * 24 * 365 / bv
+
+# fluxes only average
+yearly_fluxes$fpoc_average_kg.y.km2 <- yearly_fluxes$average_fpoc *24*365 / bv
+
+```
+
+```{r figures-flux, eval = F} 
+yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable() %>% kableExtra::kable_styling()
+```
+
+```{r test-2006, eval = F}
+t2006 <- crues %>% subset(year == 2006)
+t2006
+
+sum(t2006$fpoc_kg.h)
+```
+
+
+```{r compare-fluxes, eval = F}
+yearly_fluxes$label <- paste(round(yearly_fluxes$nb_days_sampled,2), "days q\n", round(yearly_fluxes$nb_days_sampled_poc,2), " days poc")
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 500, label.size = 0.1)+
+  #scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  #scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+```{r yf, eval = F}
+yf <- yearly_fluxes %>% subset(nb_days_sampled_poc > 10)
+
+yf %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable() %>% kableExtra::kable_styling()
+```
+
+```{r compare-fluxes-nona, eval = F}
+yf$label <- paste(round(yf$nb_days_sampled,2), "days q\n", round(yf$nb_days_sampled_poc,2), " days poc")
+ggplot(yf, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 15000, size = 3)+
+ # scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom", text = element_text(size = 10))
+```
+
+```{r interrannual-fluxes, eval = F}
+
+mixedfluxes_mean <- with(yf, ifelse(nb_days_sampled_poc < 200, fpoc_ww_kg.year.km2, fpoc_kg.year.km2)) %>% mean()
+mixedfluxes_sd <- with(yf, ifelse(nb_days_sampled_poc < 200, fpoc_ww_kg.year.km2, fpoc_kg.year.km2)) %>% sd()
+
+means <- data.frame(
+  "Mean FPOC sum, kg/year/m2" = mean(yf$fpoc_kg.year.km2),
+  "Sd FPOC sum" = sd(yf$fpoc_kg.year.km2),
+  "Mean FPOC weighted, kg/m2/year" = mean(yf$fpoc_ww_kg.year.km2, na.rm = T),
+  "Sd FPOC weighted" = sd(yf$fpoc_ww_kg.year.km2, na.rm = T),
+  "Mean FPOC mixed" = mixedfluxes_mean,
+  "Sd FPOC mixed" = mixedfluxes_sd
+)
+
+knitr::kable(t(means), digits = 3) %>% kableExtra::kable_styling()
+```
+
+
+
+
+
+
+See the Isere file is OSR
+
+# Isère - Beaumont
+
+```{r data-beaumont, eval = F}
+cmes <- read_xlsx("OSR/isere.xlsx", sheet = "CMES", col_types = c("date","numeric","text")) 
+poc <- read_xlsx("OSR/isere.xlsx", sheet = "COP") %>% subset(Qualite = "v") 
+debit <- read_xlsx("OSR/isere.xlsx", sheet = "Debit", col_types = c("date", "numeric","text","text","text","text"))
+
+poc$poc_timeinterval <- poc$Debut %--% poc$Fin
+```
+
+```{r plot-data, eval = F}
+ggpubr::ggarrange(
+ggplot(poc)+geom_point(aes(x= Debut, y = COP_g.kg)) + labs(x="Date", y = "POC, g(C)/kg(MES)"),
+ggplot(cmes)+geom_line(aes(x= DateHeure, y = cmes_mg.L)) + labs(x="Date", y = "MES, mg/L"),
+ggplot(debit)+geom_line(aes(x= DateHeure, y = q_m3.s)) + labs(x="Date", y = "Discharge, m3/s"),
+nrow = 3
+)
+```
+```{r missing-dates-debit, eval = F}
+
+dates_debit <- debit %>% tidyr::complete(DateHeure = seq(min(DateHeure), max(DateHeure), by = "1 hour"))
+percent_missing <- (dim(dates_debit)[1] - dim(debit)[1])/dim(dates_debit)[1] * 100 
+
+print(paste("Percent missing : ",round(percent_missing, 2), "%"))
+
+```
+```{r merge-poc-mes, eval = F}
+
+na_interval <- poc$Fin[86] %--% poc$Debut[1]  %>% as.character()
+
+# poc$poc_timeinterval[debit$DateHeure[100] >= poc$Debut & debit$DateHeure[100] <= poc$Fin]
+
+debit_timeinterval <- sapply(debit$DateHeure, FUN = function (x){as.character(poc$poc_timeinterval[x >= poc$Debut & x <= poc$Fin]), eval = F}, simplify = T)
+na_timeinterval <- which(lengths(debit_timeinterval) == 0)
+debit_timeinterval[na_timeinterval] <- na_interval
+
+debit$poc_timeinterval <- do.call(c, (debit_timeinterval))
+
+```
+
+```{r join-cmes-poc-debit, eval = F}
+
+isere <- merge(debit, poc, by = "poc_timeinterval", all = T) %>% merge(cmes, by = "DateHeure", all = T)
+
+
+library(imputeTS)
+isere$cmes_interpol <- na_interpolation(isere$cmes_mg.L, maxgap = 24) # impossible to interpol
+
+```
+
+```{r plot-data-2, eval = F}
+isere$year <- year(isere$DateHeure)
+isere$commondate <- as.Date(paste0("2000-", format(isere$DateHeure,"%j")), "%Y-%j")
+isere$commondebut <- as.Date(paste0("2000-", format(isere$Debut,"%j")), "%Y-%j")
+isere$commonfin <- as.Date(paste0("2000-", format(isere$Fin,"%j")), "%Y-%j")
+
+for(i in unique(isere$year)){
+g <- ggplot(data = filter(isere, year == i))+ 
+  geom_point(aes(x=DateHeure, y= cmes_mg.L, col="MES, g/L"), alpha = 0.5, size = 0.5) +
+  geom_segment(aes(x=Debut, xend = Fin, y = COP_g.kg*50, yend = COP_g.kg*50), col = "lightblue", size = 1)+
+  geom_segment(aes(x=Debut, xend = Debut, y = 0, yend = COP_g.kg*50), col = "lightblue", alpha = 0.5, size = 0.1)+
+  geom_segment(aes(x=Fin, xend = Fin, y = 0, yend = COP_g.kg), col = "lightblue", alpha = 0.5, size = 0.1)+
+  scale_color_manual(values = "palegreen4")+
+  #scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  scale_y_continuous( name = "MES, mg/L", sec.axis = sec_axis(~./50, name = "POC, g/kg"))+
+  labs(title = i, x = "")+
+  theme_minimal()+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+  
+  print(g)
+, eval = F}
+
+```
+
+
+```{r calcul-flux, eval = F} 
+isere_complete <- isere %>% subset(!is.na(q_m3.s))
+bv <-  11800  # taille du bassin versant en km2, de Justin
+
+
+isere_complete$fpoc_kg.h <- with(isere_complete, q_m3.s * 1e3 *3600 * cmes_interpol*1e-6 * COP_g.kg * 1e-3 ) # discharge converted from m3/s to L/h; CMES converted from mg/L to kg/L, POC is obtained in g/L/h and converted to kg/L/h
+
+ggplot()+ 
+  geom_point(data = subset(isere_complete, !is.na(cmes_mg.L)),aes(x=DateHeure, y= fpoc_kg.h,col="cmes mg/L"), alpha = 0.5, size = 0.5) +
+  scale_color_manual(values = "palegreen4")+
+  scale_y_continuous(transform = "log10")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+yearly_fluxes <- isere_complete %>% group_by(year) %>% summarise(fpoc_kg.year = sum(fpoc_kg.h, na.rm = T), percent_of_year_included = sum(!is.na(fpoc_kg.h))/n()*100, sum_discharge_L.year = sum(q_m3.s * 1e3 * 3600), mean_discharge_L.year = mean(q_m3.s * 1e3 * 3600, na.rm = T), sd_discharge_L.year = sd(q_m3.s * 1e3 * 3600, na.rm = T)) 
+# discharge is converted from m3/s to L/h before being summed, as in the formula for fpoc
+
+# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$fpoc_kg.year.km2 <- yearly_fluxes$fpoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+yearly_fluxes$fpoc_ww <- with(yearly_fluxes, fpoc_kg.year/sum_discharge_L.year*mean_discharge_L.year) / bv
+
+ggpubr::ggarrange(
+ggplot(yearly_fluxes)+
+  geom_point(aes(x=mean_discharge_L.year, y = sum_discharge_L.year, size = sd_discharge_L.year)) + 
+  geom_text(aes(x=mean_discharge_L.year, y = sum_discharge_L.year , label = year), col = "firebrick"),
+ggplot(yearly_fluxes)+
+  geom_point(aes(y=fpoc_kg.year, x = sum_discharge_L.year, size = sd_discharge_L.year)) + 
+  geom_text(aes(y=fpoc_kg.year, x = sum_discharge_L.year , label = year), col = "firebrick"),
+ncol = 2, common.legend = T, legend = "bottom")
+
+yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable()
+
+ggplot(yearly_fluxes)+
+  geom_line(aes(x=year, y = fpoc_kg.year.km2, col = "FPOC as sum"))+
+  geom_line(aes(x=year, y = fpoc_ww*1e4, col = "FPOC weighted"))+
+  scale_y_continuous( name = "FPOC summed, kg/yearKkm2", sec.axis = sec_axis(~.*1e-4, name = "FPOC weighted, kg/year/km2"))+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  
+  theme_minimal()
+```
