@@ -1,12 +1,14 @@
 ---
 title: "isere"
-output: html_document
+output: 
+  html_document:
+    code_folding: hide
 date: "2025-06-30"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 ```{r libraries}
@@ -18,6 +20,7 @@ library(dplyr)
 library(readxl)
 library(lubridate)
 
+library(bayesbio)
 ```
 
 
@@ -73,13 +76,16 @@ isere <- merge(debit, cmes, by="DateHeure") %>% merge(crues, by = "DateHeure", a
 isere$year <- year(isere$DateHeure)
 isere$commondate <- as.Date(paste0("2000-", format(isere$Date,"%j")), "%Y-%j")
 
+isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()) %>% knitr::kable()
+isere %>% subset(!is.na(cmes_g.L) & !is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_cmes = n()) %>% knitr::kable()
+
 ```
 
 ```{r annual-doc-poc, fig.dim = c(10, 10)}
 
 ggarrange(
 ggplot(isere, aes(x = commondate)) + 
-  geom_point(aes(y = q_m3.s), col = "lightblue") +
+  geom_point(aes(y = q_m3.s), col = "lightblue", size = 0.5) +
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   facet_grid(rows = vars(year))+
   labs(x = "", y = "Q, m3/s") +
@@ -87,7 +93,7 @@ ggplot(isere, aes(x = commondate)) +
   theme(legend.position = "bottom"),
 
 ggplot(isere, aes(x = commondate)) + 
-  geom_point(aes(y = cmes_g.L), col = "palegreen4") +
+  geom_point(aes(y = cmes_g.L), col = "palegreen4", size = 0.5) +
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   facet_grid(rows = vars(year))+
   labs(x = "", y = "CMES, g/L") +
@@ -97,9 +103,8 @@ ggplot(isere, aes(x = commondate)) +
 ncol = 2
 )
 
-
-
 ```
+
 ```{r annual, fig.dim = c(10, 5)}
 
 ggarrange(
@@ -133,6 +138,20 @@ ggplot(isere)+
   geom_abline(slope = 1000, intercept = 0)+
   scale_colour_viridis_d()+
   theme_minimal()
+
+ggarrange(
+  ggplot(isere)+
+    geom_point(aes(x = mes_mg.L, y = poc_percent, col = name))+
+    scale_color_viridis_d()+
+    scale_x_continuous(trans = "log")+scale_y_continuous(trans = "log")+
+    theme_minimal(),
+  ggplot(isere)+
+    geom_point(aes(x = cmes_g.L, y = poc_percent, col = name))+
+        scale_color_viridis_d()+
+      scale_x_continuous(trans = "log")+scale_y_continuous(trans = "log")+
+    theme_minimal(),
+  ncol = 2, common.legend = T, legend = "bottom"
+)
 ```
 
 
@@ -319,12 +338,18 @@ for(i in name_crues){
   geom_point(aes(y = poc_percent, col = "measured"))+
   geom_point(aes(y = poc_percent_fiti, col = "fitted with all but one event"))+
   #geom_errorbar(aes(ymin = poc_percent_fiti - poc_percent_fiti_se, ymax = poc_percent_fiti + poc_percent_fiti_se))+
-  labs(title = i, subtitle = paste("RMSE",  round(sqrt(mean((df$poc_percent - df$poc_percent_fit)^2, na.rm = T)),2), sep = " = "), x = MES, mg/L)+
+  labs(title = i, subtitle = paste("RMSE",  round(sqrt(mean((df$poc_percent - df$poc_percent_fit)^2, na.rm = T)),2), sep = " = "), x = "MES, mg/L")+
   scale_color_manual(values = c("palegreen4","lightblue","orange"))+
   theme_minimal(base_size = 10)+
   theme(legend.position = "bottom")
   
   print(ggarrange(g1,g2,ncol = 2, common.legend = T, legend = "bottom"))
+  
+  #compute sum poc pour 2015
+  # 
+  # df2015 <- subset(df, year == 2015 & !is.na(q_m3.s))
+  # sum_
+  
 }
 
 ```
@@ -336,18 +361,30 @@ hist(poc_isere$poc_percent)
 poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% plot()
 #mygoal: reproduce up in ggplot to see events
 
-
-rank <- order(poc_isere$cmes_g.L, decreasing = T) 
-poc_isere[rank, ]
-
-
-poc_isere$rank_cmes <- rank
-
-ggplot(poc_isere)+geom_point(aes(x = rank_cmes, y = poc_percent, col = name))+scale_color_viridis_d()+theme_minimal()
-ggplot(poc_isere)+geom_point(aes(x = rank_cmes, y = cmes_g.L, col = name))+scale_color_viridis_d()+theme_minimal()
+tail_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
 
 ggplot(isere)+geom_point(aes(x = cmes_g.L, y = poc_percent, col =name))+
   scale_x_continuous(transform = "log") + scale_y_continuous(transform = "log") 
+
+ggplot(poc_isere)+geom_point(aes(x = cmes_g.L, y = poc_percent, col = name))+
+  geom_abline(slope = 0, intercept = tail_value, col = "darkred")
+
+poc_isere$mes_mg.L[which(is.na(poc_isere$mes_mg.L))] <- poc_isere$cmes_g.L[which(is.na(poc_isere$mes_mg.L))]*1e3
+poc_isere$tail <- tail_value
+
+ggplot(poc_isere)+geom_point(aes(x=mes_mg.L, y = poc_percent))+ geom_abline(slope = 0, intercept = tail_value, col = "darkred")
+
+poc_isere$poc_hand_fitted <- with(poc_isere, mes_mg.L^-0.25+0.99)
+ggplot(poc_isere)+geom_point(aes(x=mes_mg.L, y = poc_hand_fitted))+ geom_abline(slope = 0, intercept = tail_value, col = "darkred")
+
+fit_poc <- glm(data = subset(poc_isere, !is.na(mes_mg.L) & poc_percent != 0), poc_percent ~ mes_mg.L + 0 + offset(log(tail)), family = gaussian(link = "log"))
+summary(fit_poc)
+
+poc_isere$poc_fitted <- predict(fit_poc, poc_isere) %>% exp()
+
+ggplot(poc_isere, aes(x=poc_percent, y = poc_fitted))+geom_point()
+
+ggplot(poc_isere)+geom_point(aes(x=mes_mg.L, y = poc_fitted))+ geom_abline(slope = 0, intercept = tail_value, col = "darkred")
 ```
 
 
