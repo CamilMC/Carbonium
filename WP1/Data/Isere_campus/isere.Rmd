@@ -8,7 +8,7 @@ date: "2025-06-30"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = F)
+                      cache = T)
 ```
 
 ```{r libraries}
@@ -75,6 +75,8 @@ debit <- readxl::read_xlsx(path = "isere.xlsx", sheet = "debit", col_types = c("
 isere <- merge(debit, cmes, by="DateHeure") %>% merge(crues, by = "DateHeure", all = T) 
 isere$year <- year(isere$DateHeure)
 isere$commondate <- as.Date(paste0("2000-", format(isere$Date,"%j")), "%Y-%j")
+
+isere$period <- as.numeric(-(isere$DateHeure - lead(isere$DateHeure))) # period in s
 
 isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()) %>% knitr::kable()
 isere %>% subset(!is.na(cmes_g.L) & !is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_cmes = n()) %>% knitr::kable()
@@ -155,7 +157,7 @@ ggarrange(
 ```
 
 
-## Carbonisere
+## Example of data - Carbonisere
 
 ```{r view-fluxes}
 
@@ -200,191 +202,318 @@ ggplot(carbonisere)+
 
 
 # Method - which relation MES-POC to choose?
-Is there a difference between fitting a POC-MES relation when it is event-specific or when we use all values?
 
-```{r fit-cmes-poc}
 
-ggplot(subset(isere, !is.na(poc_percent)))+
-  geom_point(aes(x = cmes_g.L, y = poc_percent, col = name))+
-  scale_colour_viridis_d()+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-fit_mes_poc <- lm(data = isere, log(poc_percent)~log(cmes_g.L))
-summary(fit_mes_poc)
-
-isere$poc_percent_fit <- predict(fit_mes_poc, newdata = isere) %>% exp()
-isere$poc_percent_fit_se <- predict(fit_mes_poc, newdata = isere, se.fit = T)$se.fit %>% exp()
-
-rmse <- sqrt(mean((isere$poc_percent - isere$poc_percent_fit)^2, na.rm = T))
-
-ggarrange(
-ggplot(subset(isere, !is.na(poc_percent)), aes(x = cmes_g.L))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
-  scale_color_manual(values = c("lightblue" ,"orange"))+
-  labs(title = "only floods", subtitle = paste("RMSE", round(rmse,2), sep = " = "))+
-  theme_minimal()+
-  theme(legend.position = "bottom"),
-
-ggplot(isere, aes(x = cmes_g.L))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
-  scale_color_manual(values = c("lightblue", "orange"))+
-  labs(title = "All cmes")+
-  theme_minimal()+
-  theme(legend.position = "bottom"),
-ncol = 2
-)
-
-```
-
-```{r fit-mes-poc}
-
-ggplot(subset(isere, !is.na(poc_percent)))+
-  geom_point(aes(x = mes_mg.L, y = poc_percent, col = name))+
-  scale_colour_viridis_d()+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-fit_mes_poc <- lm(data = subset(isere, !is.na(mes_mg.L) & poc_percent > 0), log(poc_percent)~log(mes_mg.L))
-summary(fit_mes_poc)
-
-isere$poc_percent_fit <- predict(fit_mes_poc, newdata = isere) %>% exp()
-isere$poc_percent_fit_se <- predict(fit_mes_poc, newdata = isere, se.fit = T)$se.fit %>% exp()
-
-rmse <- sqrt(mean((isere$poc_percent - isere$poc_percent_fit)^2, na.rm = T))
-
-ggarrange(
-ggplot(subset(isere, !is.na(poc_percent)), aes(x = cmes_g.L))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
-  scale_color_manual(values = c("lightblue" ,"orange"))+
-  labs(title = "only floods", subtitle = paste("RMSE", round(rmse,2), sep = " = "))+
-  theme_minimal()+
-  theme(legend.position = "bottom"),
-
-ggplot(isere, aes(x = cmes_g.L))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fit, col = "fitted"))+
-  scale_color_manual(values = c("lightblue", "orange"))+
-  labs(title = "All cmes")+
-  theme_minimal()+
-  theme(legend.position = "bottom"),
-ncol = 2
-)
-
-```
-
-```{r fit-by-event, eval = F}
-name_crues <- subset(isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
-
-for(i in name_crues){
-  df <- isere
-  dfi <- subset(isere, name == i &!is.na(poc_percent))
-  fiti <- lm(data = dfi, log(poc_percent)~log(cmes_g.L))
-  
-  rmse <- sqrt(mean((dfi$poc_percent - dfi$poc_percent_fit)^2, na.rm = T))
-  
-  df$poc_percent_fiti <- predict(fiti, newdata = df) %>% exp()
-  df$poc_percent_fiti_se <- predict(fiti, newdata = df, se.fit = T)$se.fit %>% exp()
-  
-  g1 <- ggplot(subset(df, name ==i), aes(x = cmes_g.L))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fiti, col = "fitted only with event"))+
-  geom_point(aes(y = poc_percent_fit, col = "fitted with all events"))+
-  labs(title = i, subtitle = paste("RMSE fit", round(rmse,2), sep = " = "))+
-  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-  
-  g2 <- ggplot(df, aes(x = cmes_g.L))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fiti, col = "fitted"))+
-  labs(title = i, subtitle = paste("RMSE",  round(sqrt(mean((df$poc_percent - df$poc_percent_fit)^2, na.rm = T)),2), sep = " = "))+
-  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-  
-  print(ggarrange(g1,g2,ncol = 2, common.legend = T, legend = "bottom"))
-}
-
-# should I leave out the data on which the model is fitted?
-
-```
-
-```{r leave-one-out-event-to-fit-the-last, fig.dim = c(10, 5)}
-name_crues <- subset(isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
-
-for(i in name_crues){
-  df <- isere
-  dfi <- subset(isere, name != i &!is.na(poc_percent))
-  fiti <- lm(data = dfi, log(poc_percent)~log(cmes_g.L))
-  
-  df$poc_percent_fiti <- predict(fiti, newdata = df) %>% exp()
-  df$poc_percent_fiti_se <- predict(fiti, newdata = df, se.fit = T)$se.fit %>% exp()
-  
-  g1 <- ggplot(subset(df, name ==i), aes(x = cmes_g.L))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fiti, col = "fitted without this event"))+
-  geom_point(aes(y = poc_percent_fit, col = "fitted with all events"))+
-  #labs(title = i, subtitle = paste("RMSE fit", round(rmse,2), sep = " = "))+
-  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
-  theme_minimal(base_size = 12)+
-  theme(legend.position = "bottom")
-  
-  g2 <- ggplot(df, aes(x = cmes_g.L))+
-  geom_ribbon(aes(ymin = poc_percent_fiti - poc_percent_fiti_se, ymax = poc_percent_fiti + poc_percent_fiti_se), fill = "grey80", alpha = 0.5)+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fiti, col = "fitted with all but one event"))+
-  #geom_errorbar(aes(ymin = poc_percent_fiti - poc_percent_fiti_se, ymax = poc_percent_fiti + poc_percent_fiti_se))+
-  labs(title = i, subtitle = paste("RMSE",  round(sqrt(mean((df$poc_percent - df$poc_percent_fit)^2, na.rm = T)),2), sep = " = "), x = "MES, mg/L")+
-  scale_color_manual(values = c("palegreen4","lightblue","orange"))+
-  theme_minimal(base_size = 10)+
-  theme(legend.position = "bottom")
-  
-  print(ggarrange(g1,g2,ncol = 2, common.legend = T, legend = "bottom"))
-  
-  #compute sum poc pour 2015
-  # 
-  # df2015 <- subset(df, year == 2015 & !is.na(q_m3.s))
-  # sum_
-  
-}
-
-```
+## Fit MES-POC
 
 ```{r fit-poc-mes-forcing-end-value}
 poc_isere <- isere %>% subset(!is.na(poc_percent))
-dim(poc_isere)
-hist(poc_isere$poc_percent)
-poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% plot()
-#mygoal: reproduce up in ggplot to see events
 
+# find asymptotic value
 tail_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
 
-ggplot(isere)+geom_point(aes(x = cmes_g.L, y = poc_percent, col =name))+
-  scale_x_continuous(transform = "log") + scale_y_continuous(transform = "log") 
-
-ggplot(poc_isere)+geom_point(aes(x = cmes_g.L, y = poc_percent, col = name))+
-  geom_abline(slope = 0, intercept = tail_value, col = "darkred")
-
-poc_isere$mes_mg.L[which(is.na(poc_isere$mes_mg.L))] <- poc_isere$cmes_g.L[which(is.na(poc_isere$mes_mg.L))]*1e3
+# add mes for POC 2011
+poc_isere$mes_for_fit <- poc_isere$mes_mg.L
+poc_isere$mes_for_fit[which(is.na(poc_isere$mes_for_fit))] <- poc_isere$cmes_g.L[which(is.na(poc_isere$mes_for_fit))]*1e3
 poc_isere$tail <- tail_value
 
-ggplot(poc_isere)+geom_point(aes(x=mes_mg.L, y = poc_percent))+ geom_abline(slope = 0, intercept = tail_value, col = "darkred")
+pocfit <- nls(
+  poc_percent ~ a * mes_for_fit^b + tail,
+  data = poc_isere,
+  start = list(a = 1, b = -0.5)
+)
 
-poc_isere$poc_hand_fitted <- with(poc_isere, mes_mg.L^-0.25+0.99)
-ggplot(poc_isere)+geom_point(aes(x=mes_mg.L, y = poc_hand_fitted))+ geom_abline(slope = 0, intercept = tail_value, col = "darkred")
+summary(pocfit)
+poc_isere$poc_nls_fitted <- predict(pocfit, poc_isere)
 
-fit_poc <- glm(data = subset(poc_isere, !is.na(mes_mg.L) & poc_percent != 0), poc_percent ~ mes_mg.L + 0 + offset(log(tail)), family = gaussian(link = "log"))
-summary(fit_poc)
+formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(tail_value,2))
 
-poc_isere$poc_fitted <- predict(fit_poc, poc_isere) %>% exp()
+ggplot(poc_isere)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_nls_fitted, col = "fitted"))+ 
+  geom_abline(slope = 0, intercept = tail_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %")+
+  theme_minimal()
 
-ggplot(poc_isere, aes(x=poc_percent, y = poc_fitted))+geom_point()
+plot(resid(pocfit)~fitted(pocfit))
 
-ggplot(poc_isere)+geom_point(aes(x=mes_mg.L, y = poc_fitted))+ geom_abline(slope = 0, intercept = tail_value, col = "darkred")
+```
+
+## Should we fit with distinct events ?
+
+Is there a difference between fitting a POC-MES relation when it is event-specific or when we use all values?
+
+```{r fit-by-event, eval = F}
+name_crues <- subset(poc_isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
+
+for(i in name_crues){
+  df <- poc_isere
+  dfi <- subset(df, name == i &!is.na(poc_percent))
+  
+  dfi$tail <- dfi[order(dfi$mes_mg.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(dfi)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
+  
+  a_i <- dfi$poc_percent %>% max()
+  b_i <- - dfi$tail[1]/2
+    
+  fiti <-  tryCatch(
+    nls(poc_percent ~ a * mes_for_fit^b + tail, data = dfi, start = list(a = a_i, b = b_i)),
+    error = function(e) {lm(poc_percent ~ mes_for_fit, data = dfi)}
+  )
+  
+  if(class(fiti)=="nls"){
+    coef1 <- coef(fiti)[1]
+    coef2 <- coef(fiti)[2]
+    formula_fiti <- paste("NLS : POC =", round(coef1,2), "* MES (mg/L) ^", round(coef2,2), "+", round(dfi$tail[1],2))
+  } else {
+    coef1 <- coef(fiti)[1]
+    coef2 <- coef(fiti)[2]
+    formula_fiti <- paste("LM : POC =", format(coef2, scientific = T, digits = 2), "* MES (mg/L) +", round(coef1))
+ }
+
+  df$poc_percent_fiti <- predict(fiti, newdata = df)
+  
+ g <- ggplot(subset(df, name ==i), aes(x = mes_for_fit))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fiti, col = "fitted only with this event"))+
+  geom_point(aes(y = poc_nls_fitted, col = "fitted with all events"))+
+  labs(title = i, x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","hotpink4","lightblue"))+
+  geom_abline(slope = 0, intercept = dfi$tail[1], col = "darkred")+
+  annotate(geom = "label", label = formula_fiti, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+  
+ print(g)
+}
+
+```
+
+```{r leave-one-out-event-to-fit-the-last, eval = T}
+name_crues <- subset(poc_isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
+
+for(i in name_crues){
+  df <- poc_isere
+  dfi <- subset(df, name != i &!is.na(poc_percent))
+  
+  dfi$tail <- dfi[order(dfi$mes_mg.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(dfi)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
+  
+  a_i <- dfi$poc_percent %>% max()
+  b_i <- - dfi$tail[1]/2
+    
+  fiti <-  tryCatch(
+    nls(poc_percent ~ a * mes_for_fit^b + tail, data = dfi, start = list(a = a_i, b = b_i)),
+    error = function(e) {lm(poc_percent ~ mes_mg.L, data = dfi)}
+  )
+  
+  if(class(fiti)=="nls"){
+    coef1 <- coef(fiti)[1]
+    coef2 <- coef(fiti)[2]
+    formula_fiti <- paste("NLS : POC =", round(coef1,2), "* MES (mg/L) ^", round(coef2,2), "+", round(dfi$tail[1],2))
+  } else {
+    coef1 <- coef(fiti)[1]
+    coef2 <- coef(fiti)[2]
+    formula_fiti <- paste("LM : POC =", format(coef2, scientific = T, digits = 2), "* MES (mg/L) +", round(coef1))
+ }
+
+  df$poc_percent_fiti <- predict(fiti, newdata = df)
+  
+ g <- ggplot(subset(df, name == i), aes(x = mes_for_fit))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_percent_fiti, col = "fitted with all events except this one"))+
+  geom_point(aes(y = poc_nls_fitted, col = "fitted with all events"))+
+  labs(title = i, x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","hotpink4","lightblue"))+
+  geom_abline(slope = 0, intercept = dfi$tail[1], col = "darkred")+
+  annotate(geom = "label", label = formula_fiti, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+  
+ print(g)
+}
+```
+
+
+## Extension of POC values to all dataset
+
+```{r all-poc}
+isere$mes_for_fit <- isere$cmes_g.L * 1e3 
+isere$mes_for_fit <- ifelse(isere$mes_for_fit ==0, NA, isere$mes_for_fit)
+isere$poc_fitted <- predict(pocfit, newdata = isere) 
+
+ggplot(isere, aes(x = mes_for_fit))+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"))+
+  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = tail_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+Calculer annual flux with POC fitted with nls and POC calculated from straight line
+
+## Annual flux for POC fitted from asymptot
+
+```{r yearly-flux-poc-fitted, eval = T}
+isere$fpoc_kg.s <- with(isere, q_m3.s * 1e3 * (mes_for_fit * tail_value * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+
+yearly_fluxes_fitted <- isere %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.s * period, na.rm = T),
+                              mean_annual_q = mean(q_m3.s, na.rm = T))
+
+knitr::kable(yearly_fluxes_fitted)
+
+n <- 30
+
+ggplot(yearly_fluxes_fitted, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
+  geom_line(aes(y = mean_annual_q*n))+
+  scale_y_continuous(
+    name = "Flux de POC, kg/year/km2",
+    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()
+```
+
+## Annual flux for POC fitted with power law - REFERENCE
+
+```{r yearly-flux-poc-fitted, eval = T}
+isere$fpoc_kg.s <- with(isere, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+
+yearly_fluxes_fitted <- isere %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.s * period, na.rm = T),
+                              mean_annual_q = mean(q_m3.s, na.rm = T),
+                              nb_datapoints = sum(!is.na(poc_fitted))
+                              )
+
+
+knitr::kable(yearly_fluxes_fitted)
+
+n <- 30
+
+ggplot(yearly_fluxes_fitted, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
+  geom_line(aes(y = mean_annual_q*n))+
+  scale_y_continuous(
+    name = "Flux de POC, kg/year/km2",
+    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()
+```
+
+# Estimation of annual POC fluxes, time steps
+
+```{r time-steps}
+isere$day <- isere$DateHeure %>% format("%Y-%m-%d")
+isere$week <- week(isere$DateHeure)
+isere$month <- month(isere$DateHeure)
+```
+
+
+## Daily means
+
+```{r yearly-flux-poc-fitted, eval = T}
+isere_day <- isere %>% group_by(day) %>% summarise(q_m3.s = mean(q_m3.s, na.rm = T), mes_for_fit = mean(mes_for_fit, na.rm = T), poc_fitted = mean(poc_fitted, na.rm = T), year = first(year))
+
+
+isere_day$fpoc_kg.d <- with(isere_day, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+
+day_fluxes_fitted <- isere_day %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.d * 24*60*60, na.rm = T),
+                              mean_annual_q = mean(q_m3.s, na.rm = T),
+                              nb_datapoints = sum(!is.na(poc_fitted)))
+
+knitr::kable(day_fluxes_fitted)
+
+n <- 30
+
+ggplot(day_fluxes_fitted, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
+  geom_line(aes(y = mean_annual_q*n))+
+  scale_y_continuous(
+    name = "Flux de POC, kg/year/km2",
+    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()
+
+```
+
+
+## Weekly means
+
+```{r yearly-flux-poc-fitted, eval = T}
+isere_week <- isere %>% group_by(week,year) %>% summarise(q_m3.s = mean(q_m3.s, na.rm = T), mes_for_fit = mean(mes_for_fit, na.rm = T), poc_fitted = mean(poc_fitted, na.rm = T))
+
+
+isere_week$fpoc_kg.d <- with(isere_week, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+
+week_fluxes_fitted <- isere_week %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.d * 7*24*60*60, na.rm = T),
+                              mean_annual_q = mean(q_m3.s, na.rm = T),
+                              nb_datapoints = sum(!is.na(poc_fitted)))
+
+knitr::kable(week_fluxes_fitted)
+
+n <- 30
+
+ggplot(week_fluxes_fitted, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
+  geom_line(aes(y = mean_annual_q*n))+
+  scale_y_continuous(
+    name = "Flux de POC, kg/year/km2",
+    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()
+
+```
+
+## Monthly means
+
+```{r yearly-flux-poc-fitted, eval = T}
+isere_month <- isere %>% group_by(month,year) %>% summarise(q_m3.s = mean(q_m3.s, na.rm = T), mes_for_fit = mean(mes_for_fit, na.rm = T), poc_fitted = mean(poc_fitted, na.rm = T))
+
+
+isere_month$fpoc_kg.d <- with(isere_month, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+
+month_fluxes_fitted <- isere_month %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.d * 30*24*60*60, na.rm = T),
+                              mean_annual_q = mean(q_m3.s, na.rm = T),
+                              nb_datapoints = sum(!is.na(poc_fitted)))
+
+knitr::kable(month_fluxes_fitted)
+
+n <- 30
+
+ggplot(month_fluxes_fitted, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
+  geom_line(aes(y = mean_annual_q*n))+
+  scale_y_continuous(
+    name = "Flux de POC, kg/year/km2",
+    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()
+
+```
+
+## Compare time steps
+
+```{r compare-time-steps}
+
+yearly_fluxes <- merge(yearly_fluxes_fitted, day_fluxes_fitted, by = "year", suffixes = c("_hourly", "_daily")) %>%
+                  merge(week_fluxes_fitted, by = "year") %>%
+                    merge(month_fluxes_fitted, by = "year", suffixes = c("_weekly", "_monthly"))
+
+knitr::kable(yearly_fluxes)
+
+
 ```
 
 
