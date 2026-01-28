@@ -154,6 +154,8 @@ ggarrange(
     theme_minimal(),
   ncol = 2, common.legend = T, legend = "bottom"
 )
+
+
 ```
 
 
@@ -405,6 +407,88 @@ ggplot(yearly_fluxes_fitted, aes(x = year))+
   labs(x = "", y = "Flux de POC, kg/year/km2")+
   theme_minimal()
 ```
+```{r uncertainty-annual-flux}
+q_u <- 0.1 # from Cedric
+
+poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
+fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
+summary(fit_cmes)
+
+mes_u <- summary(fit_cmes)$coefficients[4]
+poc_u <- summary(fit_poc)$coefficients[2]
+
+
+# fonctionne mais lent
+# 
+# isere$fpoc_mc_mean <- NA
+# isere$fpoc_mc_sd <- NA
+# 
+# for(i in 1:1000){
+#   set.seed(i)
+#   qn <- rnorm(n = 10000, mean = isere$q_m3.s[i], sd = q_u)
+#   mesn <- rnorm(n = 10000, mean = isere$mes_for_fit[i], sd = mes_u)
+#   pocn <- rnorm(n = 10000, mean = isere$poc_fitted[i], sd = poc_u)
+#   
+#   fpocn <- qn * 1e3 * (mesn * pocn * 1e-2) * 1e-6 # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+#   
+#   fpoc_mean <- fpocn %>% mean()
+#   fpoc_sd <- fpocn %>% sd()
+#   
+#   isere$fpoc_mc_mean[i] <- fpoc_mean
+#   isere$fpoc_mc_sd[i] <- fpoc_sd
+# }
+
+
+# version fonction
+
+isere <- isere %>% mutate(mc = purrr::pmap(
+  list(q_m3.s, mes_for_fit, poc_fitted),
+  ~{
+    qn <- rnorm(10000, ..1, q_u)
+    mesn <- rnorm(10000, ..2, mes_u)
+    pocn <- rnorm(10000, ..3, poc_u)
+    
+    fpocn <- qn * 1e3 * (mesn * pocn * 1e-2) * 1e-6
+    
+    tibble(fpoc_mean = mean(fpocn),
+           fpoc_sd = sd(fpocn))
+  }
+)) %>% tidyr::unnest(mc)
+
+
+
+
+
+df <- data.frame(year = unique(isere$year),
+                 fpoc_mc_mean = NA,
+                 fpoc_mc_sd = NA)
+
+
+## pb incertitude 
+
+for(i in 1:length(unique(isere$year))){
+  y <- unique(isere$year)[i]
+  isi <- subset(isere, year == y)
+  
+  fpocy <- with(isi, rnorm(10000, fpoc_mean, fpoc_sd) * period)
+  fpocy_mean <- mean(fpocy, na.rm = T)
+  fpocy_sd <- sd(fpocy, na.rm = T)
+  
+  df[i, "fpoc_mc_mean"] <- fpocy_mean
+  df[i, "fpoc_mc_sd"] <- fpocy_sd
+  
+}
+
+print('Salut Camille, comment va la Modus ? Eclairante ? Lumineuse')
+print('hahaha comme la fisica !')
+
+for(i in 1:dim(isere)[1]){
+
+  
+  names(isere)[which(names(isere) == i)] <- paste0("fpoc_mc_", sub("fpoc_", "", i))
+}
+
+```
 
 # Estimation of annual POC fluxes, time steps
 
@@ -510,8 +594,39 @@ ggplot(month_fluxes_fitted, aes(x = year))+
 yearly_fluxes <- merge(yearly_fluxes_fitted, day_fluxes_fitted, by = "year", suffixes = c("_hourly", "_daily")) %>%
                   merge(week_fluxes_fitted, by = "year") %>%
                     merge(month_fluxes_fitted, by = "year", suffixes = c("_weekly", "_monthly"))
+yearly_fluxes$diff_ref_month <- with(yearly_fluxes, (fpoc_kg.year_monthly - fpoc_kg.year_hourly)/fpoc_kg.year_hourly*100)
+yearly_fluxes$diff_ref_week <- with(yearly_fluxes, (fpoc_kg.year_weekly - fpoc_kg.year_hourly)/fpoc_kg.year_hourly*100)
+yearly_fluxes$diff_ref_day <- with(yearly_fluxes, (fpoc_kg.year_daily - fpoc_kg.year_hourly)/fpoc_kg.year_hourly*100)
 
 knitr::kable(yearly_fluxes)
+
+yearly_fluxes_long <- rbind(mutate(yearly_fluxes_fitted, freq = "1.hourly"), 
+                            mutate(day_fluxes_fitted, freq = "2.daily"),
+                            mutate(week_fluxes_fitted, freq = "3.weekly"),
+                            mutate(month_fluxes_fitted, freq = "4.monthly"))
+
+
+ggplot(yearly_fluxes_long, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570, fill = freq), stat = "identity", position = "dodge")+  
+  scale_fill_manual(values = c("1.hourly" = "darkblue", "2.daily" = "lightblue", "3.weekly" = "palegreen4", "4.monthly" = "honeydew3"))+
+  scale_y_continuous(name = "Flux de POC, kg/year/km2")+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_line(aes(y = diff_ref_month, col = "4.monthly"), size = 2)+
+    geom_line(aes(y = diff_ref_week, col = "3.weekly"), size = 2)+ 
+    geom_line(aes(y = diff_ref_day, col = "2.daily"), size = 2)+ 
+  scale_color_manual(values = c("1.hourly" = "darkblue", "2.daily" = "lightblue", "3.weekly" = "palegreen4", "4.monthly" = "honeydew3"))+
+  scale_y_continuous(name = "Différence avec le flux de référence, %")+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+yearly_fluxes_long %>% group_by(freq) %>% summarise(mean_flux = mean(fpoc_kg.year/5570), sd_flux = sd(fpoc_kg.year/5570), mean_diff_ref = mean((fpoc_kg.year - yearly_fluxes_fitted$fpoc_kg.year)/yearly_fluxes_fitted$fpoc_kg.year*100, na.rm = T)) %>% knitr::kable()
 
 
 ```
