@@ -1,6 +1,8 @@
 ---
 title: "Galabre"
-output: html_document
+output: 
+  html_document:
+    code_folding: hide
 date: "2025-06-20"
 ---
 
@@ -12,6 +14,7 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.alig
 ```{r libraries}
 
 library(ggplot2)
+library(ggpubr)
 library(dplyr)
 library(readxl)
 library(lubridate)
@@ -19,17 +22,30 @@ library(lubridate)
 ```
 
 
+# Data
+
+## Load 
+
+Sur BDOH les chroniques de débit et MES sont disponibles jusqu'à 2019.
+
+
 ```{r load-data}
+crues <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Crues") 
 
 mes <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "SSC", col_types = c("date","numeric")) 
 
-crues <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Crues") 
-
 debit <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Debit", col_types = c("date","numeric")) 
+debit$commondate <- as.Date(paste0("2000-", format(debit$DateHeure,"%j")), "%Y-%j")
+debit$year <- year(debit$DateHeure)
+
+galabre <- merge(debit, mes, by = "DateHeure")
 
 debit_new <- readxl::read_xlsx(path = "Galabre_outlet.xlsx")
-
+debit_new$commondate <- as.Date(paste0("2000-", format(debit_new$DateHeure,"%j")), "%Y-%j")
+debit_new$year <- year(debit_new$DateHeure)
 ```
+
+## Explore data
 
 ```{r mes-poc}
 crues$poc_g.L <- crues$mes_g.L * crues$poc_percent / 100
@@ -51,6 +67,116 @@ ggplot(crues, aes(x=log10(mes_g.L), y = log10(poc_percent)))+geom_point(aes(col 
   theme(legend.position = "bottom")
 ```
 
+```{r annual-q-mes, fig.dim = c(10, 15)}
+
+ggarrange(
+ggplot(galabre, aes(x = commondate)) + 
+  geom_point(aes(y = q_m3.s), col = "lightblue", size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "Q, m3/s") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ggplot(galabre, aes(x = commondate)) + 
+  geom_point(aes(y = mes_g.L), col = "palegreen4", size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "CMES, g/L") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ncol = 2
+)
+
+```
+```{r annual-q-mes-new, fig.dim = c(10, 10)}
+
+ggarrange(
+ggplot(debit_new, aes(x = commondate)) + 
+  geom_point(aes(y = q_m3.s), col = "lightblue", size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "Q, m3/s") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ggplot(debit_new, aes(x = commondate)) + 
+  geom_point(aes(y = mes_g.L), col = "palegreen4", size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "CMES, g/L") +
+  theme_minimal()+
+  theme(legend.position = "bottom"),
+
+ncol = 2
+)
+
+```
+
+# Fit MES POC
+
+## Fit all events
+
+```{r get-starting-values}
+ggplot(crues)+
+  geom_point(aes(x=mes_g.L, y = poc_percent, col = "measured"))+ 
+  labs(x = "MES, mg/L", y = "POC, %")+
+  scale_color_manual(values = c("darkblue"))+
+  theme_minimal()
+
+fit_linear <- lm(log(poc_percent)~log(mes_g.L), data = subset(crues, !is.na(poc_percent) & !is.na(mes_g.L) & poc_percent != 0 & mes_g.L != 0)) 
+
+start_a <- exp(coef(fit_linear)[1])
+start_b <- coef(fit_linear)[2]
+```
+
+```{r fit-poc-mes-forcing-end-value}
+
+# find asymptotic value
+tail_value_galabre <- crues[order(crues$mes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(crues)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
+
+# add mes for POC 2011
+crues$mes_for_fit <- crues$mes_g.L
+crues$tail <- tail_value_galabre
+
+pocfit_galabre <- nls(
+  poc_percent ~ a * mes_for_fit^b + tail,
+  data = subset(crues, !is.na(poc_percent) & !is.na(mes_for_fit) & poc_percent != 0 & mes_g.L != 0),
+  start = list(a = start_a, b = start_b)
+)
+
+summary(pocfit_galabre)
+crues$poc_nls_fitted <- predict(pocfit_galabre, crues)
+
+formula_pocfit_galabre <- paste("NLS : POC =", round(coef(pocfit_galabre)[1],2), "* MES (mg/L) ^", round(coef(pocfit_galabre)[2],2), "+", round(tail_value_galabre,2))
+
+ggplot(crues)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_nls_fitted, col = "fitted"))+ 
+  geom_abline(slope = 0, intercept = tail_value_galabre, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit_galabre, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %")+
+  theme_minimal()
+
+plot(resid(pocfit_galabre)~fitted(pocfit_galabre))
+
+```
+
+## fit by event
+
+```{r fit-by-event}
+
+```
+
+
+```{r exit}
+knitr::knit_exit()
+```
+
+
+# Archives
 
 ```{r crues-without-na}
 crues_nona <- crues %>% filter(!if_any(everything(), is.na)) %>% subset(crue != "Crue du 13/07/2011") %>% filter(mes_g.L != 0)

@@ -83,7 +83,7 @@ isere %>% subset(!is.na(cmes_g.L) & !is.na(q_m3.s)) %>% group_by(year) %>% summa
 
 ```
 
-```{r annual-doc-poc, fig.dim = c(10, 10)}
+```{r annual-q-mes, fig.dim = c(10, 10)}
 
 ggarrange(
 ggplot(isere, aes(x = commondate)) + 
@@ -107,7 +107,7 @@ ncol = 2
 
 ```
 
-```{r annual, fig.dim = c(10, 5)}
+```{r annual-doc-poc, fig.dim = c(10, 5)}
 
 ggarrange(
 
