@@ -1,0 +1,375 @@
+---
+title: "Galabre"
+output: html_document
+date: "2025-06-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(lubridate)
+
+```
+
+
+```{r load-data}
+
+mes <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "SSC", col_types = c("date","numeric")) 
+
+crues <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Crues") 
+
+debit <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Debit", col_types = c("date","numeric")) 
+
+debit_new <- readxl::read_xlsx(path = "Galabre_outlet.xlsx")
+
+```
+
+```{r mes-poc}
+crues$poc_g.L <- crues$mes_g.L * crues$poc_percent / 100
+
+
+ggplot(crues)+geom_point(aes(x=mes_g.L, y = poc_percent, col = crue, shape = crue))+
+  scale_color_viridis_d()+
+  labs(x = "MES, g/L", y = "POC, %", col = "", shape = "")+
+  lims(y=c(0,2))+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+ggplot(crues, aes(x=log10(mes_g.L), y = log10(poc_percent)))+geom_point(aes(col = crue))+
+  scale_color_viridis_d()+
+  facet_grid(cols = vars(Saison))+
+  geom_smooth(se = T, method = "lm")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+
+```{r crues-without-na}
+crues_nona <- crues %>% filter(!if_any(everything(), is.na)) %>% subset(crue != "Crue du 13/07/2011") %>% filter(mes_g.L != 0)
+
+crues_nona <- tibble::rownames_to_column(crues_nona, "id")
+
+crues_train <- crues_nona %>% sample_frac(.75)
+crues_test <- crues_nona %>% dplyr::anti_join(crues_train, by = "id")
+```
+
+```{r power-law-poc-percent}
+adjust_pocpercent <- lm(log(poc_percent)~log(mes_g.L), data = crues_train) 
+
+summary(adjust_pocpercent)
+
+coefs_pocpercent <- summary(adjust_pocpercent)$coefficients %>% as.data.frame() %>% mutate_if(is.numeric, round, digits = 2)
+powerlaw_pocpercent <- paste0("POC (g/L) = (",round(exp(coefs_pocpercent[1,1]),2), " ± ", round(exp(coefs_pocpercent[2,1]),2), ") *", " MES (g/L)^(", coefs_pocpercent[1,2], "±", coefs_pocpercent[2,2],")")
+
+crues_test$log_pocpercent_pred <- predict(object = adjust_pocpercent, newdata = crues_test)
+crues_test$pocpercent_pred <- exp(crues_test$log_pocpercent_pred)
+
+crues_test$log_pocpercent_pred_se <- predict(object = adjust_pocpercent, newdata = crues_test, se.fit = T)$se.fit
+crues_test$pocpercent_pred_se <- exp(crues_test$log_pocpercent_pred_se)
+
+ggplot(crues_test, aes(x= mes_g.L))+geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = pocpercent_pred, col = "predicted"))+
+  geom_errorbar(aes(ymin = pocpercent_pred-pocpercent_pred_se, ymax = pocpercent_pred + pocpercent_pred_se, col = "predicted"), width = 0.05)+
+  #scale_x_continuous(transform = "log10")+
+  # scale_y_continuous(transform = "log10")+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  theme_minimal()
+```
+
+
+```{r power-law-poc-percent-on-crues}
+crues_nona$log_pocpercent_pred <- predict(object = adjust_pocpercent, newdata = crues_nona)
+crues_nona$pocpercent_pred <- exp(crues_nona$log_pocpercent_pred)
+
+crues_nona$log_pocpercent_pred_se <- predict(object = adjust_pocpercent, newdata = crues_nona, se.fit = T)$se.fit
+crues_nona$pocpercent_pred_se <- exp(crues_nona$log_pocpercent_pred_se)
+
+ggplot(crues_nona, aes(x= mes_g.L))+geom_point(aes(y = poc_percent, col = "measured"), size = 2)+
+  geom_point(aes(y = pocpercent_pred, col = "predicted"))+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "MES, g/L", y = "POC, %", col = "")+
+  annotate(x = 25, y = 0.8, geom = "label", label = powerlaw_pocpercent)+
+  theme_minimal(base_size = 15)+
+    theme(legend.position = "bottom")
+
+
+```
+
+```{r lm-pocgl-mes}
+lm_pocgl <- lm(poc_g.L~mes_g.L, data = crues_train) 
+summary(lm_pocgl)
+
+
+coefs_pocgl <- summary(lm_pocgl)$coefficients %>% as.data.frame() %>% mutate_if(is.numeric, round, digits = 4)
+lmformula_pocgl <- paste0("POC (g/L) = (" , coefs_pocgl[1,1] , " ± " , coefs_pocgl[2,1] , ") + MES (g/L) * (", coefs_pocgl[1,2], "±", coefs_pocgl[2,2], ")")
+
+
+crues_test$pocgl_pred <- predict(object = lm_pocgl, newdata = crues_test)
+crues_test$pocgl_pred_se <- predict(object = lm_pocgl, newdata = crues_test, se.fit = T)$se.fit
+
+crues_train$pocgl_pred <- predict(object = lm_pocgl)
+crues_train$pocgl_pred_se <- predict(object = lm_pocgl, se.fit = T)$se.fit
+
+ggplot(crues_test, aes(x = mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
+  geom_point(aes(y = pocgl_pred, col = "predicted"))+
+  geom_errorbar(aes(ymin = pocgl_pred - pocgl_pred_se, ymax = pocgl_pred + pocgl_pred_se, col = "predicted"), width = 0.05)+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  scale_x_continuous(transform = "log10")+
+  scale_y_continuous(transform = "log10")+
+  theme_minimal()
+
+ggplot(crues_test, aes(x = mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
+  geom_point(aes(y = pocgl_pred, col = "predicted"))+
+  geom_errorbar(aes(ymin = pocgl_pred - pocgl_pred_se, ymax = pocgl_pred + pocgl_pred_se, col = "predicted"), width = 1)+
+    annotate(x = 70, y = 0.10, geom = "label", label = lmformula_pocgl)+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  theme_minimal()
+
+ggplot(crues_train, aes(x = mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
+  geom_point(aes(y = pocgl_pred, col = "predicted"))+
+  geom_errorbar(aes(ymin = pocgl_pred - pocgl_pred_se, ymax = pocgl_pred + pocgl_pred_se, col = "predicted"), width = 1)+
+    annotate(x = 100, y = 0.10, geom = "label", label = lmformula_pocgl)+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  theme_minimal()
+
+```
+
+```{r power-law-mes-pocgl}
+
+adjust_pocgl <- lm(log(poc_g.L)~log(mes_g.L), data = crues_train)
+summary(adjust_pocgl)
+
+coefs_pocgl <- summary(adjust_pocgl)$coefficients %>% as.data.frame() %>% mutate_if(is.numeric, round, digits = 2)
+powerlaw_pocgl <- paste0("POC (g/L) = (",round(exp(coefs_pocgl[1,1]),2), " ± ", round(exp(coefs_pocgl[2,1]),2), ") *", " MES (g/L)^(", coefs_pocgl[1,2], "±", coefs_pocgl[2,2],")")
+
+crues_test$log_pocgl_pred <- predict(object = adjust_pocgl, newdata = crues_test)
+crues_test$pl_pocgl_pred <- exp(crues_test$log_pocgl_pred)
+
+crues_test$log_pocgl_pred_se <- predict(object = adjust_pocgl, newdata = crues_test, se.fit = T)$se.fit
+crues_test$pl_pocgl_pred_se <- exp(crues_test$log_pocgl_pred_se)
+
+
+ggplot(crues_test, aes(x= mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
+  geom_point(aes(y = pl_pocgl_pred, col = "predicted"))+
+  geom_errorbar(aes(ymin = pl_pocgl_pred - pl_pocgl_pred_se, ymax = pl_pocgl_pred + pl_pocgl_pred_se, col = "predicted"), width = 1)+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  scale_x_continuous(transform = "log10")+
+  scale_y_continuous(transform = "log10")+
+  theme_minimal()
+
+
+ggplot(crues_test, aes(x= mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
+  geom_point(aes(y = pl_pocgl_pred, col = "predicted"))+
+  geom_errorbar(aes(ymin = pl_pocgl_pred - pl_pocgl_pred_se, ymax = pl_pocgl_pred + pl_pocgl_pred_se, col = "predicted"), width = 1)+
+  scale_color_manual(values = c("palegreen4", "lightblue"))+
+  annotate(x = 70, y = -0.5, geom = "label", label = powerlaw_pocgl)+
+  theme_minimal()
+
+```
+
+```{r merge-q-mes}
+
+galabre <- merge(debit, mes, by = "DateHeure")
+
+sum(is.na(galabre$mes_g.L) == T)
+
+galabre$year <- year(galabre$DateHeure)
+galabre$commondate <- as.Date(paste0("2000-", format(galabre$DateHeure,"%j")), "%Y-%j")
+galabre <- galabre %>%
+  mutate(Saison = case_when(month(DateHeure) %in% c(12, 1, 2) ~ "Hiver", 
+                            month(DateHeure) %in% c(3, 4, 5) ~ "Printemps", 
+                            month(DateHeure) %in% c(6, 7, 8) ~ "Ete", 
+                            TRUE ~ "Automne"))
+
+galabre$Saison <- ordered(galabre$Saison, levels = c("Automne", "Hiver", "Printemps", "Ete"))
+
+
+ggpubr::ggarrange(
+ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
+  geom_point(aes(x=commondate, y= mes_g.L,col="mes g/L"), alpha = 0.5, size = 0.5) +
+  scale_color_manual(values = c("palegreen4"))+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_y_continuous( name = "MES g/L")+
+  facet_grid(cols = vars(year), scales = "free")+
+  theme_minimal()+
+  theme(legend.position = "none", axis.text.x = element_blank()),
+
+ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
+  geom_point(aes(x=commondate, y= q_m3.s,col="discharge_m3/s"), alpha = 0.5, size = 0.5) +
+  scale_color_manual(values = c("lightblue"))+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_y_continuous( name = "Discharge, m3/s")+
+  facet_grid(cols = vars(year), scales = "free")+
+  theme_minimal()+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90), strip.text.x = element_blank()),
+
+nrow = 2)
+
+ggplot(sample_n(galabre,5000))+
+  geom_point(aes(x = q_m3.s, y = mes_g.L, col = Saison))+
+  scale_color_viridis_d()+
+  labs(x = "Débit, m3/s", y = "MES, g/L", col = "Saison")+
+  facet_grid(cols = vars(Saison))+
+  scale_color_manual(values = c("orange","grey80","chartreuse4","goldenrod2"))+
+    scale_x_continuous(transform = "log10")+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+ggplot(sample_n(galabre,5000))+
+  geom_point(aes(x = q_m3.s, y = mes_g.L, col = Saison))+
+  scale_color_viridis_d()+
+  labs(x = "Débit, m3/s", y = "MES, g/L", col = "Saison")+
+  facet_grid(cols = vars(Saison))+
+  scale_color_manual(values = c("orange","grey80","chartreuse4","goldenrod2"))+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+ggplot(sample_n(galabre,5000))+
+  geom_point(aes(x = q_m3.s, y = mes_g.L, col = Saison))+
+  scale_color_viridis_d()+
+  labs(x = "Débit, m3/s", y = "MES, g/L", col = "Saison")+
+  scale_color_manual(values = c("orange","grey80","chartreuse4","goldenrod2"))+
+  theme_minimal()+
+  theme(legend.position = "none")
+```
+# predict fluxes using LM POC g/L ~ MES
+
+```{r predict-poc-lm}
+galabre$pocgl_pred <- predict(lm_pocgl, newdata = galabre)
+galabre$pocgl_pred_se <- predict(lm_pocgl, newdata = galabre, se.fit = T)$se.fit
+
+ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
+  geom_point(aes(x=commondate, y= pocgl_pred,col="POC predicted, g/L"), alpha = 0.5, size = 0.5) +
+  scale_color_manual(values = c("lightblue"))+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_y_continuous( name = "POC predicted, g/L")+
+  facet_grid(cols = vars(year), scales = "free")+
+  theme_minimal()+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90), strip.text.x = element_blank())
+
+```
+
+```{r carbon-flux}
+
+yearly_fluxes <- galabre %>% group_by(year) %>% 
+  summarise(
+    fpoc_kg.year = sum(pocgl_pred * q_m3.s * 10 * 60, na.rm = T), # poc in g/L equivalent to kg/m3, discharge in m3/s converted to L/s, and then in L/10 min. So we sum the amount of poc that flows for 10 min, for each 10-min interval
+    sum_fpoc_kg.s = sum(pocgl_pred * q_m3.s, na.rm = T), # g/L equivalent to kg/m3 -> fpoc obtained in kg/s
+    percent_of_year_included = sum(!is.na(pocgl_pred) & !is.na(q_m3.s))/n()*100, # how many missing data is there
+    sum_discharge_m3.s = sum(q_m3.s, na.rm = T),  #sum of instant fluxes 
+    mean_discharge_m3.s = mean(q_m3.s, na.rm = T), #mean of fluxes for year 
+    sd_discharge_m3.s = sd(q_m3.s, na.rm = T)) #sd
+
+bv <- 20 # from Justin
+  
+# fluxes by adding all 10min fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$fpoc_kg.year.km2 <- yearly_fluxes$fpoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+yearly_fluxes$fpoc_ww_kg.year.km2 <- with(yearly_fluxes, sum_fpoc_kg.s/sum_discharge_m3.s*mean_discharge_m3.s* 365*24*60*60) / bv # fpoc obtained in kg/s, then converted to kg/year
+
+knitr::kable(yearly_fluxes)
+```
+
+```{r plot-fluxes}
+yearly_fluxes$label <- paste(round(yearly_fluxes$percent_of_year_included,2), " %")
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 500, label.size = 0.1)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+```
+
+# predict fluxes using powerlaw POC % ~ MES
+
+```{r predict-poc-power}
+galabre$log_pocpercent_pred <- predict(adjust_pocpercent, newdata = galabre)
+galabre$pocpercent_pred <- exp(galabre$log_pocpercent_pred)
+
+galabre$pocpercent_pred[which(galabre$mes_g.L == 0)] <- 0
+
+galabre$log_pocpercent_pred_se <- predict(adjust_pocpercent, newdata = galabre, se.fit = T)$se.fit
+galabre$pocpercent_pred_se <- exp(galabre$log_pocpercent_pred_se)
+
+galabre$poc_g.L_pred <- with(galabre, pocpercent_pred / 100 * mes_g.L)
+  
+ggplot(galabre)+geom_boxplot(aes(y = pocpercent_pred))
+
+ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
+  geom_point(aes(x=commondate, y= pocpercent_pred,col="POC predicted, %"), alpha = 0.5, size = 0.5) +
+  scale_color_manual(values = c("lightblue"))+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_y_continuous( name = "POC predicted, %")+
+  facet_grid(cols = vars(year), scales = "free")+
+  theme_minimal()+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90), strip.text.x = element_blank())
+
+```
+
+```{r carbon-flux-p}
+
+yearly_fluxes_p <- galabre %>% group_by(year) %>% 
+  summarise(
+    fpoc_kg.year = sum(poc_g.L_pred * q_m3.s * 10 * 60, na.rm = T), # poc in g/L equivalent to kg/m3, discharge in m3/s converted to L/s, and then in L/10 min. So we sum the amount of poc that flows for 10 min, for each 10-min interval
+    sum_fpoc_kg.s = sum(poc_g.L_pred * q_m3.s, na.rm = T), # g/L equivalent to kg/m3 -> fpoc obtained in kg/s
+    percent_of_year_included = sum(!is.na(poc_g.L_pred) & !is.na(q_m3.s))/n()*100, # how many missing data is there
+    sum_discharge_m3.s = sum(q_m3.s, na.rm = T),  #sum of instant fluxes 
+    mean_discharge_m3.s = mean(q_m3.s, na.rm = T), #mean of fluxes for year 
+    sd_discharge_m3.s = sd(q_m3.s, na.rm = T)) #sd
+
+bv <- 20 # from Justin
+  
+# fluxes by adding all 10min fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes_p$fpoc_kg.year.km2 <- yearly_fluxes_p$fpoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+yearly_fluxes_p$fpoc_ww_kg.year.km2 <- with(yearly_fluxes_p, sum_fpoc_kg.s/sum_discharge_m3.s*mean_discharge_m3.s* 365*24*60*60) / bv # fpoc obtained in kg/s, then converted to kg/year
+
+knitr::kable(yearly_fluxes_p)
+
+
+print(paste("Mean FPOC (sum) = ", round(mean(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
+print(paste("sd FPOC (sum) = ", round(sd(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
+
+print(paste("Mean FPOC (weighted) = ", round(mean(yearly_fluxes_p$fpoc_ww_kg.year.km2),2), "kg/year/km2"))
+print(paste("sd FPOC (weighted) = ", round(sd(yearly_fluxes_p$fpoc_ww_kg.year.km2),2), "kg/year/km2"))
+
+
+print(paste("Mean FPOC (sum) = ", round(mean(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
+print(paste("sd FPOC (sum) = ", round(sd(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
+
+print(paste("Débit moyen = ", round(mean(galabre$q_m3.s),2), "kg/year/km2"))
+print(paste("sd FPOC (weighted) = ", round(sd(yearly_fluxes_p$fpoc_ww_kg.year.km2),2), "kg/year/km2"))
+```
+
+```{r plot-fluxes-p}
+yearly_fluxes_p$label <- paste(round(yearly_fluxes_p$percent_of_year_included,2), " %")
+ggplot(yearly_fluxes_p, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 500, label.size = 0.1)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+
+
+```
