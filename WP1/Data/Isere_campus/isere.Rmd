@@ -407,7 +407,7 @@ ggplot(yearly_fluxes_fitted, aes(x = year))+
   labs(x = "", y = "Flux de POC, kg/year/km2")+
   theme_minimal()
 ```
-```{r uncertainty-annual-flux}
+```{r uncertainty-annual-flux, eval = F}
 q_u <- 0.1 # from Cedric
 
 poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
@@ -415,79 +415,142 @@ fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
 summary(fit_cmes)
 
 mes_u <- summary(fit_cmes)$coefficients[4]
-poc_u <- summary(fit_poc)$coefficients[2]
+a_u <- summary(pocfit)$coefficients[3]
+b_u <- summary(pocfit)$coefficients[4]
+#poc_u <- summary(pocfit)$coefficients[2]
+
+coef_pocfit <- coef(pocfit)
+
+isere$fpoc_mc_mean <- NA
+isere$fpoc_mc_sd <- NA
+
+#isere_mc <- isere[]
+
+isere$year <- as.factor(isere$year)
+list_isere <-  isere %>% group_split(year)
+list_isere <- lapply(list_isere, as.data.frame)
+list_isere_mc <- list()
+
+set.seed(0202)
+
+for(j in 1:length(list_isere)){
+  
+  df <- list_isere[[j]]
+  df_mc <- list()
+
+for(i in 1:dim(df)[1]){
+  
+  DateHeure <- df$DateHeure[i]
+  period <- df$period[i]
+   
+  qn <- rnorm(n = 1000, mean = df$q_m3.s[i], sd = q_u)
+  mesn <- rnorm(n = 1000, mean = df$mes_for_fit[i], sd = mes_u)
+  an <- rnorm(n = 1000, mean = coef_pocfit[1], sd = a_u) 
+  bn <- rnorm(n = 1000, mean = coef_pocfit[2], sd = b_u)
+  pocn <- an * mesn^bn + tail_value
+
+  fpocn <- qn * 1e3 * (mesn * pocn * 1e-2) * 1e-6 * period # discharge converted from m3/s to L/h; fPOC is obtained in kg
+
+  fpoc_mean <- fpocn %>% mean()
+  fpoc_sd <- fpocn %>% sd()
+
+  list_isere[[j]]$fpoc_mc_mean[i] <- fpoc_mean
+  list_isere[[j]]$fpoc_mc_sd[i] <- fpoc_sd
+  
+  df_mc[[i]] <- data.frame(DateHeure = as.Date(DateHeure), q = qn, mes = mesn, poc = pocn, period = period)
+}
+list_isere_mc[[j]] <- rbind(df_mc)
+}
 
 
-# fonctionne mais lent
-# 
-# isere$fpoc_mc_mean <- NA
-# isere$fpoc_mc_sd <- NA
-# 
-# for(i in 1:1000){
-#   set.seed(i)
-#   qn <- rnorm(n = 10000, mean = isere$q_m3.s[i], sd = q_u)
-#   mesn <- rnorm(n = 10000, mean = isere$mes_for_fit[i], sd = mes_u)
-#   pocn <- rnorm(n = 10000, mean = isere$poc_fitted[i], sd = poc_u)
-#   
-#   fpocn <- qn * 1e3 * (mesn * pocn * 1e-2) * 1e-6 # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
-#   
-#   fpoc_mean <- fpocn %>% mean()
-#   fpoc_sd <- fpocn %>% sd()
-#   
-#   isere$fpoc_mc_mean[i] <- fpoc_mean
-#   isere$fpoc_mc_sd[i] <- fpoc_sd
-# }
+```
 
+```{r uncertainty-opti-chatgpt}
+N_MC <- 1000
+set.seed(202)
 
-# version fonction
+q_u <- 0.1 # from Cedric
 
-isere <- isere %>% mutate(mc = purrr::pmap(
-  list(q_m3.s, mes_for_fit, poc_fitted),
-  ~{
-    qn <- rnorm(10000, ..1, q_u)
-    mesn <- rnorm(10000, ..2, mes_u)
-    pocn <- rnorm(10000, ..3, poc_u)
-    
-    fpocn <- qn * 1e3 * (mesn * pocn * 1e-2) * 1e-6
-    
-    tibble(fpoc_mean = mean(fpocn),
-           fpoc_sd = sd(fpocn))
+poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
+fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
+summary(fit_cmes)
+
+mes_u <- summary(fit_cmes)$coefficients[4]
+a_u <- summary(pocfit)$coefficients[3]
+b_u <- summary(pocfit)$coefficients[4]
+
+coef_poc <- coef(pocfit)
+a_mean <- coef_poc[1]
+b_mean <- coef_poc[2]
+
+list_isere_mc <- vector("list", length(list_isere))
+
+for (j in seq_along(list_isere)) {
+
+  df <- list_isere[[j]]
+  n  <- nrow(df)
+
+    # matrice [temps x MC]
+  fpoc_mc <- matrix(NA_real_, nrow = n, ncol = N_MC)
+
+  for (i in seq_len(n)) {
+
+    qn   <- rnorm(N_MC, df$q_m3.s[i], q_u)
+    mesn <- rnorm(N_MC, df$mes_for_fit[i], mes_u)
+    an   <- rnorm(N_MC, a_mean, a_u)
+    bn   <- rnorm(N_MC, b_mean, b_u)
+
+    pocn <- an * mesn^bn + tail_value
+
+    fpoc_mc[i, ] <-
+      qn * 1e3 *
+      (mesn * pocn * 1e-2) *
+      1e-6 *
+      df$period[i]
   }
-)) %>% tidyr::unnest(mc)
 
+  list_isere_mc[[j]] <- fpoc_mc
 
-
-
-
-df <- data.frame(year = unique(isere$year),
-                 fpoc_mc_mean = NA,
-                 fpoc_mc_sd = NA)
-
-
-## pb incertitude 
-
-for(i in 1:length(unique(isere$year))){
-  y <- unique(isere$year)[i]
-  isi <- subset(isere, year == y)
-  
-  fpocy <- with(isi, rnorm(10000, fpoc_mean, fpoc_sd) * period)
-  fpocy_mean <- mean(fpocy, na.rm = T)
-  fpocy_sd <- sd(fpocy, na.rm = T)
-  
-  df[i, "fpoc_mc_mean"] <- fpocy_mean
-  df[i, "fpoc_mc_sd"] <- fpocy_sd
-  
+  # stats instantanées 
+  list_isere[[j]]$fpoc_mc_mean <- rowMeans(fpoc_mc)
+  list_isere[[j]]$fpoc_mc_sd   <- apply(fpoc_mc, 1, sd)
 }
+```
 
-print('Salut Camille, comment va la Modus ? Eclairante ? Lumineuse')
-print('hahaha comme la fisica !')
 
-for(i in 1:dim(isere)[1]){
+```{r uncertainty-annual-test}
+# Calcul des flux annuels avec incertitude - test année 1. On calcule 1000 flux annuels dont on prend la moyenne puis la sd
+fpoc_mc <- list_isere_mc[[1]]
+fpoc_annual_mc <- colSums(fpoc_mc, na.rm = TRUE)
+mean(fpoc_annual_mc)
+sd(fpoc_annual_mc)
 
-  
-  names(isere)[which(names(isere) == i)] <- paste0("fpoc_mc_", sub("fpoc_", "", i))
-}
+quantile(fpoc_annual_mc, c(0.05, 0.5, 0.95))
 
+# check 
+sum(fpoc_mc, na.rm = T) / 1000
+
+# moyenne interannuelle
+fpoc_annuel_mc <- lapply(list_isere_mc, function(mat) {
+  colSums(mat, na.rm = TRUE)
+})
+
+# matrice [année x MC]
+fpoc_annuel_mat <- do.call(rbind, fpoc_annuel_mc)
+
+# moyenne pluriannuelle par MC
+fpoc_moyen_mc <- colMeans(fpoc_annuel_mat)
+
+flux_annuel_moyen <- mean(fpoc_moyen_mc)
+flux_annuel_sd    <- sd(fpoc_moyen_mc)
+
+quantile(fpoc_moyen_mc, c(0.05, 0.5, 0.95))
+
+# variabilité interannuelle (signal)
+var_inter <- var(rowMeans(fpoc_annuel_mat))
+
+# incertitude (bruit)
+var_uncert <- mean(apply(fpoc_annuel_mat, 1, var))
 ```
 
 # Estimation of annual POC fluxes, time steps
