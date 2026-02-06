@@ -1,8 +1,11 @@
 ---
-title: "isere"
+title: "Isere Campus"
 output: 
   html_document:
     code_folding: hide
+    toc: true
+    toc_float: true
+    number_section: true
 date: "2025-06-30"
 ---
 
@@ -24,7 +27,7 @@ library(bayesbio)
 ```
 
 
-# Isère Campus
+# Données
 
 Les données dont on dispose pour la station de mesures d'Isère - campus sont: 
 
@@ -38,7 +41,7 @@ Les données dont on dispose pour la station de mesures d'Isère - campus sont:
   - Carbonisère: suivi hebdo de 2006 à 2008 + crue du 19 mai 2006  + chasse du 27/06/2006 + crue du 30/08/2006 + chasse du 5/06/2006
   - suivi hebdo Carbonium (pas encore dispo)
 
-
+## Charger les données
 
 ```{r data}
 
@@ -78,8 +81,16 @@ isere$commondate <- as.Date(paste0("2000-", format(isere$Date,"%j")), "%Y-%j")
 
 isere$period <- as.numeric(-(isere$DateHeure - lead(isere$DateHeure))) # period in s
 
-isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()) %>% knitr::kable()
-isere %>% subset(!is.na(cmes_g.L) & !is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_cmes = n()) %>% knitr::kable()
+summary_isere <- merge(
+isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()),
+isere %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n()),
+by = "year", all = T) %>% 
+  merge(isere %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_doc = n()), by = "year", all = T) %>%
+  merge(isere %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>%
+  merge(isere %>% subset(!is.na(period)) %>% group_by(year) %>% summarise(total_period_j = sum(period)/(24*60*60)), by = "year", all = T)
+  
+summary_isere %>% knitr::kable(caption = "Nombre d'observations de DOC, POC, CMES et débit par an") %>% kableExtra::kable_styling()
+
 
 ```
 
@@ -103,7 +114,8 @@ ggplot(isere, aes(x = commondate)) +
   theme(legend.position = "bottom"),
 
 ncol = 2
-)
+) %>%
+  annotate_figure(top = text_grob("Mesures de débit et CMES", face = "bold", size = 14))
 
 ```
 
@@ -128,17 +140,22 @@ ggplot(subset(isere, !is.na(poc_percent)), aes(x = commondate)) +
   theme(legend.position = "bottom"),
 
 ncol = 2
-)
+) %>%
+  annotate_figure(top = text_grob("Mesures de DOC et POC", face = "bold", size = 14))
 
 
 
 ```
+
+Les mesures de POC sont réalisées parallèlement à des mesures de MES. La valeur de *MES* mesurée à cette occasion est légèrement différente de la valeur de *CMES* reconstruire à partir des sondes de turbidité. 
 
 ```{r compare-cmes-and-mes}
 ggplot(isere)+
   geom_point(aes(x=cmes_g.L, y = mes_mg.L, col = name))+
   geom_abline(slope = 1000, intercept = 0)+
   scale_colour_viridis_d()+
+  labs(title = "Comparaison entre CMES et MES", x = "CMES, g/L", y = "MES, mg/L")+
+  scale_x_continuous(limits = c(0,20))+ 
   theme_minimal()
 
 ggarrange(
@@ -146,20 +163,25 @@ ggarrange(
     geom_point(aes(x = mes_mg.L, y = poc_percent, col = name))+
     scale_color_viridis_d()+
     scale_x_continuous(trans = "log")+scale_y_continuous(trans = "log")+
+    labs( x = "MES, mg/L", y = "POC%")+
     theme_minimal(),
   ggplot(isere)+
     geom_point(aes(x = cmes_g.L, y = poc_percent, col = name))+
         scale_color_viridis_d()+
       scale_x_continuous(trans = "log")+scale_y_continuous(trans = "log")+
+        labs( x = "CMES, g/L", y = "POC%")+
     theme_minimal(),
   ncol = 2, common.legend = T, legend = "bottom"
-)
+) %>%
+  annotate_figure(top = text_grob("POC% et valeur associée de MES et CMES", face = "bold", size = 14))
 
 
 ```
 
 
 ## Example of data - Carbonisere
+
+Visualisation des données de la campagne Carbonisère: DOC et POC mesurés sur les années 2006-2007-2009. 
 
 ```{r view-fluxes}
 
@@ -205,8 +227,14 @@ ggplot(carbonisere)+
 
 # Method - which relation MES-POC to choose?
 
+Objectif: construire la relation MES-POC pour pouvoir reconstruire la chronique de POC à partir de la chronique de MES. Cette relation prend la forme de $POC% = a*MES^b + c$.
 
-## Fit MES-POC
+
+## Fit MES-POC, all events
+
+Modèle de référence. Toutes données disponibles sont utilisées pour fitter la relation MES POC. 
+
+La valeur de l'asymptote (c) est calculée en utilisant le POC% médian correspondants aux 10% des valeurs les plus élevées de MES. Le fit est réalisé sur MES (valeurs mesurées en parallèle du POC).
 
 ```{r fit-poc-mes-forcing-end-value}
 poc_isere <- isere %>% subset(!is.na(poc_percent))
@@ -245,9 +273,13 @@ plot(resid(pocfit)~fitted(pocfit))
 
 ## Should we fit with distinct events ?
 
-Is there a difference between fitting a POC-MES relation when it is event-specific or when we use all values?
+Que se passe-t-il si on n'effectue pas le fit avec tous les évènements mesurés ?
 
-```{r fit-by-event, eval = F}
+### Fit par série
+
+Quelle est la différente de fit si on effectue le fit MES-POC sur chacun des évènements analysées (crue, chasse, suivi)?
+
+```{r fit-by-event, eval = T}
 name_crues <- subset(poc_isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
 
 for(i in name_crues){
@@ -292,6 +324,8 @@ for(i in name_crues){
 
 ```
 
+### All but one fit
+
 ```{r leave-one-out-event-to-fit-the-last, eval = T}
 name_crues <- subset(poc_isere, !is.na(name) & name != "DOC 2011") %>% pull(name) %>% unique()
 
@@ -335,7 +369,7 @@ for(i in name_crues){
  print(g)
 }
 ```
-
+Conclusion: 
 
 ## Extension of POC values to all dataset
 
@@ -355,58 +389,87 @@ ggplot(isere, aes(x = mes_for_fit))+
   theme(legend.position = "bottom")
 
 ```
-Calculer annual flux with POC fitted with nls and POC calculated from straight line
 
-## Annual flux for POC fitted from asymptot
 
-```{r yearly-flux-poc-fitted, eval = T}
-isere$fpoc_kg.s <- with(isere, q_m3.s * 1e3 * (mes_for_fit * tail_value * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+## Quick check: annual flux for POC fitted from asymptot vs annual flux for POC fitted with powerlaw
 
-yearly_fluxes_fitted <- isere %>% 
+Calculer annual flux with POC fitted with nls and POC calculated from straight line.
+
+```{r yearly-flux-poc-fitted-asymptot, eval = T}
+isere$fpoc_kg.s1 <- with(isere, q_m3.s * 1e3 * (mes_for_fit * tail_value * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+
+yearly_fluxes_fitted1 <- isere %>% 
                   group_by(year) %>% 
-                    summarise(fpoc_kg.year = sum(fpoc_kg.s * period, na.rm = T),
+                    summarise(fpoc_kg.year = sum(fpoc_kg.s1 * period, na.rm = T),
                               mean_annual_q = mean(q_m3.s, na.rm = T))
 
-knitr::kable(yearly_fluxes_fitted)
+mean_interannual_fpoc <- mean(yearly_fluxes_fitted1$fpoc_kg.year, na.rm = T)
 
 n <- 30
 
-ggplot(yearly_fluxes_fitted, aes(x = year))+
+ggplot(yearly_fluxes_fitted1, aes(x = year))+
   geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
   geom_line(aes(y = mean_annual_q*n))+
+  geom_abline(slope = 0, intercept = mean_interannual_fpoc/5570, col = "darkred")+
   scale_y_continuous(
     name = "Flux de POC, kg/year/km2",
     sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
-  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  labs(title = "FPOC, from tail value",
+       x = paste("Mean interannual flux =", round(mean_interannual_fpoc/5570,0)), 
+       y = "Flux de POC, kg/year/km2")+
   theme_minimal()
+
+
 ```
-
-## Annual flux for POC fitted with power law - REFERENCE
-
 ```{r yearly-flux-poc-fitted, eval = T}
-isere$fpoc_kg.s <- with(isere, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+isere$fpoc_kg.s2 <- with(isere, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
 
-yearly_fluxes_fitted <- isere %>% 
+yearly_fluxes_fitted2 <- isere %>% 
                   group_by(year) %>% 
-                    summarise(fpoc_kg.year = sum(fpoc_kg.s * period, na.rm = T),
+                    summarise(fpoc_kg.year = sum(fpoc_kg.s2 * period, na.rm = T),
                               mean_annual_q = mean(q_m3.s, na.rm = T),
                               nb_datapoints = sum(!is.na(poc_fitted))
                               )
 
-
-knitr::kable(yearly_fluxes_fitted)
+mean_interannual_fpoc <- mean(yearly_fluxes_fitted2$fpoc_kg.year, na.rm = T)
 
 n <- 30
 
-ggplot(yearly_fluxes_fitted, aes(x = year))+
+ggplot(yearly_fluxes_fitted2, aes(x = year))+
   geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
   geom_line(aes(y = mean_annual_q*n))+
+    geom_abline(slope = 0, intercept = mean_interannual_fpoc/5570, col = "darkred")+
   scale_y_continuous(
     name = "Flux de POC, kg/year/km2",
     sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
-  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  labs(title = "FPOC, from powerlaw", 
+       x = paste("Mean interannual flux =", round(mean_interannual_fpoc/5570,0)), 
+       y = "Flux de POC, kg/year/km2")+
   theme_minimal()
 ```
+
+```{r View-fits}
+poc_fits <- rbind(mutate(yearly_fluxes_fitted1, "method" = "tail"), 
+                  mutate(select(yearly_fluxes_fitted2, c(year,fpoc_kg.year,mean_annual_q)), "method" = "powerlaw"))
+
+n <- 30
+
+ggplot(poc_fits, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570, fill = method), position = "dodge")+
+  geom_point(aes(y = mean_annual_q*n))+
+  scale_y_continuous(
+    name = "Flux de POC, kg/year/km2",
+    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
+  scale_fill_manual(values = c("palegreen4","lightblue"))+
+  labs(y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+
+# FPOC annuel et interannuel avec incertitude (Monte Carlo)
+
 ```{r uncertainty-annual-flux, eval = F}
 q_u <- 0.1 # from Cedric
 
@@ -465,6 +528,14 @@ list_isere_mc[[j]] <- rbind(df_mc)
 
 ```
 
+*list_isere_mc* contient 19 éléments: 1 par année de mesure. 
+Chaque élément est une matrice. Chaque ligne correspond à une mesure/date. Les colonnes sont les n itérations de Monte Carlo correspondant à cette mesure. Elles sont calculées en tirant aléatoirement une valeur de q (débit), mes, a et b (les coefficients de la loi puissance ).
+
+Dans fpoc_annuel_mc, on calcule le flux annuel correspondant à l'itération n du tirage précédent. On obtient ainsi n valeurs de flux annuel. A partir de ces n valeurs, on calcule le flux de carbone moyen et son intervalle de confiance PAR ANNEE. Ces flux moyens sont stockés dans *fpoc_annuel_mc*. C'est une liste de 19 vecteurs, contenant chacun n flux annuels moyens correspondant à chacune des années de mesure. On en retire le flux moyen annuel *fpoc_annuel_moyen*, la déviation standard *fpoc_annuel_sd* et l'intervalle de confiance *fpoc_annuel_ic* en prenant la moyenne, sd et quantiles de *fpoc_annuel_mc*.
+
+On cherche ensuite à obtenir le flux annuel moyen INTERRANNUEL et son invervalle de confiance. On rassemble les 19 vecteurs de  *fpoc_annuel_mc* dans *fpoc_annuel_mat*. Le résultat est une matrice à 19 lignes et n colonnes. On calcule alors n flux annuels moyens stochés dans *fpoc_interannuel_mc* en faisant une moyenne par colonne. On en retire le flux interannuel moyen *fpoc_interannuel_moyen*, la déviation standard *fpoc_interannuel_sd* et l'intervalle de confiance *fpoc_interannuel_ic* en prenant la moyenne, sd et quantiles de *fpoc_interannuel_mc*.
+
+
 ```{r uncertainty-opti-chatgpt}
 N_MC <- 1000
 set.seed(202)
@@ -482,6 +553,173 @@ b_u <- summary(pocfit)$coefficients[4]
 coef_poc <- coef(pocfit)
 a_mean <- coef_poc[1]
 b_mean <- coef_poc[2]
+
+isere$year <- as.factor(isere$year)
+list_isere <-  isere %>% group_split(year)
+list_isere <- lapply(list_isere, as.data.frame)
+list_isere_mc <- list()
+
+list_isere_mc <- vector("list", length(list_isere))
+
+for (j in seq_along(list_isere)) {
+
+  df <- list_isere[[j]]
+  n  <- nrow(df)
+
+    # matrice [temps x MC]
+  fpoc_mc <- matrix(NA_real_, nrow = n, ncol = N_MC)
+
+  for (i in seq_len(n)) {
+
+    qn   <- rnorm(N_MC, df$q_m3.s[i], q_u)
+    mesn <- rnorm(N_MC, df$mes_for_fit[i], mes_u)
+    an   <- rnorm(N_MC, a_mean, a_u)
+    bn   <- rnorm(N_MC, b_mean, b_u)
+
+    pocn <- an * mesn^bn + tail_value
+
+    fpoc_mc[i, ] <-
+      qn * 1e3 *
+      (mesn * pocn * 1e-2) *
+      1e-6 *
+      df$period[i]
+  }
+
+  list_isere_mc[[j]] <- fpoc_mc
+
+  # stats instantanées 
+  list_isere[[j]]$fpoc_mc_mean <- rowMeans(fpoc_mc)
+  list_isere[[j]]$fpoc_mc_sd   <- apply(fpoc_mc, 1, sd)
+}
+```
+
+```{r uncertainty-annual-interannual}
+# Calcul des flux annuels avec incertitude - test année 1. On calcule 1000 flux annuels dont on prend la moyenne puis la sd
+fpoc_mc <- list_isere_mc[[1]]
+fpoc_annual_mc <- colSums(fpoc_mc, na.rm = TRUE)
+mean(fpoc_annual_mc)
+sd(fpoc_annual_mc)
+
+quantile(fpoc_annual_mc, c(0.05, 0.5, 0.95))
+
+# check 
+sum(fpoc_mc, na.rm = T) / 1000
+
+# moyenne interannuelle: pour chaque élément de la liste isère, on calcule la somme des colonnes 
+fpoc_annuel_mc <- lapply(list_isere_mc, function(mat) {
+  colSums(mat, na.rm = TRUE)
+})
+
+# matrice [année x MC]
+fpoc_annuel_mat <- do.call(rbind, fpoc_annuel_mc)
+
+# flux moyens annuels et intervalle de confiance
+fpoc_annuel_mean <- rowMeans(fpoc_annuel_mat)
+
+fpoc_annuel_sd  <- apply(fpoc_annuel_mat, 1,sd)
+
+fpoc_annuel_quantile  <- apply(fpoc_annuel_mat, 1, quantile, c(0.05, 0.5, 0.95))
+
+fpoc_annuel <- data.frame(year = unique(isere$year), 
+                          mean = fpoc_annuel_mean, 
+                          sd = fpoc_annuel_sd, 
+                          percent5 = fpoc_annuel_quantile[1,], 
+                          percent50 = fpoc_annuel_quantile[2,],
+                          percent95 = fpoc_annuel_quantile[3,])
+
+
+# moyenne pluriannuelle par MC
+fpoc_interannuel_mc <- colMeans(fpoc_annuel_mat)
+
+fpoc_interannuel_moyen <- mean(fpoc_interannuel_mc)
+fpoc_interannuel_sd    <- sd(fpoc_interannuel_mc)
+
+fpoc_interannuel_ic <- quantile(fpoc_interannuel_mc, c(0.05, 0.5, 0.95))
+
+all_fpoc <- rbind(fpoc_annuel, data.frame(year = "interannual", mean = fpoc_interannuel_moyen, sd = fpoc_interannuel_sd, percent5 = fpoc_interannuel_ic[1], percent50 = fpoc_interannuel_ic[2], percent95 = fpoc_interannuel_ic[3]))
+
+
+all_fpoc %>% knitr::kable() %>% kableExtra::kable_styling()
+
+# variabilité interannuelle (signal)
+var_inter <- var(rowMeans(fpoc_annuel_mat))
+
+# incertitude (bruit)
+var_uncert <- mean(apply(fpoc_annuel_mat, 1, var))
+
+ggplot(fpoc_annuel) + 
+  geom_col(aes(x = year, y = mean/5570), fill = "palegreen4")+
+  geom_errorbar(aes(x = year, ymin = percent5/5570, ymax = percent95/5570), width = 0.2)+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  geom_abline(intercept = fpoc_interannuel_moyen/5570, slope = 0, col = "lightblue")+
+  geom_rect(aes(xmin = min(as.numeric(fpoc_annuel$year)-0.5), 
+                xmax = max(as.numeric(fpoc_annuel$year)+0.5), 
+                ymin = fpoc_interannuel_ic[1]/5570, 
+                ymax = fpoc_interannuel_ic[3]/5570), 
+            fill = "darkred", alpha = 0.5)+
+  theme_minimal()
+
+```
+
+# Estimation of annual POC fluxes, time steps, without uncertainty
+
+```{r time-steps}
+isere$day <- isere$DateHeure %>% format("%Y-%m-%d")
+isere$week <- week(isere$DateHeure)
+isere$month <- month(isere$DateHeure)
+```
+
+
+## Daily means
+
+```{r dayly-flux-poc-fitted, eval = T}
+isere_day <- isere %>% group_by(day) %>% summarise(q_m3.s = mean(q_m3.s, na.rm = T), mes_for_fit = mean(mes_for_fit, na.rm = T), mes_for_fit_sd = sd(mes_for_fit, na.rm = T), poc_fitted = mean(poc_fitted, na.rm = T), year = first(year))
+
+
+isere_day$fpoc_kg.d <- with(isere_day, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
+
+day_fluxes_fitted <- isere_day %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.d * 24*60*60, na.rm = T),
+                              mean_annual_q = mean(q_m3.s, na.rm = T),
+                              nb_datapoints = sum(!is.na(poc_fitted)))
+
+knitr::kable(day_fluxes_fitted)
+
+n <- 30
+
+ggplot(day_fluxes_fitted, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
+  geom_line(aes(y = mean_annual_q*n))+
+  scale_y_continuous(
+    name = "Flux de POC, kg/year/km2",
+    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
+  labs(x = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()
+```
+
+```{r daily-mean-with-uncertainty}
+N_MC <- 1000
+set.seed(202)
+
+q_u <- 0.1 # from Cedric
+
+poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
+fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
+summary(fit_cmes)
+
+mes_u <- summary(fit_cmes)$coefficients[4]
+a_u <- summary(pocfit)$coefficients[3]
+b_u <- summary(pocfit)$coefficients[4]
+
+coef_poc <- coef(pocfit)
+a_mean <- coef_poc[1]
+b_mean <- coef_poc[2]
+
+isere$year <- as.factor(isere$year)
+list_isere <-  isere %>% group_split(year)
+list_isere <- lapply(list_isere, as.data.frame)
+list_isere_mc <- list()
 
 list_isere_mc <- vector("list", length(list_isere))
 
@@ -518,83 +756,9 @@ for (j in seq_along(list_isere)) {
 ```
 
 
-```{r uncertainty-annual-test}
-# Calcul des flux annuels avec incertitude - test année 1. On calcule 1000 flux annuels dont on prend la moyenne puis la sd
-fpoc_mc <- list_isere_mc[[1]]
-fpoc_annual_mc <- colSums(fpoc_mc, na.rm = TRUE)
-mean(fpoc_annual_mc)
-sd(fpoc_annual_mc)
-
-quantile(fpoc_annual_mc, c(0.05, 0.5, 0.95))
-
-# check 
-sum(fpoc_mc, na.rm = T) / 1000
-
-# moyenne interannuelle
-fpoc_annuel_mc <- lapply(list_isere_mc, function(mat) {
-  colSums(mat, na.rm = TRUE)
-})
-
-# matrice [année x MC]
-fpoc_annuel_mat <- do.call(rbind, fpoc_annuel_mc)
-
-# moyenne pluriannuelle par MC
-fpoc_moyen_mc <- colMeans(fpoc_annuel_mat)
-
-flux_annuel_moyen <- mean(fpoc_moyen_mc)
-flux_annuel_sd    <- sd(fpoc_moyen_mc)
-
-quantile(fpoc_moyen_mc, c(0.05, 0.5, 0.95))
-
-# variabilité interannuelle (signal)
-var_inter <- var(rowMeans(fpoc_annuel_mat))
-
-# incertitude (bruit)
-var_uncert <- mean(apply(fpoc_annuel_mat, 1, var))
-```
-
-# Estimation of annual POC fluxes, time steps
-
-```{r time-steps}
-isere$day <- isere$DateHeure %>% format("%Y-%m-%d")
-isere$week <- week(isere$DateHeure)
-isere$month <- month(isere$DateHeure)
-```
-
-
-## Daily means
-
-```{r yearly-flux-poc-fitted, eval = T}
-isere_day <- isere %>% group_by(day) %>% summarise(q_m3.s = mean(q_m3.s, na.rm = T), mes_for_fit = mean(mes_for_fit, na.rm = T), poc_fitted = mean(poc_fitted, na.rm = T), year = first(year))
-
-
-isere_day$fpoc_kg.d <- with(isere_day, q_m3.s * 1e3 * (mes_for_fit * poc_fitted * 1e-2) * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s
-
-day_fluxes_fitted <- isere_day %>% 
-                  group_by(year) %>% 
-                    summarise(fpoc_kg.year = sum(fpoc_kg.d * 24*60*60, na.rm = T),
-                              mean_annual_q = mean(q_m3.s, na.rm = T),
-                              nb_datapoints = sum(!is.na(poc_fitted)))
-
-knitr::kable(day_fluxes_fitted)
-
-n <- 30
-
-ggplot(day_fluxes_fitted, aes(x = year))+
-  geom_col(aes(y = fpoc_kg.year/5570), fill = "palegreen4")+
-  geom_line(aes(y = mean_annual_q*n))+
-  scale_y_continuous(
-    name = "Flux de POC, kg/year/km2",
-    sec.axis = sec_axis(~./n, name = "Débit moyen annuel, m3/s"))+
-  labs(x = "", y = "Flux de POC, kg/year/km2")+
-  theme_minimal()
-
-```
-
-
 ## Weekly means
 
-```{r yearly-flux-poc-fitted, eval = T}
+```{r weekly-flux-poc-fitted, eval = T}
 isere_week <- isere %>% group_by(week,year) %>% summarise(q_m3.s = mean(q_m3.s, na.rm = T), mes_for_fit = mean(mes_for_fit, na.rm = T), poc_fitted = mean(poc_fitted, na.rm = T))
 
 
@@ -623,7 +787,7 @@ ggplot(week_fluxes_fitted, aes(x = year))+
 
 ## Monthly means
 
-```{r yearly-flux-poc-fitted, eval = T}
+```{r monthly-flux-poc-fitted, eval = T}
 isere_month <- isere %>% group_by(month,year) %>% summarise(q_m3.s = mean(q_m3.s, na.rm = T), mes_for_fit = mean(mes_for_fit, na.rm = T), poc_fitted = mean(poc_fitted, na.rm = T))
 
 
@@ -674,7 +838,6 @@ ggplot(yearly_fluxes_long, aes(x = year))+
   scale_fill_manual(values = c("1.hourly" = "darkblue", "2.daily" = "lightblue", "3.weekly" = "palegreen4", "4.monthly" = "honeydew3"))+
   scale_y_continuous(name = "Flux de POC, kg/year/km2")+
   labs(x = "", y = "Flux de POC, kg/year/km2")+
-  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
   theme_minimal()+
   theme(legend.position = "bottom")
 
@@ -810,127 +973,3 @@ knitr::kable(t(means), digits = 3) %>% kableExtra::kable_styling()
 ```
 
 
-
-
-
-
-See the Isere file is OSR
-
-# Isère - Beaumont
-
-```{r data-beaumont, eval = F}
-cmes <- read_xlsx("OSR/isere.xlsx", sheet = "CMES", col_types = c("date","numeric","text")) 
-poc <- read_xlsx("OSR/isere.xlsx", sheet = "COP") %>% subset(Qualite = "v") 
-debit <- read_xlsx("OSR/isere.xlsx", sheet = "Debit", col_types = c("date", "numeric","text","text","text","text"))
-
-poc$poc_timeinterval <- poc$Debut %--% poc$Fin
-```
-
-```{r plot-data, eval = F}
-ggpubr::ggarrange(
-ggplot(poc)+geom_point(aes(x= Debut, y = COP_g.kg)) + labs(x="Date", y = "POC, g(C)/kg(MES)"),
-ggplot(cmes)+geom_line(aes(x= DateHeure, y = cmes_mg.L)) + labs(x="Date", y = "MES, mg/L"),
-ggplot(debit)+geom_line(aes(x= DateHeure, y = q_m3.s)) + labs(x="Date", y = "Discharge, m3/s"),
-nrow = 3
-)
-```
-```{r missing-dates-debit, eval = F}
-
-dates_debit <- debit %>% tidyr::complete(DateHeure = seq(min(DateHeure), max(DateHeure), by = "1 hour"))
-percent_missing <- (dim(dates_debit)[1] - dim(debit)[1])/dim(dates_debit)[1] * 100 
-
-print(paste("Percent missing : ",round(percent_missing, 2), "%"))
-
-```
-```{r merge-poc-mes, eval = F}
-
-na_interval <- poc$Fin[86] %--% poc$Debut[1]  %>% as.character()
-
-# poc$poc_timeinterval[debit$DateHeure[100] >= poc$Debut & debit$DateHeure[100] <= poc$Fin]
-
-debit_timeinterval <- sapply(debit$DateHeure, FUN = function (x){as.character(poc$poc_timeinterval[x >= poc$Debut & x <= poc$Fin]), eval = F}, simplify = T)
-na_timeinterval <- which(lengths(debit_timeinterval) == 0)
-debit_timeinterval[na_timeinterval] <- na_interval
-
-debit$poc_timeinterval <- do.call(c, (debit_timeinterval))
-
-```
-
-```{r join-cmes-poc-debit, eval = F}
-
-isere <- merge(debit, poc, by = "poc_timeinterval", all = T) %>% merge(cmes, by = "DateHeure", all = T)
-
-
-library(imputeTS)
-isere$cmes_interpol <- na_interpolation(isere$cmes_mg.L, maxgap = 24) # impossible to interpol
-
-```
-
-```{r plot-data-2, eval = F}
-isere$year <- year(isere$DateHeure)
-isere$commondate <- as.Date(paste0("2000-", format(isere$DateHeure,"%j")), "%Y-%j")
-isere$commondebut <- as.Date(paste0("2000-", format(isere$Debut,"%j")), "%Y-%j")
-isere$commonfin <- as.Date(paste0("2000-", format(isere$Fin,"%j")), "%Y-%j")
-
-for(i in unique(isere$year)){
-g <- ggplot(data = filter(isere, year == i))+ 
-  geom_point(aes(x=DateHeure, y= cmes_mg.L, col="MES, g/L"), alpha = 0.5, size = 0.5) +
-  geom_segment(aes(x=Debut, xend = Fin, y = COP_g.kg*50, yend = COP_g.kg*50), col = "lightblue", size = 1)+
-  geom_segment(aes(x=Debut, xend = Debut, y = 0, yend = COP_g.kg*50), col = "lightblue", alpha = 0.5, size = 0.1)+
-  geom_segment(aes(x=Fin, xend = Fin, y = 0, yend = COP_g.kg), col = "lightblue", alpha = 0.5, size = 0.1)+
-  scale_color_manual(values = "palegreen4")+
-  #scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
-  scale_y_continuous( name = "MES, mg/L", sec.axis = sec_axis(~./50, name = "POC, g/kg"))+
-  labs(title = i, x = "")+
-  theme_minimal()+
-  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
-  
-  print(g)
-, eval = F}
-
-```
-
-
-```{r calcul-flux, eval = F} 
-isere_complete <- isere %>% subset(!is.na(q_m3.s))
-bv <-  11800  # taille du bassin versant en km2, de Justin
-
-
-isere_complete$fpoc_kg.h <- with(isere_complete, q_m3.s * 1e3 *3600 * cmes_interpol*1e-6 * COP_g.kg * 1e-3 ) # discharge converted from m3/s to L/h; CMES converted from mg/L to kg/L, POC is obtained in g/L/h and converted to kg/L/h
-
-ggplot()+ 
-  geom_point(data = subset(isere_complete, !is.na(cmes_mg.L)),aes(x=DateHeure, y= fpoc_kg.h,col="cmes mg/L"), alpha = 0.5, size = 0.5) +
-  scale_color_manual(values = "palegreen4")+
-  scale_y_continuous(transform = "log10")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-
-yearly_fluxes <- isere_complete %>% group_by(year) %>% summarise(fpoc_kg.year = sum(fpoc_kg.h, na.rm = T), percent_of_year_included = sum(!is.na(fpoc_kg.h))/n()*100, sum_discharge_L.year = sum(q_m3.s * 1e3 * 3600), mean_discharge_L.year = mean(q_m3.s * 1e3 * 3600, na.rm = T), sd_discharge_L.year = sd(q_m3.s * 1e3 * 3600, na.rm = T)) 
-# discharge is converted from m3/s to L/h before being summed, as in the formula for fpoc
-
-# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
-yearly_fluxes$fpoc_kg.year.km2 <- yearly_fluxes$fpoc_kg.year/bv
-
-# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
-yearly_fluxes$fpoc_ww <- with(yearly_fluxes, fpoc_kg.year/sum_discharge_L.year*mean_discharge_L.year) / bv
-
-ggpubr::ggarrange(
-ggplot(yearly_fluxes)+
-  geom_point(aes(x=mean_discharge_L.year, y = sum_discharge_L.year, size = sd_discharge_L.year)) + 
-  geom_text(aes(x=mean_discharge_L.year, y = sum_discharge_L.year , label = year), col = "firebrick"),
-ggplot(yearly_fluxes)+
-  geom_point(aes(y=fpoc_kg.year, x = sum_discharge_L.year, size = sd_discharge_L.year)) + 
-  geom_text(aes(y=fpoc_kg.year, x = sum_discharge_L.year , label = year), col = "firebrick"),
-ncol = 2, common.legend = T, legend = "bottom")
-
-yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable()
-
-ggplot(yearly_fluxes)+
-  geom_line(aes(x=year, y = fpoc_kg.year.km2, col = "FPOC as sum"))+
-  geom_line(aes(x=year, y = fpoc_ww*1e4, col = "FPOC weighted"))+
-  scale_y_continuous( name = "FPOC summed, kg/yearKkm2", sec.axis = sec_axis(~.*1e-4, name = "FPOC weighted, kg/year/km2"))+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  
-  theme_minimal()
-```
