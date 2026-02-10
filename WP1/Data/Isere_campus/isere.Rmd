@@ -244,13 +244,13 @@ poc_isere$mes_for_fit[which(is.na(poc_isere$mes_for_fit))] <- poc_isere$cmes_g.L
 poc_isere <- poc_isere %>% subset(!is.na(mes_for_fit))
 
 # find asymptotic value : arbitrarily decide that it corresponds to the median of the 10% of poc_percent corresponding to the 10% of highest MES values.
-tail_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% median() 
-poc_isere$tail <- tail_value
+aspt_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% median() 
+poc_isere$aspt <- aspt_value
 
 
 #fit nls
 pocfit <- nls(
-  poc_percent ~ a * mes_for_fit^b + tail,
+  poc_percent ~ a * mes_for_fit^b + aspt,
   data = poc_isere,
   start = list(a = 1, b = -0.5)
 )
@@ -268,7 +268,7 @@ boot <- nlsBoot(pocfit, niter = 1000)
 theta_poc <- boot$coefboot
 
 pred.boot <- apply(theta_poc, 1, function (cb){
-  with(as.list(cb), a*poc_isere$mes_for_fit^b + tail_value)
+  with(as.list(cb), a*poc_isere$mes_for_fit^b + aspt_value)
 })
 ci <- apply(pred.boot, 1, quantile, probs = c(0.025, 0.975))
 poc_isere$poc_fitted_ci_low <- ci[1,]
@@ -276,29 +276,46 @@ poc_isere$poc_fitted_ci_high <- ci[2,]
 poc_isere$poc_fitted_boot <- apply(pred.boot, 1, mean) #identique à poc_nls_fitted
 
 # plot
-formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(tail_value,2))
+formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(aspt_value,2))
 
 
 ggplot(poc_isere)+
   geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
   geom_point(aes(x=mes_for_fit, y = poc_fitted_boot, col = "fitted", shape = "fitted"))+ 
   geom_ribbon(aes(x = mes_for_fit, ymin = poc_fitted_ci_low, ymax = poc_fitted_ci_high), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = tail_value, col = "darkred")+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfit, x = Inf, y = 5, hjust = 1.1, vjust = 1.1)+
   scale_color_manual(values = c("darkblue", "lightblue"))+
   labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
   theme_minimal()
 
 #plot residuals -> check 
-plot(resid(pocfit)~fitted(pocfit))
+plot(abs(resid(pocfit))~fitted(pocfit))
 
+```
+In this model, the residuals are heteroskedatic (noise increases with POC%). To solve this, we will try to model the noise based on x. 
+
+```{r variance-model}
+pocfit2 <- nlme::nlme(poc_percent ~ a*mes_for_fit^b+aspt,
+                      data = poc_isere,
+                      start = list(a = 1, b = -0.5),
+                          fixed = a+b ~ 1, 
+                          weights = nlme::varPower(form = ~ mes_for_fit ^ b),
+                      na.action = na.exclude
+                      )
+
+### ne marche pas !
 ```
 
 ## Extension of POC values to all dataset
 
+The uncertainty of MES has to be included already in the prediction. 
+
 ```{r all-poc}
 isere$mes_for_fit <- isere$cmes_g.L * 1e3 
 isere$mes_for_fit <- ifelse(isere$mes_for_fit ==0, NA, isere$mes_for_fit)
+
+nrow_isere <- nrow(isere)
 
 # predicted 
 isere$poc_fitted <- predict(pocfit, newdata = isere) 
@@ -315,24 +332,37 @@ mes_u <- summary(fit_cmes)$coefficients[4]
 
 ######## ADD THIS IN THE NEXT STEPSSSS ##### SEE MY DEAR FRIEND CHATGPT
 
+mes_mat <- matrix(NA_real_, nrow = 1000, ncol = nrow_isere)
+
+for(i in 1:nrow(isere)){
+  mes_mat[,i] <-rnorm(1000, mean = isere$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
+}
+
+
 ## model function 
 f <- function(x, a, b){
-  a * x ^ b + tail_value
+  a * x ^ b + aspt_value
 }
 
 ## bootstrapping of the distribution of the mean response
 
 nrow_theta <- nrow(theta_poc)
-nrow_isere <- nrow(isere)
 
+
+### version avec matrice de mes
 mu_nls <- matrix(NA_real_, nrow = nrow_theta, ncol = nrow_isere)
 for(i in 1:nrow_theta){
-   mu_nls[i,] <- with(as.list(theta_poc[i,]), # listing the coefficients allows to have 2 named numerics to be used in the function
-                      f(isere$mes_for_fit, a, b))
+   mu_nls[i,] <- with(as.list(theta_poc[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
+                      f(mes_mat[i, ], a, b))
 }
 
+
+isere$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
+
 ## adds noise
-pred_nls <- mu_nls + matrix(rnorm(n = nrow_theta*nrow_isere, mean = 0, sd = sigma_poc), nrow = nrow_theta)
+pred_nls <- mu_nls + matrix(rnorm(n = nrow_theta*nrow_isere, mean = 0, sd = sigma_poc), nrow = nrow_theta) #sigma is the standard deviation of the random error term
+
+isere$poc_var_tot <- apply(pred_nls, 2, var) # total variance, for prediction uncertainty
 
 ## computes prediction interval 
 pi <- t(
@@ -354,7 +384,7 @@ ggplot(isere, aes(x = mes_for_fit))+
   geom_point(aes(y = poc_fitted, col = "fitted with all events"))+
   labs(x = "MES, mg.L", y = "POC, %", col = "")+
   scale_color_manual(values = c("darkblue","lightblue"))+
-  geom_abline(slope = 0, intercept = tail_value, col = "darkred")+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfit, x = Inf, y = 5, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
   theme_minimal()+
@@ -362,6 +392,38 @@ ggplot(isere, aes(x = mes_for_fit))+
 
 ```
 
+```{r variance-decomposition}
+
+# model uncertainty: one value for MES, 1000 values for coefs
+
+mu_model <- matrix(NA_real_, nrow = nrow_theta, ncol = nrow_isere)
+for(i in 1:nrow_theta){
+   mu_model[i,] <- with(as.list(theta_poc[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
+                      f(isere$mes_for_fit, a, b))
+}
+
+isere$poc_var_model <- apply(mu_model, 2, var)
+var_model_mean <- mean(var_model)
+
+# MES uncertainty: one value per coef, 1000 values for MES
+thetas <- coef(pocfit)
+mu_mes <-  f(mes_mat, thetas[1], thetas[2])
+
+isere$poc_var_mes <- apply(mu_mes, 2, var)
+var_mes_mean <- mean(var_mes)
+
+ggplot(isere, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_var_model, col = "model"), alpha = 0.5)+
+  geom_line(aes(y = poc_var_mes, col = "mes"))+
+  geom_line(aes(y = poc_var_mean, col = "mean variance"), linetype = "dashed")+
+  labs(x = "MES, mg.L", y = "Variance", col = "")+
+  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000,10000))+
+  scale_color_manual(values = c("darkblue","lightblue","darkred"))+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+Pour des hautes valeurs de MES: la variance du modèle ne vient que du bruit, elle est proche de zéro sinon. Celle qui vient du modèle, celle qui vient des MES, et la variance moyenne du modèle. 
 
 ## Test : should we fit with distinct events ?
 
