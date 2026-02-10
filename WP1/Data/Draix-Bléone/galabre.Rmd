@@ -35,14 +35,31 @@ crues <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Crues")
 mes <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "SSC", col_types = c("date","numeric")) 
 
 debit <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Debit", col_types = c("date","numeric")) 
-debit$commondate <- as.Date(paste0("2000-", format(debit$DateHeure,"%j")), "%Y-%j")
-debit$year <- year(debit$DateHeure)
 
-galabre <- merge(debit, mes, by = "DateHeure")
+galabre_old <- merge(debit, mes, by = "DateHeure")
 
-debit_new <- readxl::read_xlsx(path = "Galabre_outlet.xlsx")
-debit_new$commondate <- as.Date(paste0("2000-", format(debit_new$DateHeure,"%j")), "%Y-%j")
-debit_new$year <- year(debit_new$DateHeure)
+galabre_new <- readxl::read_xlsx(path = "Galabre_outlet.xlsx")
+
+
+galabre_tot <- rbind(galabre_old, galabre_new)
+
+galabre <- merge(galabre_tot, crues, by = "DateHeure", all = T)  
+galabre$year <- year(galabre$DateHeure)
+galabre$commondate <- as.Date(paste0("2000-", format(debit$Date,"%j")), "%Y-%j")
+galabre$period <- as.numeric(-(galabre$DateHeure - lead(galabre$DateHeure))) # period in s
+
+# from Isere
+
+summary_galabre <- merge(
+galabre %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()),
+galabre %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n()),
+by = "year", all = T) %>% 
+  merge(galabre %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_doc = n()), by = "year", all = T) %>%
+  merge(galabre %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>%
+  merge(galabre %>% subset(!is.na(period)) %>% group_by(year) %>% summarise(total_period_j = round(sum(period)/(24*60*60))), by = "year", all = T)
+  
+summary_galabre %>% knitr::kable(caption = "Nombre d'observations de DOC, POC, CMES et débit par an") %>% kableExtra::kable_styling()
+
 ```
 
 ## Explore data

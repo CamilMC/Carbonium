@@ -87,7 +87,7 @@ isere %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n(
 by = "year", all = T) %>% 
   merge(isere %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_doc = n()), by = "year", all = T) %>%
   merge(isere %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>%
-  merge(isere %>% subset(!is.na(period)) %>% group_by(year) %>% summarise(total_period_j = sum(period)/(24*60*60)), by = "year", all = T)
+  merge(isere %>% subset(!is.na(period)) %>% group_by(year) %>% summarise(total_period_j = round(sum(period)/(24*60*60))), by = "year", all = T)
   
 summary_isere %>% knitr::kable(caption = "Nombre d'observations de DOC, POC, CMES et débit par an") %>% kableExtra::kable_styling()
 
@@ -227,7 +227,7 @@ ggplot(carbonisere)+
 
 # Method - which relation MES-POC to choose?
 
-Objectif: construire la relation MES-POC pour pouvoir reconstruire la chronique de POC à partir de la chronique de MES. Cette relation prend la forme de $POC% = a*MES^b + c$.
+Objectif: construire la relation MES-POC pour pouvoir reconstruire la chronique de POC à partir de la chronique de MES. Cette relation prend la forme de $POC\% = a*MES^b + c$.
 
 
 ## Fit MES-POC, all events
@@ -238,40 +238,132 @@ La valeur de l'asymptote (c) est calculée en utilisant le POC% médian correspo
 
 ```{r fit-poc-mes-forcing-end-value}
 poc_isere <- isere %>% subset(!is.na(poc_percent))
-
-# find asymptotic value
-tail_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
-
-# add mes for POC 2011
+# add mes for POC 2011 to poc_isere (were not measured, but we have cmes)
 poc_isere$mes_for_fit <- poc_isere$mes_mg.L
 poc_isere$mes_for_fit[which(is.na(poc_isere$mes_for_fit))] <- poc_isere$cmes_g.L[which(is.na(poc_isere$mes_for_fit))]*1e3
+poc_isere <- poc_isere %>% subset(!is.na(mes_for_fit))
+
+# find asymptotic value : arbitrarily decide that it corresponds to the median of the 10% of poc_percent corresponding to the 10% of highest MES values.
+tail_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% median() 
 poc_isere$tail <- tail_value
 
+
+#fit nls
 pocfit <- nls(
   poc_percent ~ a * mes_for_fit^b + tail,
   data = poc_isere,
   start = list(a = 1, b = -0.5)
 )
 
+# summary
 summary(pocfit)
+sigma_poc <- summary(pocfit)$sigma
+
+# predicted values (from original data)
 poc_isere$poc_nls_fitted <- predict(pocfit, poc_isere)
 
+# compute se.fit (not supported by "predict" for nls models) - bootstrap
+library(nlstools)
+boot <- nlsBoot(pocfit, niter = 1000)
+theta_poc <- boot$coefboot
+
+pred.boot <- apply(theta_poc, 1, function (cb){
+  with(as.list(cb), a*poc_isere$mes_for_fit^b + tail_value)
+})
+ci <- apply(pred.boot, 1, quantile, probs = c(0.025, 0.975))
+poc_isere$poc_fitted_ci_low <- ci[1,]
+poc_isere$poc_fitted_ci_high <- ci[2,]
+poc_isere$poc_fitted_boot <- apply(pred.boot, 1, mean) #identique à poc_nls_fitted
+
+# plot
 formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(tail_value,2))
 
+
 ggplot(poc_isere)+
-  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_nls_fitted, col = "fitted"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_fitted_boot, col = "fitted", shape = "fitted"))+ 
+  geom_ribbon(aes(x = mes_for_fit, ymin = poc_fitted_ci_low, ymax = poc_fitted_ci_high), fill = "gray80", alpha = 0.5)+
   geom_abline(slope = 0, intercept = tail_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = 5, hjust = 1.1, vjust = 1.1)+
   scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %")+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
   theme_minimal()
 
+#plot residuals -> check 
 plot(resid(pocfit)~fitted(pocfit))
 
 ```
 
-## Should we fit with distinct events ?
+## Extension of POC values to all dataset
+
+```{r all-poc}
+isere$mes_for_fit <- isere$cmes_g.L * 1e3 
+isere$mes_for_fit <- ifelse(isere$mes_for_fit ==0, NA, isere$mes_for_fit)
+
+# predicted 
+isere$poc_fitted <- predict(pocfit, newdata = isere) 
+
+
+# Prediction interval
+
+## Uncertainty on MES
+poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
+fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
+summary(fit_cmes)
+
+mes_u <- summary(fit_cmes)$coefficients[4]
+
+######## ADD THIS IN THE NEXT STEPSSSS ##### SEE MY DEAR FRIEND CHATGPT
+
+## model function 
+f <- function(x, a, b){
+  a * x ^ b + tail_value
+}
+
+## bootstrapping of the distribution of the mean response
+
+nrow_theta <- nrow(theta_poc)
+nrow_isere <- nrow(isere)
+
+mu_nls <- matrix(NA_real_, nrow = nrow_theta, ncol = nrow_isere)
+for(i in 1:nrow_theta){
+   mu_nls[i,] <- with(as.list(theta_poc[i,]), # listing the coefficients allows to have 2 named numerics to be used in the function
+                      f(isere$mes_for_fit, a, b))
+}
+
+## adds noise
+pred_nls <- mu_nls + matrix(rnorm(n = nrow_theta*nrow_isere, mean = 0, sd = sigma_poc), nrow = nrow_theta)
+
+## computes prediction interval 
+pi <- t(
+  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi) <- c("lower", "upper")
+
+## insert in isere
+isere$poc_pred_upper <- pi[, "upper"]
+isere$poc_pred_lower <- pi[, "lower"]
+
+# plot
+
+ggplot(isere, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), fill = "gray80", alpha = 0.5)+
+  geom_line(aes(y = poc_pred_upper), fill = "gray80", alpha = 0.5)+
+  geom_point(aes(y = poc_percent, col = "measured"))+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"))+
+  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = tail_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = 5, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+
+## Test : should we fit with distinct events ?
 
 Que se passe-t-il si on n'effectue pas le fit avec tous les évènements mesurés ?
 
@@ -309,10 +401,10 @@ for(i in name_crues){
   df$poc_percent_fiti <- predict(fiti, newdata = df)
   
  g <- ggplot(subset(df, name ==i), aes(x = mes_for_fit))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_percent_fiti, col = "fitted only with this event"))+
-  geom_point(aes(y = poc_nls_fitted, col = "fitted with all events"))+
-  labs(title = i, x = "MES, mg.L", y = "POC, %", col = "")+
+  geom_point(aes(y = poc_percent, col = "measured", shape = "measured"), size = 2)+
+  geom_point(aes(y = poc_percent_fiti, col = "fitted only with this event", shape = "fitted only with this event"), size = 2)+
+  geom_point(aes(y = poc_nls_fitted, col = "fitted with all events", shape = "fitted with all events"), size = 2)+
+  labs(title = i, x = "MES, mg.L", y = "POC, %", col = "", shape = "")+
   scale_color_manual(values = c("darkblue","hotpink4","lightblue"))+
   geom_abline(slope = 0, intercept = dfi$tail[1], col = "darkred")+
   annotate(geom = "label", label = formula_fiti, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
@@ -371,27 +463,9 @@ for(i in name_crues){
 ```
 Conclusion: 
 
-## Extension of POC values to all dataset
-
-```{r all-poc}
-isere$mes_for_fit <- isere$cmes_g.L * 1e3 
-isere$mes_for_fit <- ifelse(isere$mes_for_fit ==0, NA, isere$mes_for_fit)
-isere$poc_fitted <- predict(pocfit, newdata = isere) 
-
-ggplot(isere, aes(x = mes_for_fit))+
-  geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"))+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","lightblue"))+
-  geom_abline(slope = 0, intercept = tail_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-```
 
 
-## Quick check: annual flux for POC fitted from asymptot vs annual flux for POC fitted with powerlaw
+## Test: annual flux for POC fitted from asymptot vs annual flux for POC fitted with powerlaw
 
 Calculer annual flux with POC fitted with nls and POC calculated from straight line.
 
@@ -530,6 +604,8 @@ list_isere_mc[[j]] <- rbind(df_mc)
 
 *list_isere_mc* contient 19 éléments: 1 par année de mesure. 
 Chaque élément est une matrice. Chaque ligne correspond à une mesure/date. Les colonnes sont les n itérations de Monte Carlo correspondant à cette mesure. Elles sont calculées en tirant aléatoirement une valeur de q (débit), mes, a et b (les coefficients de la loi puissance ).
+
+On utilise les 1000 itérations du bootsraping effectué lors de la création des intervalles de prédiction du modèle, stockés dans pred_nls.
 
 Dans fpoc_annuel_mc, on calcule le flux annuel correspondant à l'itération n du tirage précédent. On obtient ainsi n valeurs de flux annuel. A partir de ces n valeurs, on calcule le flux de carbone moyen et son intervalle de confiance PAR ANNEE. Ces flux moyens sont stockés dans *fpoc_annuel_mc*. C'est une liste de 19 vecteurs, contenant chacun n flux annuels moyens correspondant à chacune des années de mesure. On en retire le flux moyen annuel *fpoc_annuel_moyen*, la déviation standard *fpoc_annuel_sd* et l'intervalle de confiance *fpoc_annuel_ic* en prenant la moyenne, sd et quantiles de *fpoc_annuel_mc*.
 
@@ -697,6 +773,8 @@ ggplot(day_fluxes_fitted, aes(x = year))+
   labs(x = "", y = "Flux de POC, kg/year/km2")+
   theme_minimal()
 ```
+
+A FAIRE : intégrer l'incertitude due au moyennage par jour (sd?)
 
 ```{r daily-mean-with-uncertainty}
 N_MC <- 1000
