@@ -23,7 +23,7 @@ library(dplyr)
 library(readxl)
 library(lubridate)
 
-library(bayesbio)
+set.seed(1902)
 ```
 
 
@@ -335,419 +335,8 @@ for(i in name_crues){
 
 
 
-## Powerlaw fit, first try
 
-### Fit MES-POC, all events
-
-Modèle de référence. Toutes données disponibles sont utilisées pour fitter la relation MES POC. 
-
-La valeur de l'asymptote (c) est calculée en utilisant le POC% médian correspondants aux 10% des valeurs les plus élevées de MES. Le fit est réalisé sur MES (valeurs mesurées en parallèle du POC).
-
-```{r fit-poc-mes-forcing-end-value, eval = F}
-
-# find asymptotic value : arbitrarily decide that it corresponds to the median of the 10% of poc_percent corresponding to the 10% of highest MES values.
-aspt_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_prop) %>% head(dim(poc_isere)[1]/10) %>% median() 
-poc_isere$aspt <- aspt_value
-
-
-#fit nls
-pocfit <- nls(
-  poc_prop ~ a * mes_for_fit^b + aspt,
-  data = poc_isere,
-  start = list(a = 1, b = -0.5)
-)
-
-# summary
-summary(pocfit)
-sigma_poc <- summary(pocfit)$sigma
-
-# predicted values (from original data)
-poc_isere$poc_nls_fitted <- predict(pocfit, poc_isere)
-
-
-# estimates noise with beta-distribution
-y <- poc_isere$poc_percent
-is_zero <- y == 0
-y_pos <- y[!is_zero]
-p <- poc_isere$poc_nls_fitted[!is_zero]
-
-var_pos <- var(y_pos) # variance of positive observation
-p_mean <- mean(p) #mean of positive pred
-
-phi_hat <- mean(p_mean*(1-p_mean)/var_pos) - 1
-alpha_hat <- p_mean*phi_hat
-beta_hat <- (1 - p)*phi_hat
-
-zero_model <- glm(is_zero ~mes_for_fit, family = binomial, data = poc_isere)
-
-p_zero_hat <- predict(zero_model) # useless here ? Not used in confidence interval
-
-# compute se.fit (not supported by "predict" for nls models) - bootstrap
-library(nlstools)
-boot <- nlsBoot(pocfit, niter = 1000)
-theta_poc <- boot$coefboot
-
-pred.boot <- apply(theta_poc, 1, function (cb){ # cb = coefficients boot: the function applys to each couple of a and b
-  with(as.list(cb), a*poc_isere$mes_for_fit^b + aspt_value)
-})
-ci <- apply(pred.boot, 1, quantile, probs = c(0.025, 0.975))
-poc_isere$poc_fitted_ci_low <- ci[1,]
-poc_isere$poc_fitted_ci_high <- ci[2,]
-poc_isere$poc_fitted_boot <- apply(pred.boot, 1, mean) #identique à poc_nls_fitted
-
-# plot
-formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(aspt_value,2))
-
-
-ggplot(poc_isere)+
-  geom_point(aes(x=mes_for_fit, y = poc_prop, col = "measured", shape = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_fitted_boot, col = "fitted", shape = "fitted"))+ 
-  geom_ribbon(aes(x = mes_for_fit, ymin = poc_fitted_ci_low, ymax = poc_fitted_ci_high), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-#plot residuals -> check 
-plot(abs(resid(pocfit))~fitted(pocfit))
-
-```
-In this model, the residuals are heteroskedastic (noise increases with POC%). To solve this, we will try to model the noise based on x. 
-
-
-
-### Extension of POC values to all dataset
-
-The uncertainty of MES has to be included already in the prediction. 
-
-```{r all-poc, eval = F}
-isere$mes_for_fit <- isere$cmes_g.L * 1e3 
-isere$mes_for_fit <- ifelse(isere$mes_for_fit ==0, NA, isere$mes_for_fit)
-
-isere$poc_prop <- isere$poc_percent / 100
-
-nrow_isere <- nrow(isere)
-
-# predict POC
-isere$poc_fitted <- predict(pocfit, newdata = isere) 
-
-
-# Prediction interval
-
-## Uncertainty on MES
-poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
-fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
-summary(fit_cmes)
-
-mes_u <- summary(fit_cmes)$coefficients[4]
-
-mes_mat <- matrix(NA_real_, nrow = 1000, ncol = nrow_isere)
-
-for(i in 1:nrow(isere)){
-  mes_mat[,i] <-rnorm(1000, mean = isere$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
-}
-
-
-## model function 
-f <- function(x, a, b){
-  a * x ^ b + aspt_value
-}
-
-## bootstrapping of the distribution of the mean response
-
-nrow_theta <- nrow(theta_poc)
-
-
-### version avec matrice de mes
-mu_nls <- matrix(NA_real_, nrow = nrow_theta, ncol = nrow_isere)
-for(i in 1:nrow_theta){
-   mu_nls[i,] <- with(as.list(theta_poc[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat[i, ], a, b))
-}
-
-
-isere$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
-
-
-## adds noise
-
-### mean-dependant noise
-#delta <- coef(lm(log(abs(residuals(pocfit)))~log(fitted(pocfit))))[2] # 1 < delta < 2
-#pred_nls <- mu_nls + matrix(rnorm(n = nrow_theta*nrow_isere, mean = 0, sd = sigma_poc*mu_nls^delta), nrow = nrow_theta) #sigma is the standard deviation of the random error term
-
-### adds noise with sigma_logit
-#pred_nls_logit <- qlogis(mu_nls) + matrix(rnorm(n = nrow_theta*nrow_isere, mean = 0, sd = sigma_logit), nrow = nrow_theta) #sigma is the standard deviation of the random error term
-#pred_nls <- plogis(pred_nls_logit)
-
-
-
-
-### computes variance, y-wise
-isere$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi <- t(
-  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
-colnames(pi) <- c("lower", "upper")
-
-## insert in isere
-isere$poc_pred_upper <- pi[, "upper"]
-isere$poc_pred_lower <- pi[, "lower"]
-
-# plot
-
-ggplot(isere, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), fill = "gray80", alpha = 0.5)+
-  geom_line(aes(y = poc_pred_upper), fill = "gray80", alpha = 0.5)+
-  geom_point(aes(y = poc_prop, col = "measured"))+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"))+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-```
-
-### test beta noise chatgpt
-
-```{r test-beta-noise, eval = F}
-
-### Select data for modeling
-
-nrow_isere <- nrow(isere)
-
-### 1- Fit POC~MES with nls (power law with forced asymptotic value)
-aspt_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_prop) %>% head(dim(poc_isere)[1]/10) %>% median() # computes asymptotic value as the median of POC prop of the 10 higher MES
-poc_isere$aspt <- aspt_value
-
-pocfit <- nls(
-  poc_prop ~ a * mes_for_fit^b + aspt,
-  data = poc_isere,
-  start = list(a = 1, b = -0.5)
-)
-
-sigma_poc <- summary(pocfit)$sigma # sigma is the irreducible noise of the nls model
-
-poc_isere$poc_fitted <- predict(pocfit, poc_isere) # predicted values (from original data)
-plot(residuals(pocfit)~fitted(pocfit)) # heteroskedatiscity -> model noise with beta distribution
-plot(residuals(pocfit)~poc_isere$mes_for_fit) # heteroskedatiscity -> model noise with beta distribution
-
-# compute se.fit (not supported by "predict" for nls models) - bootstrap
-library(nlstools)
-boot <- nlsBoot(pocfit, niter = 1000)
-theta_poc <- boot$coefboot
-
-pred.boot <- apply(theta_poc, 1, function (cb){
-  with(as.list(cb), a*poc_isere$mes_for_fit^b + aspt_value)
-})
-ci <- apply(pred.boot, 1, quantile, probs = c(0.025, 0.975))
-poc_isere$poc_fitted_ci_low <- ci[1,]
-poc_isere$poc_fitted_ci_high <- ci[2,]
-poc_isere$poc_fitted_boot <- apply(pred.boot, 1, mean) #identique à poc_nls_fitted
-
-# plot
-formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(aspt_value,2))
-
-
-ggplot(poc_isere)+
-  geom_point(aes(x=mes_for_fit, y = poc_prop, col = "measured", shape = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_fitted_boot, col = "fitted", shape = "fitted"))+ 
-  geom_ribbon(aes(x = mes_for_fit, ymin = poc_fitted_ci_low, ymax = poc_fitted_ci_high), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-#plot residuals -> check 
-plot(abs(resid(pocfit))~fitted(pocfit))
-
-### NOISE: estimate beta precision from positive residuals
-poc_prop <- poc_isere$poc_prop
-poc_fitted <- poc_isere$poc_fitted
-
-is_zero_obs <- poc_prop == 0
-
-poc_prop_pos <- poc_prop[!is_zero_obs]
-poc_fitted_pos <- poc_fitted[!is_zero_obs]
-
-## empirical variance of positive results
-var_pos <- var(poc_prop_pos - poc_fitted_pos)
-
-## theoretical beta variance = mu(1-mu)/(1+phi) -> approximated phi using mean values
-poc_fitted_mean <- mean(poc_fitted_pos)
-
-phi <- (poc_fitted_mean*(1-poc_fitted_mean)/var(poc_prop_pos)) - 1
-
-
-#### 2 - Predictions
-
-# Prepare data
-isere$mes_for_fit <- isere$cmes_g.L * 1e3 
-isere$mes_for_fit <- ifelse(isere$mes_for_fit ==0, NA, isere$mes_for_fit)
-
-isere$poc_prop <- isere$poc_percent / 100
-
-nrow_isere <- nrow(isere)
-
-# predict mean POC
-isere$poc_fitted <- predict(pocfit, newdata = isere) 
-
-# Uncertainty on MES
-isere$cmes_mg.L <- isere$cmes_g.L * 1000
-fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = isere)
-summary(fit_cmes)
-
-mes_u <- summary(fit_cmes)$coefficients[4]
-
-# matrix of MES in 1000 MC worlds
-mes_mat <- matrix(NA_real_, nrow = 1000, ncol = nrow_isere)
-
-for(i in 1:nrow(isere)){
-  mes_mat[,i] <- rnorm(1000, mean = isere$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
-}
-
-# model function 
-f <- function(x, a, b){
-  a * x ^ b + aspt_value
-}
-
-nrow_theta <- nrow(theta_poc) # from part 1
-
-# matrice de POC intégrant incertitude sur MES et incertitude sur nls coefficients
-
-a_vec <- theta_poc[,"a"]
-b_vec <- theta_poc[,"b"]
-
-mu_nls <- sweep(mes_mat^(matrix(b_vec, nrow_theta,nrow_isere)), 1, a_vec, '*') + aspt_value
-
-isere$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
-
-
-# adds noise to mu_nls
-
-### zero probability model: rare so fitted with constant probability
-p_zero_const <- mean(poc_isere$poc_prop == 0) #proportion de O dans poc_prop
-
-zero_sim_mat <- matrix(
-  rbinom(nrow_theta*nrow_isere, 1, p_zero_const),
-  nrow = nrow_theta
-)
-View(zero_sim_mat) 
-
-# beta parameters
-eps <- 1e-6
-delta <- 1.5
-
-mu_nls <- pmin(pmax(mu_nls, aspt_value + eps), 1 - eps) # forces the mu_nls that would be 0 or 1 to be slightly over or under, so that a beta noise can be predicted
-var_target <- ((mu_nls - aspt_value)^delta) * phi
-
-precision <- mu_nls * (1-mu_nls)/var_target - 1 # total precision parater of the beta distribution
-alpha_mat <- mu_nls*precision
-
-beta_mat  <- (1 - mu_nls) * precision
-
-alpha_mat[alpha_mat <= 0] <- eps
-beta_mat[beta_mat <= 0] <- eps
-
-# beta noise
-beta_sim_mat <- matrix(
-  rbeta(nrow_theta * nrow_isere,
-        shape1 = as.vector(alpha_mat),
-        shape2 = as.vector(beta_mat)),
-  nrow = nrow_theta
-)
-
-pred_nls <- beta_sim_mat # final prediction including noise
-pred_nls[zero_sim_mat == 1] <- 0 # randomly predicts 0 in predicted the 1000 MC worlds of poc_prop, impossible otherwise
-
-
-### computes variance, y-wise
-isere$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi <- t(
-  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
-colnames(pi) <- c("lower", "upper")
-
-## insert in isere
-isere$poc_pred_upper <- pi[, "upper"]
-isere$poc_pred_lower <- pi[, "lower"]
-
-# plot
-
-ggplot(isere, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), fill = "gray80", alpha = 0.5)+
-  geom_line(aes(y = poc_pred_upper), fill = "gray80", alpha = 0.5)+
-  geom_point(aes(y = poc_prop, col = "measured"))+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"))+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-isere$var_mean <- apply(mu_nls, 2, var)
-isere$var_tot <- apply(pred_nls,2,var)
-
-ggplot(isere, aes(x=poc_fitted))+
-  geom_point(aes(y = var_mean, col = "var mean"))+
-  geom_point(aes(y = var_tot, col = "var tot"))+
-  theme_minimal()
-
-```
-
-
-ça part un peu en couille
-
-
-```{r variance-decomposition, eval = F}
-
-# model uncertainty: one value for MES, 1000 values for coefs
-
-mu_model <- matrix(NA_real_, nrow = nrow_theta, ncol = nrow_isere)
-for(i in 1:nrow_theta){
-   mu_model[i,] <- with(as.list(theta_poc[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(isere$mes_for_fit, a, b))
-}
-
-isere$poc_var_model <- apply(mu_model, 2, var)
-var_model_mean <- mean(var_model)
-
-# MES uncertainty: one value per coef, 1000 values for MES
-thetas <- coef(pocfit)
-mu_mes <-  f(mes_mat, thetas[1], thetas[2])
-
-isere$poc_var_mes <- apply(mu_mes, 2, var)
-var_mes_mean <- mean(var_mes)
-
-ggplot(isere, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_var_model, col = "model"), alpha = 0.5)+
-  geom_line(aes(y = poc_var_mes, col = "mes"))+
-  geom_line(aes(y = poc_var_mean, col = "mean variance"), linetype = "dashed")+
-  labs(x = "MES, mg.L", y = "Variance", col = "")+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000,10000))+
-  scale_color_manual(values = c("darkblue","lightblue","darkred"))+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-```
-
-Pour des hautes valeurs de MES: la variance du modèle ne vient que du bruit, elle est proche de zéro sinon. Celle qui vient du modèle, celle qui vient des MES, et la variance moyenne du modèle. 
-
-
-
-ça part en couille, on tourne en rond sur la meilleure manière d'intégrer la variance
-
-## Powerlaw , second try
+## Powerlaw
 
 ### NLS
 
@@ -767,129 +356,15 @@ pocfit <- nls(
   start = list(a = 1, b = -0.5)
 )
 
-# summary
-summary(pocfit)
 sigma_poc <- summary(pocfit)$sigma
 
 # predicted values (from original data)
 poc_isere$poc_nls_fitted <- predict(pocfit, poc_isere)
 poc_isere$poc_nls_resid <- residuals(pocfit)
 
-# compute se.fit (not supported by "predict" for nls models) - bootstrap
-library(nlstools)
-boot <- nlsBoot(pocfit, niter = 1000)
-theta_poc <- boot$coefboot
-boot$bootCI %>% View()
-plot(boot)
-
-pred.boot <- apply(theta_poc, 1, function (cb){ # cb = coefficients boot: the function applys to each couple of a and b
-  with(as.list(cb), a*poc_isere$mes_for_fit^b + aspt_value)
-})
-ci <- apply(pred.boot, 1, quantile, probs = c(0.025, 0.975))
-poc_isere$poc_fitted_ci_low <- ci[1,]
-poc_isere$poc_fitted_ci_high <- ci[2,]
-poc_isere$poc_fitted_boot <- apply(pred.boot, 1, mean) #identique à poc_nls_fitted
-
-
-# plot
-formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(aspt_value,2))
-
-
-ggplot(poc_isere, aes(x = mes_for_fit))+
-  geom_point(aes(x=mes_for_fit, y = poc_prop, col = "measured", shape = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_fitted_boot, col = "fitted", shape = "fitted"))+ 
-  geom_ribbon(aes(x = mes_for_fit, ymin = poc_fitted_ci_low, ymax = poc_fitted_ci_high), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-ggplot(poc_isere)+
-   geom_point(aes(x=poc_prop, y = poc_nls_fitted), col = "darkblue")+ 
-   geom_errorbar(aes(x=poc_prop, ymin = poc_fitted_ci_low, ymax = poc_fitted_ci_high), fill = "gray80", alpha = 0.5)+
-   geom_abline(slope = 1, intercept = 0, col = "darkred")+
-   annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-   labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
-   theme_minimal()
-
-#plot(pocfit)
-#qqnorm(residuals(pocfit, type = "response"))
-#qqline(residuals(pocfit, type = "response"))
-
+formula_pocfit <- paste("NLS:", round(coef(pocfit)[1],3), "x MES ^", round(coef(pocfit)[2],3), "+", round(aspt_value, 3))
 ```
 
-#### Manual bootstrap
-
-```{r manual-coef-boot-and-ci}
-
-n_boot <- 1000
-n_obs <- nrow(poc_isere)
-
-coefs_boot_nls <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
-
-
-set.seed(1702)                     
-
-for(i in seq_len(n_boot)){
-  
-  
-  idx_boot <- sample(n_obs, replace = T)
-  df_boot <- poc_isere[idx_boot, c("mes_for_fit","poc_prop","aspt")]
-  
-  tryCatch(
-    {pocfit_bg <- nls(
-      poc_prop~a*mes_for_fit^b+aspt,
-      data = df_boot,
-      start = c(a = 0.1, b = 0.5),)
-    coefs_boot_nls[i,] <- coef(pocfit_bg)}, 
-    error = function(e) NULL) 
-}
-
-coefs_boot_nls <- na.omit(coefs_boot_nls)
-length(coefs_boot_nls)
-apply(coefs_boot_nls, 2, quantile, probs = c(0.025, 0.975)) #ic coef
-
-ggplot(as.data.frame(coefs_boot_nls))+
-  geom_boxplot(aes(x = "a", y = a, col = "a"))+
-  geom_boxplot(aes(x = "b", y = b, col = "b"))+
-  labs(x="", y = "")+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  theme_minimal()+
-  theme(legend.position = "none")
-
-ggplot(as.data.frame(coefs_boot_nls))+
-  geom_point(aes(x = a, y = b))+
-  theme_minimal()+
-  theme(legend.position = "none")
-
-
-fitted_boot_nls <- apply(coefs_boot_nls, 1, function(p){p["a"] * mes_for_fit^p["b"] + aspt_value}) # les MC worlds sont en colonne
-
-fitted_boot_nls_ic <- apply(fitted_boot_nls, 1, quantile,
-                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-fitted_boot_nls_mean <- apply(fitted_boot_nls, 1, mean)
-
-poc_isere_boot_nls <- poc_isere %>% mutate(poc_fitted = fitted_boot_nls_mean, upr = fitted_boot_nls_ic[3, ], lwr = fitted_boot_nls_ic[1,])
-
-ggplot(poc_isere_boot_nls)+
-  geom_point(aes(x=mes_for_fit, y = poc_prop, col = "measured", shape = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
-  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-ggplot(poc_isere_boot_nls, aes(x=poc_prop))+
-  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
-  geom_errorbar(aes(ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 1, intercept = 0, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-```
 
 #### wild bootstrap
 
@@ -900,7 +375,6 @@ n_obs <- nrow(poc_isere)
 
 coefs_wboot_nls <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
 
-set.seed(1802)                     
 
 for(i in seq_len(n_boot)){
   
@@ -924,13 +398,6 @@ coefs_wboot_nls <- na.omit(coefs_wboot_nls)
 length(coefs_wboot_nls)
 apply(coefs_wboot_nls, 2, quantile, probs = c(0.025, 0.975)) #ic coef
 
-ggplot(as.data.frame(coefs_wboot_nls))+
-  geom_boxplot(aes(x = "a", y = a, col = "a"))+
-  geom_boxplot(aes(x = "b", y = b, col = "b"))+
-  labs(x="", y = "")+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  theme_minimal()+
-  theme(legend.position = "none")
 
 ggplot(as.data.frame(coefs_wboot_nls))+
   geom_point(aes(x = a, y = b))+
@@ -940,13 +407,13 @@ ggplot(as.data.frame(coefs_wboot_nls))+
 
 fitted_wboot_nls <- apply(coefs_wboot_nls, 1, function(p){p["a"] * mes_for_fit^p["b"] + aspt_value}) # les MC worlds sont en colonne
 
-fitted_wboot_nls_ic <- apply(fitted_boot_nls, 1, quantile,
+fitted_wboot_nls_ic <- apply(fitted_wboot_nls, 1, quantile,
                  probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
 fitted_wboot_nls_mean <- apply(fitted_wboot_nls, 1, mean)
 
 poc_isere_wboot_nls <- poc_isere %>% mutate(poc_fitted = fitted_wboot_nls_mean, upr = fitted_wboot_nls_ic[3, ], lwr = fitted_wboot_nls_ic[1,])
 
-ggplot(poc_isere_boot_nls)+
+ggplot(poc_isere_wboot_nls)+
   geom_point(aes(x=mes_for_fit, y = poc_prop, col = "measured", shape = "measured"))+ 
   geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
   geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
@@ -956,7 +423,7 @@ ggplot(poc_isere_boot_nls)+
   labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
   theme_minimal()
 
-ggplot(poc_isere_boot_nls, aes(x=poc_prop))+
+ggplot(poc_isere_wboot_nls, aes(x=poc_prop))+
   geom_point(aes(y=poc_fitted), col = "darkblue")+ 
   geom_errorbar(aes(ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
   geom_abline(slope = 1, intercept = 0, col = "darkred")+
@@ -965,16 +432,134 @@ ggplot(poc_isere_boot_nls, aes(x=poc_prop))+
   theme_minimal()
 ```
 
+#### NLS extention to Isère
+
+```{r pred-isere-nls}
+isere$mes_for_fit <- isere$cmes_g.L * 1e3 
+with(isere, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
+
+isere_for_nls <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+
+isere_for_nls$poc_prop <- isere_for_nls$poc_percent / 100
+isere_for_nls$aspt <- aspt_value
+
+nrow_isere <- nrow(isere_for_nls)
+nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
+
+# predict POC pour mes > 0
+isere_for_nls$poc_fitted <- predict(pocfit, newdata = isere_for_nls) 
+
+
+# Prediction interval
+
+## Uncertainty on MES
+poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
+fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
+summary(fit_cmes)
+
+mes_u <- summary(fit_cmes)$coefficients[4]
+
+mes_mat_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+
+for(i in 1:nrow_boot){
+  mes_mat_nls[i,] <-rnorm(nrow_isere, mean = isere_for_nls$mes_for_fit, sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
+}
+
+
+## model function 
+f <- function(x, a, b){
+  a * x ^ b + aspt_value
+}
+
+## paramètres de variance
+theta_nls <- as.numeric(coef(pocfit$modelStruct$varStruct, unconstrained = F))
+sigma_nls <- summary(pocfit)$sigma
+
+
+### Matrice de prédictions, sans bruit
+
+
+mu_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+for(i in 1:nrow_boot){
+   mu_nls[i,] <- with(as.list(coefs_wboot_nls[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
+                      f(mes_mat_nls[i, ], a, b))
+}
+
+
+isere_for_nls$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
+
+# adds noise
+# noise_mat <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+# sigma_mat <- sigma_hat * abs(mu_nls)^theta
+
+noise_mat_nls <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = sigma_nls), nrow = nrow_boot, ncol = nrow_isere)
+
+pred_nls <- mu_nls + noise_mat_nls
+
+#pred_nls <- pmin(pmax(pred_nls, 0), 1) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+### computes variance, y-wise
+isere_for_nls$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
+
+## computes prediction interval 
+pi <- t(
+  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi) <- c("lower", "upper")
+
+boot_pred_nls <- colMeans(pred_nls, na.rm = T)
+
+## insert in isere_for_nls
+
+isere_for_nls <- isere_for_nls %>% mutate(poc_boot_pred = boot_pred_nls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# plot
+
+ggplot(isere_for_nls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_point(aes(y = poc_prop, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  ylim(-0.05,0.1)
+
+
+ggplot(isere_for_nls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_point(aes(y = poc_prop, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  scale_x_continuous(trans = "log")+
+ # scale_y_continuous(trans = "log")+ # useless
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  ylim(-0.05,0.1)
+```
+
+
 ### GNLS
 
 ```{r fit-poc-mes-gnls}
 
-
 # find asymptotic value : arbitrarily decide that it corresponds to the median of the 10% of poc_percent corresponding to the 10% of highest MES values.
 aspt_value <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(poc_prop) %>% head(dim(poc_isere)[1]/10) %>% median() 
 poc_isere$aspt <- aspt_value
-
-
 
 library(nlme)
 
@@ -988,61 +573,9 @@ pocfitg <- gnls(
   control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
 )
 
-summary(pocfitg)
-
-plot(pocfitg)
-#qqnorm(residuals(pocfitg, type = "normalized"))
-#qqline(residuals(pocfitg, type = "normalized"))
+formula_pocfitg <- paste("GNLS:", round(coef(pocfitg)[1], 3), "x MES ^", round(coef(pocfitg)[2],3), "+", round(aspt_value, 3), sep = "")
 ```
 
-#### Approximation linéaire . DEPRECATED
-
-```{r intervalles-de-confiance-deta-method}
-beta <- coef(pocfitg) # get a and b
-V_beta <- vcov(pocfitg) # matrice de covariance
-
-a <- beta["a"]
-b <- beta["b"]
-
-# paramètre de variance - puissance de la variance var ~ y^theta
-theta <- as.numeric(
-  coef(pocfitg$modelStruct$varStruct, unconstrained = F)
-)
-sigma <- pocfitg$sigma
-
-df_resid <- pocfitg$dims$N - pocfitg$dims$p
-t_crit <- qt(0.975, df = df_resid)
-
-mes_for_fit <- poc_isere$mes_for_fit
-poc_fitted <- a*mes_for_fit^b + aspt_value
-
-G <- cbind(mes_for_fit^b, a*mes_for_fit^b * log(mes_for_fit)) # gradient analytique df/dtheta
-
-var_fit <- rowSums((G %*% V_beta) * G)
-se_fit <- sqrt(var_fit)
-
-poc_isere_delta <- poc_isere %>% mutate(poc_fitted = poc_fitted, lwr = poc_fitted - t_crit * se_fit, upr = poc_fitted + t_crit*se_fit)
-
-formula_pocfitg <- paste("GNLS :", round(a, 3),"x MES ^", round(b, 3), "+", round(aspt_value, 3))
-
-ggplot(poc_isere_delta)+
-  geom_point(aes(x=mes_for_fit, y = poc_prop, col = "measured", shape = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
-  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-ggplot(poc_isere_delta, aes(x=poc_prop))+
-  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
-  geom_errorbar(aes(ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 1, intercept = 0, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-```
 
 #### GNLS bootstrap
 
@@ -1052,7 +585,6 @@ n_obs <- nrow(poc_isere)
 
 coefs_boot <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
                      
-set.seed(1702)                     
 
 for(i in seq_len(n_boot)){
   
@@ -1082,13 +614,7 @@ coefs_boot <- na.omit(coefs_boot)
 length(coefs_boot)
 apply(coefs_boot, 2, quantile, probs = c(0.025, 0.975)) #ic coef
 
-ggplot(as.data.frame(coefs_boot))+
-  geom_boxplot(aes(x = "a", y = a, col = "a"))+
-  geom_boxplot(aes(x = "b", y = b, col = "b"))+
-  labs(x="", y = "")+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  theme_minimal()+
-  theme(legend.position = "none")
+
 
 ggplot(as.data.frame(coefs_boot))+
   geom_point(aes(x = a, y = b))+
@@ -1142,22 +668,23 @@ plot(fitted(pocfitg), residuals(pocfitg, type = "normalized"),
 abline(h = 0, col = "red")
 
 ```
-### Extension à Isere
 
-```{r pred-isere}
+#### GNLS extension to Isere
+
+```{r pred-isere-gnls, cache.lazy = F}
 isere$mes_for_fit <- isere$cmes_g.L * 1e3 
-with(isere, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df
+with(isere, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
 
-isere <- isere %>% filter(mes_for_fit == 0 | is.na(mes_for_fit))
+isere_for_gnls <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
 
-isere$poc_prop <- isere$poc_percent / 100
-isere$aspt <- aspt_value
+isere_for_gnls$poc_prop <- isere_for_gnls$poc_percent / 100
+isere_for_gnls$aspt <- aspt_value
 
-nrow_isere <- nrow(isere)
+nrow_isere <- nrow(isere_for_gnls)
 nrow_boot <- nrow(coefs_boot)
 
 # predict POC pour mes > 0
-isere$poc_fitted <- predict(pocfitg, newdata = isere, na.action = na.pass) 
+isere_for_gnls$poc_fitted <- predict(pocfitg, newdata = isere_for_gnls, na.action = na.pass) 
 
 
 # Prediction interval
@@ -1169,10 +696,10 @@ summary(fit_cmes)
 
 mes_u <- summary(fit_cmes)$coefficients[4]
 
-mes_mat <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+mes_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
 
-for(i in 1:nrow(isere)){
-  mes_mat[,i] <-rnorm(nrow_boot, mean = isere$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
+for(i in 1:nrow(isere_for_gnls)){
+  mes_mat_gnls[,i] <-rnorm(nrow_boot, mean = isere_for_gnls$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES. Exactly same code as when working on lines.
 }
 
 
@@ -1183,292 +710,176 @@ f <- function(x, a, b){
 
 ## paramètres de variance
 theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
-sigma_hat <- pocfitg$sigma
+sigma_gnls <- pocfitg$sigma
 
 
 ### Matrice de prédictions, sans bruit
 
 
-mu_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+mu_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
 for(i in 1:nrow_boot){
-   mu_nls[i,] <- with(as.list(coefs_boot[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat[i, ], a, b))
+   mu_gnls[i,] <- with(as.list(coefs_boot[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
+                      f(mes_mat_gnls[i, ], a, b))
 }
 
 
-isere$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
+isere_for_gnls$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
 
 # adds noise
-noise_mat <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-sigma_mat <- sigma_hat * abs(mu_nls)^theta
+noise_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+sigma_mat_gnls <- sigma_gnls * abs(mu_gnls)^theta
 
-noise_mat <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_isere)
-noise_mat <- noise_mat*sigma_mat
+noise_mat_gnls <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_isere)
+noise_mat_gnls <- noise_mat_gnls*sigma_mat_gnls
 
-pred_nls <- mu_nls + noise_mat
+pred_gnls <- mu_gnls + noise_mat_gnls
+
+pred_gnls <- pmin(pmax(pred_gnls, 0), 1) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
 
 ### computes variance, y-wise
-isere$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
+isere_for_gnls$poc_var_tot <- apply(pred_gnls, 2, var) # total variance per prediction, for prediction total uncertainty
 
 ## computes prediction interval 
 pi <- t(
-  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+  apply(pred_gnls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
 )
 
 colnames(pi) <- c("lower", "upper")
 
-boot_pred <- t(
-  apply(pred_nls, 2, mean, na.rm = T)
-) 
+boot_pred_gnls <- colMeans(pred_gnls, na.rm = T)
 
-## insert in isere
+## insert in isere_for_gnls
 
-isere <- isere %>% mutate(poc_boot_pred = poc_boot_pred,
+isere_for_gnls <- isere_for_gnls %>% mutate(poc_boot_pred = boot_pred_gnls,
                           poc_pred_lower = pi[,1],
                           poc_pred_upper = pi[,2])
 
 # plot
 
-ggplot(isere, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), fill = "gray80", alpha = 0.5)+
-  geom_line(aes(y = poc_pred_upper), fill = "gray80", alpha = 0.5)+
+ggplot(isere_for_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
   geom_point(aes(y = poc_prop, col = "measured"), alpha = 0.5)+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), alpha = 0.5)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
   labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","lightblue","purple"))+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  ylim(-0.05,0.1)
+
+ggplot(isere_for_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_point(aes(y = poc_prop, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
   theme_minimal()+
   theme(legend.position = "bottom")
 ```
 
+# Reference annual and interannual fluxes
 
+## Annual flux based on gnls model + Monte Carlo
 
-```{r diagnostiques-erreurs}
-# 1. Combien de prédictions > 1 ?
-sum(isere$poc_fitted > 1, na.rm = TRUE)
-sum(isere$poc_pred_upper > 1, na.rm = TRUE)
-mean(isere$poc_fitted > 1, na.rm = TRUE) * 100  # pourcentage
 
-sum(isere$poc_boot_pred > 1, na.rm = TRUE)
-mean(isere$poc_boot_pred > 1, na.rm = TRUE) * 100  # pourcentage
+```{r annual-flux-reference}
+# create matrix of q
+q_u = 0.1 # Cédric - avis d'expert NOT WORKING; has to be 10% of the Q measured, not ALWAYS 0.1!
 
-# Combien de mes_for_fit == 0 ?
-sum(isere$mes_for_fit == 0, na.rm = TRUE)
+q_meas <- matrix(isere_for_gnls$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
 
-# Prédiction à x = 0 avec vos paramètres
-a <- coef(pocfitg)["a"]
-b <- coef(pocfitg)["b"]
+q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
 
-cat("b =", b, "\n")
-cat("0^b =", 0^b, "\n")
-cat("Prédiction à x=0 :", a * 0^b + aspt_value, "\n")
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
-# Vérifier les prédictions aux zéros
-pred_at_zero <- isere %>%
-  filter(mes_for_fit == 0) %>%
-  select(mes_for_fit, poc_fitted, poc_pred_lower, poc_pred_upper)
 
-head(pred_at_zero)
-```
+# compute flux
+period_mat <- matrix(isere_for_gnls$period, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
 
+flux_kg.s_mat <- pred_gnls*mes_mat_gnls*q_mat*1e-2*period_mat #pred_gnls * mes_mat : poc in mg/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period. 
 
-# FPOC annuel et interannuel avec incertitude (Monte Carlo)
+index_years <- sapply(unique(isere_for_gnls$year), function(y){which(isere_for_gnls$year == y)}) # list of indices corresponding to each year
 
-```{r uncertainty-annual-flux, eval = F}
-q_u <- 0.1 # from Cedric
+annual_flux_kg.y <- sapply(index_years, function(idx){apply(flux_kg.s_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
-poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
-fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
-summary(fit_cmes)
+annual_flux_ci <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
 
-mes_u <- summary(fit_cmes)$coefficients[4]
-a_u <- summary(pocfit)$coefficients[3]
-b_u <- summary(pocfit)$coefficients[4]
-#poc_u <- summary(pocfit)$coefficients[2]
+annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
 
-coef_pocfit <- coef(pocfit)
+annual_flux_df <- data.frame(year = unique(isere_for_gnls$year), 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = rep(NA, 19), # no physical sense in calculating "annual variability". Would be standard deviation of annual flux. But we prefer to show the prediction interval.
+                        annual_flux_ci_lower = annual_flux_ci[1,], 
+                        annual_flux_ci_upper = annual_flux_ci[3,])
 
-isere$fpoc_mc_mean <- NA
-isere$fpoc_mc_sd <- NA
-
-#isere_mc <- isere[]
-
-isere$year <- as.factor(isere$year)
-list_isere <-  isere %>% group_split(year)
-list_isere <- lapply(list_isere, as.data.frame)
-list_isere_mc <- list()
-
-set.seed(0202)
-
-for(j in 1:length(list_isere)){
-  
-  df <- list_isere[[j]]
-  df_mc <- list()
-
-for(i in 1:dim(df)[1]){
-  
-  DateHeure <- df$DateHeure[i]
-  period <- df$period[i]
-   
-  qn <- rnorm(n = 1000, mean = df$q_m3.s[i], sd = q_u)
-  mesn <- rnorm(n = 1000, mean = df$mes_for_fit[i], sd = mes_u)
-  an <- rnorm(n = 1000, mean = coef_pocfit[1], sd = a_u) 
-  bn <- rnorm(n = 1000, mean = coef_pocfit[2], sd = b_u)
-  pocn <- an * mesn^bn + tail_value
-
-  fpocn <- qn * 1e3 * (mesn * pocn * 1e-2) * 1e-6 * period # discharge converted from m3/s to L/h; fPOC is obtained in kg
-
-  fpoc_mean <- fpocn %>% mean()
-  fpoc_sd <- fpocn %>% sd()
-
-  list_isere[[j]]$fpoc_mc_mean[i] <- fpoc_mean
-  list_isere[[j]]$fpoc_mc_sd[i] <- fpoc_sd
-  
-  df_mc[[i]] <- data.frame(DateHeure = as.Date(DateHeure), q = qn, mes = mesn, poc = pocn, period = period)
-}
-list_isere_mc[[j]] <- rbind(df_mc)
-}
-
-
-```
-
-*list_isere_mc* contient 19 éléments: 1 par année de mesure. 
-Chaque élément est une matrice. Chaque ligne correspond à une mesure/date. Les colonnes sont les n itérations de Monte Carlo correspondant à cette mesure. Elles sont calculées en tirant aléatoirement une valeur de q (débit), mes, a et b (les coefficients de la loi puissance ).
-
-On utilise les 1000 itérations du bootsraping effectué lors de la création des intervalles de prédiction du modèle, stockés dans pred_nls.
-
-Dans fpoc_annuel_mc, on calcule le flux annuel correspondant à l'itération n du tirage précédent. On obtient ainsi n valeurs de flux annuel. A partir de ces n valeurs, on calcule le flux de carbone moyen et son intervalle de confiance PAR ANNEE. Ces flux moyens sont stockés dans *fpoc_annuel_mc*. C'est une liste de 19 vecteurs, contenant chacun n flux annuels moyens correspondant à chacune des années de mesure. On en retire le flux moyen annuel *fpoc_annuel_moyen*, la déviation standard *fpoc_annuel_sd* et l'intervalle de confiance *fpoc_annuel_ic* en prenant la moyenne, sd et quantiles de *fpoc_annuel_mc*.
-
-On cherche ensuite à obtenir le flux annuel moyen INTERRANNUEL et son invervalle de confiance. On rassemble les 19 vecteurs de  *fpoc_annuel_mc* dans *fpoc_annuel_mat*. Le résultat est une matrice à 19 lignes et n colonnes. On calcule alors n flux annuels moyens stochés dans *fpoc_interannuel_mc* en faisant une moyenne par colonne. On en retire le flux interannuel moyen *fpoc_interannuel_moyen*, la déviation standard *fpoc_interannuel_sd* et l'intervalle de confiance *fpoc_interannuel_ic* en prenant la moyenne, sd et quantiles de *fpoc_interannuel_mc*.
-
-
-```{r uncertainty-opti-chatgpt}
-N_MC <- 1000
-set.seed(202)
-
-q_u <- 0.1 # from Cedric
-
-poc_isere$cmes_mg.L <- poc_isere$cmes_g.L * 1000
-fit_cmes <- lm(mes_mg.L~cmes_mg.L, data = poc_isere)
-summary(fit_cmes)
-
-mes_u <- summary(fit_cmes)$coefficients[4]
-a_u <- summary(pocfit)$coefficients[3]
-b_u <- summary(pocfit)$coefficients[4]
-
-coef_poc <- coef(pocfit)
-a_mean <- coef_poc[1]
-b_mean <- coef_poc[2]
-
-isere$year <- as.factor(isere$year)
-list_isere <-  isere %>% group_split(year)
-list_isere <- lapply(list_isere, as.data.frame)
-list_isere_mc <- list()
-
-list_isere_mc <- vector("list", length(list_isere))
-
-for (j in seq_along(list_isere)) {
-
-  df <- list_isere[[j]]
-  n  <- nrow(df)
-
-    # matrice [temps x MC]
-  fpoc_mc <- matrix(NA_real_, nrow = n, ncol = N_MC)
-
-  for (i in seq_len(n)) {
-
-    qn   <- rnorm(N_MC, df$q_m3.s[i], q_u)
-    mesn <- rnorm(N_MC, df$mes_for_fit[i], mes_u)
-    an   <- rnorm(N_MC, a_mean, a_u)
-    bn   <- rnorm(N_MC, b_mean, b_u)
-
-    pocn <- an * mesn^bn + tail_value
-
-    fpoc_mc[i, ] <-
-      qn * 1e3 *
-      (mesn * pocn * 1e-2) *
-      1e-6 *
-      df$period[i]
-  }
-
-  list_isere_mc[[j]] <- fpoc_mc
-
-  # stats instantanées 
-  list_isere[[j]]$fpoc_mc_mean <- rowMeans(fpoc_mc)
-  list_isere[[j]]$fpoc_mc_sd   <- apply(fpoc_mc, 1, sd)
-}
-```
-
-```{r uncertainty-annual-interannual}
-# Calcul des flux annuels avec incertitude - test année 1. On calcule 1000 flux annuels dont on prend la moyenne puis la sd
-fpoc_mc <- list_isere_mc[[1]]
-fpoc_annual_mc <- colSums(fpoc_mc, na.rm = TRUE)
-mean(fpoc_annual_mc)
-sd(fpoc_annual_mc)
-
-quantile(fpoc_annual_mc, c(0.05, 0.5, 0.95))
-
-# check 
-sum(fpoc_mc, na.rm = T) / 1000
-
-# moyenne interannuelle: pour chaque élément de la liste isère, on calcule la somme des colonnes 
-fpoc_annuel_mc <- lapply(list_isere_mc, function(mat) {
-  colSums(mat, na.rm = TRUE)
-})
-
-# matrice [année x MC]
-fpoc_annuel_mat <- do.call(rbind, fpoc_annuel_mc)
-
-# flux moyens annuels et intervalle de confiance
-fpoc_annuel_mean <- rowMeans(fpoc_annuel_mat)
-
-fpoc_annuel_sd  <- apply(fpoc_annuel_mat, 1,sd)
-
-fpoc_annuel_quantile  <- apply(fpoc_annuel_mat, 1, quantile, c(0.05, 0.5, 0.95))
-
-fpoc_annuel <- data.frame(year = unique(isere$year), 
-                          mean = fpoc_annuel_mean, 
-                          sd = fpoc_annuel_sd, 
-                          percent5 = fpoc_annuel_quantile[1,], 
-                          percent50 = fpoc_annuel_quantile[2,],
-                          percent95 = fpoc_annuel_quantile[3,])
-
-
-# moyenne pluriannuelle par MC
-fpoc_interannuel_mc <- colMeans(fpoc_annuel_mat)
-
-fpoc_interannuel_moyen <- mean(fpoc_interannuel_mc)
-fpoc_interannuel_sd    <- sd(fpoc_interannuel_mc)
-
-fpoc_interannuel_ic <- quantile(fpoc_interannuel_mc, c(0.05, 0.5, 0.95))
-
-all_fpoc <- rbind(fpoc_annuel, data.frame(year = "interannual", mean = fpoc_interannuel_moyen, sd = fpoc_interannuel_sd, percent5 = fpoc_interannuel_ic[1], percent50 = fpoc_interannuel_ic[2], percent95 = fpoc_interannuel_ic[3]))
-
-
-all_fpoc %>% knitr::kable() %>% kableExtra::kable_styling()
-
-# variabilité interannuelle (signal)
-var_inter <- var(rowMeans(fpoc_annuel_mat))
-
-# incertitude (bruit)
-var_uncert <- mean(apply(fpoc_annuel_mat, 1, var))
-
-ggplot(fpoc_annuel) + 
-  geom_col(aes(x = year, y = mean/5570), fill = "palegreen4")+
-  geom_errorbar(aes(x = year, ymin = percent5/5570, ymax = percent95/5570), width = 0.2)+
-  labs(x = "", y = "Flux de POC, kg/year/km2")+
-  geom_abline(intercept = fpoc_interannuel_moyen/5570, slope = 0, col = "lightblue")+
-  geom_rect(aes(xmin = min(as.numeric(fpoc_annuel$year)-0.5), 
-                xmax = max(as.numeric(fpoc_annuel$year)+0.5), 
-                ymin = fpoc_interannuel_ic[1]/5570, 
-                ymax = fpoc_interannuel_ic[3]/5570), 
-            fill = "darkred", alpha = 0.5)+
+ggplot(annual_flux_df)+
+  geom_col(aes(x=year, y = annual_flux_mean), fill = "lightblue")+
+  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper), width = 0.2)+
   theme_minimal()
+```
+
+## Interannual flux
+
+```{r interannual-flux-reference}
+interannual_flux_kg.y <- rowMeans(annual_flux_kg.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_ci <- quantile(interannual_flux_kg.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_kg.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_ci_lower = interannual_flux_ci[1], 
+                        annual_flux_ci_upper = interannual_flux_ci[3])
+
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", length(unique(isere_for_gnls$year))), "interannual")
+
+ggplot(total_flux_df)+
+  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+# Time steps
+
+```{r group-by-day}
+isere_for_gnls$day <- isere_for_gnls$DateHeure %>% format("%Y-%m-%d")
+index_day <- sapply(unique(isere_for_gnls$day), function(y){which(isere_for_gnls$day == y)}) # list of indices corresponding to each day
+
+mean_flux_day <- sapply(index_day, function(idx){apply(flux_kg.s_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per day, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and many columns (1 per day)
+
+
+
+
+
+
+q_day <- sapply(index_day, function(idx){mean(q_mat[,idx], na.rm = T)}) # mean discharge per day
+poc_day <- sapply(index_day, function(idx){mean(pred_gnls[,idx], na.rm = T)}) # mean POC per day
+mes_day <- sapply(index_day, function(idx){mean(mes_mat_gnls[,idx], na.rm = T)}) # mean MES per day
+
+flux_kg.s_day <- poc_day * mes_day * q_day * 1e-2 # flux in kg/s per day, for each iteration of the bootstrap. Result is a vector with length equal to the number of days
+
+annual_flux_day <- sapply(index_day, function(idx){sum(flux_kg.s_mat[,idx], na.rm = T)}) # sum of fluxes per day, for each iteration of the bootstrap. Result is a vector with length equal to the number of days
+
 
 ```
+
 
 # Estimation of annual POC fluxes, time steps, without uncertainty
 
@@ -1511,7 +922,6 @@ A FAIRE : intégrer l'incertitude due au moyennage par jour (sd?)
 
 ```{r daily-mean-with-uncertainty}
 N_MC <- 1000
-set.seed(202)
 
 q_u <- 0.1 # from Cedric
 
