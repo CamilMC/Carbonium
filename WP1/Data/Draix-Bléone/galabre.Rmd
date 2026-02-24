@@ -19,6 +19,9 @@ library(dplyr)
 library(readxl)
 library(lubridate)
 
+#for gnls
+library(nlme)
+
 ```
 
 
@@ -31,30 +34,31 @@ Sur BDOH les chroniques de débit et MES sont disponibles jusqu'à 2019.
 
 ```{r load-data}
 crues <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Crues") 
+crues$mes_for_fit <- crues$mes_g.L 
 
 mes <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "SSC", col_types = c("date","numeric")) 
 
 debit <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Debit", col_types = c("date","numeric")) 
 
-galabre_old <- merge(debit, mes, by = "DateHeure")
+galabre_old <- merge(debit, mes, by = "DateHeure") %>% unique() # 4 duplicated in 2017, no q
 
-galabre_new <- readxl::read_xlsx(path = "Galabre_outlet.xlsx")
-
+galabre_new <- readxl::read_xlsx(path = "Galabre_outlet.xlsx", sheet = "Galabre_outlet_noduplicated") %>% unique() # 2019 was duplicated (also in galabre_old). Some duplicated still exist, removed by "unique"
 
 galabre_tot <- rbind(galabre_old, galabre_new)
 
+#galabre_tot[which(duplicated(galabre_tot$DateHeure) == T), ] %>% View()
+
 galabre <- merge(galabre_tot, crues, by = "DateHeure", all = T)  
 galabre$year <- year(galabre$DateHeure)
-galabre$commondate <- as.Date(paste0("2000-", format(debit$Date,"%j")), "%Y-%j")
+galabre$commondate <- as.Date(paste0("2000-", format(galabre$DateHeure,"%j")), "%Y-%j")
 galabre$period <- as.numeric(-(galabre$DateHeure - lead(galabre$DateHeure))) # period in s
 
-# from Isere
+# from galabre
 
 summary_galabre <- merge(
 galabre %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()),
 galabre %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n()),
 by = "year", all = T) %>% 
-  merge(galabre %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_doc = n()), by = "year", all = T) %>%
   merge(galabre %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>%
   merge(galabre %>% subset(!is.na(period)) %>% group_by(year) %>% summarise(total_period_j = round(sum(period)/(24*60*60))), by = "year", all = T)
   
@@ -62,13 +66,14 @@ summary_galabre %>% knitr::kable(caption = "Nombre d'observations de DOC, POC, C
 
 ```
 
+
 ## Explore data
 
 ```{r mes-poc}
-crues$poc_g.L <- crues$mes_g.L * crues$poc_percent / 100
+galabre$poc_g.L <- galabre$mes_g.L * galabre$poc_percent / 100
 
 
-ggplot(crues)+geom_point(aes(x=mes_g.L, y = poc_percent, col = crue, shape = crue))+
+ggplot(galabre)+geom_point(aes(x=mes_g.L, y = poc_percent, col = crue, shape = crue))+
   scale_color_viridis_d()+
   labs(x = "MES, g/L", y = "POC, %", col = "", shape = "")+
   lims(y=c(0,2))+
@@ -76,7 +81,7 @@ ggplot(crues)+geom_point(aes(x=mes_g.L, y = poc_percent, col = crue, shape = cru
   theme(legend.position = "bottom")
 
 
-ggplot(crues, aes(x=log10(mes_g.L), y = log10(poc_percent)))+geom_point(aes(col = crue))+
+ggplot(galabre, aes(x=log10(mes_g.L), y = log10(poc_percent)))+geom_point(aes(col = crue))+
   scale_color_viridis_d()+
   facet_grid(cols = vars(Saison))+
   geom_smooth(se = T, method = "lm")+
@@ -96,7 +101,7 @@ ggplot(galabre, aes(x = commondate)) +
   theme(legend.position = "bottom"),
 
 ggplot(galabre, aes(x = commondate)) + 
-  geom_point(aes(y = mes_g.L), col = "palegreen4", size = 0.5) +
+  geom_point(aes(y = cmes_g.L), col = "palegreen4", size = 0.5) +
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   facet_grid(rows = vars(year))+
   labs(x = "", y = "CMES, g/L") +
@@ -107,91 +112,827 @@ ncol = 2
 )
 
 ```
-```{r annual-q-mes-new, fig.dim = c(10, 10)}
+## Regression MES (POC) and CMES
 
-ggarrange(
-ggplot(debit_new, aes(x = commondate)) + 
-  geom_point(aes(y = q_m3.s), col = "lightblue", size = 0.5) +
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
-  facet_grid(rows = vars(year))+
-  labs(x = "", y = "Q, m3/s") +
-  theme_minimal()+
-  theme(legend.position = "bottom"),
+```{r mes-cmes}
+galabre[which(galabre$cmes_g.L == galabre$mes_g.L), ] # only 6, including 4 zero -> can be used for mes_u
 
-ggplot(debit_new, aes(x = commondate)) + 
-  geom_point(aes(y = mes_g.L), col = "palegreen4", size = 0.5) +
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
-  facet_grid(rows = vars(year))+
-  labs(x = "", y = "CMES, g/L") +
-  theme_minimal()+
-  theme(legend.position = "bottom"),
+fit_mes <- lm(Cmes_g.L~mes_g.L, data = galabre)
+summary(fit_mes)
 
-ncol = 2
-)
+cmes_u <- summary(fit_mes)$coef[2,2] # standard error on cmes
+
+ggplot(galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
+  scale_color_viridis_d()+
+  scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
+  geom_abline(slope = 1, intercept =0, col ="darkred")+
+  geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
+  xlim(0,200)+
+  theme_minimal()
+
+ggplot(galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
+  scale_color_viridis_d()+
+  scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
+  geom_abline(slope = 1, intercept =0, col ="darkred")+
+  geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
+  xlim(0,50)+ylim(0,50)+
+  theme_minimal()
+
+ggplot(galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
+  scale_color_viridis_d()+
+  scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
+  geom_abline(slope = 1, intercept =0, col ="darkred")+
+  geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
+  xlim(0,10)+ylim(0,10)+
+  theme_minimal()
 
 ```
+
+
 
 # Fit MES POC
 
+mes_for_fit in mg/L.
+
+q in m3/s.
+
 ## Fit all events
 
+```{r prepare-df}
+poc_galabre <- galabre %>% filter(!is.na(poc_percent)) %>% mutate(mes_for_fit = mes_g.L) %>% filter(!is.na(mes_for_fit) & mes_for_fit !=0) # has to be !=0 for the bootstrap
+
+```
+
+
+### NLS
+
 ```{r get-starting-values}
-ggplot(crues)+
-  geom_point(aes(x=mes_g.L, y = poc_percent, col = "measured"))+ 
-  labs(x = "MES, mg/L", y = "POC, %")+
-  scale_color_manual(values = c("darkblue"))+
-  theme_minimal()
+
 
 fit_linear <- lm(log(poc_percent)~log(mes_g.L), data = subset(crues, !is.na(poc_percent) & !is.na(mes_g.L) & poc_percent != 0 & mes_g.L != 0)) 
 
 start_a <- exp(coef(fit_linear)[1])
 start_b <- coef(fit_linear)[2]
+
+ggplot(poc_galabre)+
+  geom_point(aes(x=log(mes_g.L), y = log(poc_percent), col = "measured"))+ 
+  labs(x = "MES, mg/L", y = "POC, %")+
+  geom_abline(slope = coef(fit_linear)[2], intercept = coef(fit_linear)[1], linetype = 2)+
+  scale_color_manual(values = c("lightblue"))+
+  theme_minimal()+
+  theme(legend.position = "none")
+
 ```
 
-```{r fit-poc-mes-forcing-end-value}
+```{r fit-poc-mes-nls}
 
 # find asymptotic value
-tail_value_galabre <- crues[order(crues$mes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(crues)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
+aspt_value <- poc_galabre[order(poc_galabre$mes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(crues)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
 
 # add mes for POC 2011
-crues$mes_for_fit <- crues$mes_g.L
-crues$tail <- tail_value_galabre
+poc_galabre$mes_for_fit <- poc_galabre$mes_g.L
+poc_galabre$aspt <- aspt_value
 
-pocfit_galabre <- nls(
-  poc_percent ~ a * mes_for_fit^b + tail,
-  data = subset(crues, !is.na(poc_percent) & !is.na(mes_for_fit) & poc_percent != 0 & mes_g.L != 0),
+# nls avec aspt
+pocfit <- nls(
+  poc_percent ~ a * mes_for_fit^b + aspt,
+  data = subset(poc_galabre, !is.na(poc_percent) & !is.na(mes_for_fit) & poc_percent != 0 & mes_g.L != 0),
   start = list(a = start_a, b = start_b)
 )
 
-summary(pocfit_galabre)
-crues$poc_nls_fitted <- predict(pocfit_galabre, crues)
+summary(pocfit)
+poc_galabre$poc_nls_fitted <- predict(pocfit, poc_galabre)
 
-formula_pocfit_galabre <- paste("NLS : POC =", round(coef(pocfit_galabre)[1],2), "* MES (mg/L) ^", round(coef(pocfit_galabre)[2],2), "+", round(tail_value_galabre,2))
+formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(aspt_value,2))
 
-ggplot(crues)+
+ggplot(poc_galabre)+
   geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
   geom_point(aes(x=mes_for_fit, y = poc_nls_fitted, col = "fitted"))+ 
-  geom_abline(slope = 0, intercept = tail_value_galabre, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit_galabre, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   scale_color_manual(values = c("darkblue", "lightblue"))+
   labs(x = "MES, mg/L", y = "POC, %")+
   theme_minimal()
 
-plot(resid(pocfit_galabre)~fitted(pocfit_galabre))
+plot(pocfit)
+
+# nls sans aspt
+pocfitnas <- nls(
+  poc_percent ~ a * mes_for_fit^b,
+  data = subset(poc_galabre, !is.na(poc_percent) & !is.na(mes_for_fit) & poc_percent != 0 & mes_g.L != 0),
+  start = list(a = start_a, b = start_b)
+)
+
+summary(pocfitnas)
+poc_galabre$poc_nls_fitted <- predict(pocfitnas, poc_galabre)
+
+formula_pocfitnas <- paste("NLS : POC =", round(coef(pocfitnas)[1],2), "* MES (mg/L) ^", round(coef(pocfitnas)[2],2))
+
+ggplot(poc_galabre)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_nls_fitted, col = "fitted"))+ 
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitnas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %")+
+  theme_minimal()
+
+plot(pocfitnas)
+
+```
+#### NLS Bootstrap
+
+```{r nls-bootstrap-with-aspt}
+
+n_boot <- 1000
+n_obs <- nrow(poc_galabre)
+
+coefs_wboot_nls <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
+
+
+for(i in seq_len(n_boot)){
+  
+  weights <- sample(c(-1,1), size = length(residuals(pocfit)), replace = T)
+  resid_wboot <- residuals(pocfit) * weights
+  
+  y_wboot <- fitted(pocfit) + resid_wboot
+  
+  df_wboot <- poc_galabre %>% mutate(poc_percent = y_wboot)
+  
+  tryCatch(
+    {pocfit_wb <- nls(
+      poc_percent~a*mes_for_fit^b+aspt,
+      data = df_wboot,
+      start = coef(pocfit))
+    coefs_wboot_nls[i,] <- coef(pocfit_wb)}, 
+    error = function(e) NULL) 
+}
+
+coefs_wboot_nls <- na.omit(coefs_wboot_nls) 
+length(coefs_wboot_nls)
+apply(coefs_wboot_nls, 2, quantile, probs = c(0.025, 0.975)) #ic coef
+
+
+ggplot(as.data.frame(coefs_wboot_nls))+
+  geom_point(aes(x = a, y = b))+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+
+fitted_wboot_nls <- apply(coefs_wboot_nls, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"] + aspt_value}) # les MC worlds sont en colonne
+
+fitted_wboot_nls_ic <- apply(fitted_wboot_nls, 1, quantile,
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+fitted_wboot_nls_mean <- apply(fitted_wboot_nls, 1, mean)
+
+poc_galabre_wboot_nls <- poc_galabre %>% mutate(poc_fitted = fitted_wboot_nls_mean, upr = fitted_wboot_nls_ic[3, ], lwr = fitted_wboot_nls_ic[1,])
+
+ggplot(poc_galabre_wboot_nls)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
+  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
+
+ggplot(poc_galabre_wboot_nls, aes(x=poc_percent))+
+  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
+  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
+  geom_abline(slope = 1, intercept = 0, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
 
 ```
 
-## fit by event
+```{r nls-bootstrap-no-aspt}
 
-```{r fit-by-event}
+n_boot <- 1000
+n_obs <- nrow(poc_galabre)
+
+coefs_wboot_nls <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
+
+
+for(i in seq_len(n_boot)){
+  
+  weights <- sample(c(-1,1), size = length(residuals(pocfit)), replace = T)
+  resid_wboot <- residuals(pocfit) * weights
+  
+  y_wboot <- fitted(pocfitnas) + resid_wboot
+  
+  df_wboot <- poc_galabre %>% mutate(poc_percent = y_wboot)
+  
+  tryCatch(
+    {pocfit_wb <- nls(
+      poc_percent~a*mes_for_fit^b,
+      data = df_wboot,
+      start = coef(pocfit))
+    coefs_wboot_nls[i,] <- coef(pocfit_wb)}, 
+    error = function(e) NULL) 
+}
+
+coefs_wboot_nls <- na.omit(coefs_wboot_nls) 
+length(coefs_wboot_nls)
+apply(coefs_wboot_nls, 2, quantile, probs = c(0.025, 0.975)) #ic coef
+
+
+ggplot(as.data.frame(coefs_wboot_nls))+
+  geom_point(aes(x = a, y = b))+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+
+fitted_wboot_nls <- apply(coefs_wboot_nls, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"]}) # les MC worlds sont en colonne
+
+fitted_wboot_nls_ic <- apply(fitted_wboot_nls, 1, quantile,
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+fitted_wboot_nls_mean <- apply(fitted_wboot_nls, 1, mean)
+
+poc_galabre_wboot_nls <- poc_galabre %>% mutate(poc_fitted = fitted_wboot_nls_mean, upr = fitted_wboot_nls_ic[3, ], lwr = fitted_wboot_nls_ic[1,])
+
+ggplot(poc_galabre_wboot_nls)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
+  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
+
+ggplot(poc_galabre_wboot_nls, aes(x=poc_percent))+
+  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
+  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
+  geom_abline(slope = 1, intercept = 0, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
 
 ```
 
 
-```{r exit}
+### GNLS
+
+#### Model
+
+```{r fit-poc-mes-gnls}
+
+# on utilise les valeurs de pocfit NLS comme coefficients initiaux
+
+pocfitg <- gnls(
+  model = poc_percent ~ a*mes_for_fit^b + aspt,
+  data = select(poc_galabre, c(mes_for_fit, poc_percent, aspt)), #select columns to avoid NA in other columns - makes gnls unhappy
+  params = list(a~1, b~1),
+  start = list(a = coef(pocfit)[1], b = coef(pocfit)[2]),
+  weights = varPower(value = 1, form = ~ fitted(.)),
+#  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
+)
+
+formula_pocfitg <- paste("GNLS:", round(coef(pocfitg)[1], 3), "x MES ^", round(coef(pocfitg)[2],3), "+", round(aspt_value, 3), sep = "")
+
+poc_galabre$poc_gnls_fitted <- predict(pocfitg, poc_galabre)
+
+ggplot(poc_galabre)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_gnls_fitted, col = "fitted"))+ 
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %")+
+  theme_minimal()
+
+plot(pocfitg)
+
+# Sans asymptote
+
+pocfitgnas <- gnls(
+  model = poc_percent ~ a*mes_for_fit^b,
+  data = select(poc_galabre, c(mes_for_fit, poc_percent, aspt)), #select columns to avoid NA in other columns - makes gnls unhappy
+  params = list(a~1, b~1),
+  start = list(a = coef(pocfitnas)[1], b = coef(pocfitnas)[2]),
+  weights = varPower(value = 1, form = ~ fitted(.)),
+#  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
+)
+
+formula_pocfitgnas <- paste("GNLS:", round(coef(pocfitgnas)[1], 3), "x MES ^", round(coef(pocfitgnas)[2],3), "+", round(aspt_value, 3), sep = "")
+
+poc_galabre$poc_gnls_fitted <- predict(pocfitg, poc_galabre)
+
+ggplot(poc_galabre)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_gnls_fitted, col = "fitted"))+ 
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %")+
+  theme_minimal()
+
+plot(pocfitg)
+```
+
+
+#### GNLS bootstrap
+
+```{r intervalles-de-confiance-bootstrap}
+n_boot <- 1000
+n_obs <- nrow(poc_galabre)
+
+coefs_boot <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
+                     
+
+for(i in seq_len(n_boot)){
+  
+  idx_boot <- sample(n_obs, replace = T)
+  df_boot <- poc_galabre[idx_boot, c("mes_for_fit","poc_percent","aspt")]
+  
+  tryCatch(
+    {fit_init <- nls(
+      poc_percent ~ a * mes_for_fit^b + aspt,
+      data = df_boot,
+      start = coef(pocfitg))
+      # fit init is necessary to find the correct starting values for gnls. Otherwise, too much convergence result in extreme values in a and b
+
+      pocfit_bg <- gnls(
+      poc_percent~a*mes_for_fit^b+aspt,
+      data = df_boot,
+      start = coef(fit_init),
+      weights = varPower(form = ~fitted(.)),
+      control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4, maxIter = 200))
+      
+      coefs_boot[i,] <- coef(pocfit_bg)
+      }, 
+    error = function(e) NULL) 
+}
+
+coefs_boot <- na.omit(coefs_boot)
+length(coefs_boot)
+apply(coefs_boot, 2, quantile, probs = c(0.025, 0.975)) #ic coef
+
+
+
+ggplot(as.data.frame(coefs_boot))+
+  geom_point(aes(x = a, y = b))+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+mes_for_fit <- poc_galabre$mes_for_fit
+fitted_boot <- apply(coefs_boot, 1, function(p){p["a"] * mes_for_fit^p["b"] + aspt_value}) # les MC worlds sont en colonne
+
+fitted_boot_ic <- apply(fitted_boot, 1, quantile,
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+fitted_boot_mean <- apply(fitted_boot, 1, mean)
+
+poc_galabre_boot <- poc_galabre %>% mutate(poc_fitted = fitted_boot_mean, upr = fitted_boot_ic[3, ], lwr = fitted_boot_ic[1,])
+
+ggplot(poc_galabre_boot)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
+  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
+
+ggplot(poc_galabre_boot, aes(x=poc_percent))+
+  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
+  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
+  geom_abline(slope = 1, intercept = 0, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
+```
+
+```{r intervalles-de-confiance-bootstrap-nas}
+n_boot <- 1000
+n_obs <- nrow(poc_galabre)
+
+coefs_boot_nas <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
+                     
+
+for(i in seq_len(n_boot)){
+  
+  idx_boot <- sample(n_obs, replace = T)
+  df_boot <- poc_galabre[idx_boot, c("mes_for_fit","poc_percent","aspt")]
+  
+  tryCatch(
+    {fit_init <- nls(
+      poc_percent ~ a * mes_for_fit^b,
+      data = df_boot,
+      start = coef(pocfitgnas))
+      # fit init is necessary to find the correct starting values for gnls. Otherwise, too much convergence result in extreme values in a and b
+
+      pocfit_bg <- gnls(
+      poc_percent~a*mes_for_fit^b,
+      data = df_boot,
+      start = coef(fit_init),
+      weights = varPower(form = ~fitted(.)),
+      control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4, maxIter = 200))
+      
+      coefs_boot_nas[i,] <- coef(pocfit_bg)
+      }, 
+    error = function(e) NULL) 
+}
+
+coefs_boot_nas <- na.omit(coefs_boot_nas)
+length(coefs_boot_nas)
+apply(coefs_boot_nas, 2, quantile, probs = c(0.025, 0.975)) #ic coef
+
+
+
+ggplot(as.data.frame(coefs_boot_nas))+
+  geom_point(aes(x = a, y = b))+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+fitted_boot_nas <- apply(coefs_boot_nas, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"]}) # les MC worlds sont en colonne
+
+fitted_boot_nas_ic <- apply(fitted_boot_nas, 1, quantile,
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+fitted_boot_nas_mean <- apply(fitted_boot_nas, 1, mean)
+
+poc_galabre_boot_nas <- poc_galabre %>% mutate(poc_fitted = fitted_boot_nas_mean, upr = fitted_boot_nas_ic[3, ], lwr = fitted_boot_nas_ic[1,])
+
+ggplot(poc_galabre_boot_nas)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
+  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitgnas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
+
+ggplot(poc_galabre_boot_nas, aes(x=poc_percent))+
+  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
+  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
+  geom_abline(slope = 1, intercept = 0, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitgnas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
+  theme_minimal()
+```
+
+```{r comparaison-nls-gnls}
+
+par(mfrow = c(2, 2))
+
+# nls : les résidus montrent un pattern en éventail
+plot(fitted(pocfit), residuals(pocfit),
+     main = "Résidus nls (non pondérés)",
+     xlab = "Fitted", ylab = "Résidus")
+abline(h = 0, col = "red")
+
+# gnls : les résidus normalisés sont homoscédastiques
+plot(fitted(pocfitg), residuals(pocfitg, type = "normalized"),
+     main = "Résidus gnls (normalisés)",
+     xlab = "Fitted", ylab = "Résidus normalisés")
+abline(h = 0, col = "red")
+       
+# nls : les résidus montrent un pattern en éventail
+plot(fitted(pocfitnas), residuals(pocfitnas),
+     main = "Résidus nls (non pondérés)",
+     xlab = "Fitted", ylab = "Résidus")
+abline(h = 0, col = "red")
+
+# gnls : les résidus normalisés sont homoscédastiques
+plot(fitted(pocfitgnas), residuals(pocfitgnas, type = "normalized"),
+     main = "Résidus gnls (normalisés)",
+     xlab = "Fitted", ylab = "Résidus normalisés")
+abline(h = 0, col = "red")       
+       
+
+```
+### NLS extension to Galabre
+
+No difference of residuals between gnls and nls + 2/3 of mes_for_fit are 0
+
+
+```{r nls-extention-galabre-aspt}
+
+# prepare dataframe
+with(galabre, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
+galabre_nls <- galabre %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+
+
+galabre_nls$aspt <- aspt_value # from nls fitting
+nrow_galabre <- nrow(galabre_nls)
+nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
+
+# predict POC pour mes > 0
+galabre_nls$poc_fitted <- predict(pocfit, newdata = galabre_nls) 
+
+
+# Prediction interval
+mes_mat_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+
+for(i in 1:nrow_galabre){
+  mes_mat_nls[,i] <-rnorm(nrow_boot, mean = galabre_nls$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
+}
+
+
+## model function 
+f <- function(x, a, b){
+  a * x ^ b + aspt_value
+}
+
+## paramètres de variance
+sigma_nls <- summary(pocfit)$sigma
+
+
+### Matrice de prédictions, sans bruit
+
+mu_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+for(i in 1:nrow_boot){
+   mu_nls[i,] <- with(as.list(coefs_wboot_nls[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
+                      f(mes_mat_nls[i, ], a, b))
+}
+
+
+galabre_nls$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
+
+# adds noise
+noise_mat_nls <- matrix(rnorm(nrow_boot*nrow_galabre, mean = 0, sd = sigma_nls), nrow = nrow_boot, ncol = nrow_galabre)
+
+pred_nls <- mu_nls + noise_mat_nls
+
+### computes variance, y-wise
+galabre_nls$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
+
+## computes prediction interval 
+pi <- t(
+  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi) <- c("lower", "upper")
+
+boot_pred_nls <- colMeans(pred_nls, na.rm = T)
+
+## insert in galabre_for_nls
+
+galabre_nls <- galabre_nls %>% mutate(poc_boot_pred = boot_pred_nls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# plot
+
+ggplot(galabre_nls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+```{r nls-extention-galabre-no-aspt}
+
+# prepare dataframe
+with(galabre, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
+galabre_nls_nas <- galabre %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+
+nrow_galabre <- nrow(galabre_nls_nas)
+nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
+
+# predict POC pour mes > 0
+galabre_nls_nas$poc_fitted <- predict(pocfitnas, newdata = galabre_nls_nas) 
+
+
+# Prediction interval
+mes_mat_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+
+for(i in 1:nrow_galabre){
+  mes_mat_nls[,i] <-rnorm(nrow_boot, mean = galabre_nls_nas$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
+}
+
+
+## model function 
+f <- function(x, a, b){
+  a * x ^ b
+}
+
+## paramètres de variance
+sigma_nls <- summary(pocfit)$sigma
+
+
+### Matrice de prédictions, sans bruit
+
+
+mu_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+for(i in 1:nrow_boot){
+   mu_nls[i,] <- with(as.list(coefs_wboot_nls[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
+                      f(mes_mat_nls[i, ], a, b))
+}
+
+
+galabre_nls_nas$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
+
+# adds noise
+noise_mat_nls <- matrix(rnorm(nrow_boot*nrow_galabre, mean = 0, sd = sigma_nls), nrow = nrow_boot, ncol = nrow_galabre)
+
+pred_nls <- mu_nls + noise_mat_nls
+
+### computes variance, y-wise
+galabre_nls_nas$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
+
+## computes prediction interval 
+pi <- t(
+  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi) <- c("lower", "upper")
+
+boot_pred_nls <- colMeans(pred_nls, na.rm = T)
+
+## insert in galabre_nls_nas
+
+galabre_nls_nas <- galabre_nls_nas %>% mutate(poc_boot_pred = boot_pred_nls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# plot
+
+ggplot(galabre_nls_nas, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+#### GNLS extension to Galabre
+
+```{r pred-isere-gnls, cache.lazy = F}
+galabre$mes_for_fit <- galabre$cmes_g.L 
+with(galabre, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
+
+galabre_for_gnls <- galabre %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+
+galabre_for_gnls$aspt <- aspt_value
+
+nrow_galabre <- nrow(galabre_for_gnls)
+nrow_boot <- nrow(coefs_boot)
+
+# predict POC pour mes > 0
+galabre_for_gnls$poc_fitted <- predict(pocfitg, newdata = galabre_for_gnls, na.action = na.pass) 
+
+
+# Prediction interval
+mes_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+
+for(i in 1:nrow(galabre_for_gnls)){
+  mes_mat_gnls[,i] <-rnorm(nrow_boot, mean = galabre_for_gnls$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES. Exactly same code as when working on lines.
+}
+
+
+## model function 
+f <- function(x, a, b){
+  a * x ^ b + aspt_value
+}
+
+## paramètres de variance
+theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
+sigma_gnls <- pocfitg$sigma
+
+
+### Matrice de prédictions, sans bruit
+
+
+mu_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+for(i in 1:nrow_boot){
+   mu_gnls[i,] <- with(as.list(coefs_boot[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
+                      f(mes_mat_gnls[i, ], a, b))
+}
+
+
+galabre_for_gnls$poc_var_mean <- apply(mu_gnls, 2, var) # variance of fit parameters + MES 
+
+# adds noise
+noise_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_gnls <- sigma_gnls * abs(mu_gnls)^theta
+
+noise_mat_gnls <- matrix(rnorm(nrow_boot*nrow_galabre, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_galabre)
+noise_mat_gnls <- noise_mat_gnls*sigma_mat_gnls
+
+pred_gnls <- mu_gnls + noise_mat_gnls
+
+pred_gnls <- pmin(pmax(pred_gnls, 0), 1) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+### computes variance, y-wise
+galabre_for_gnls$poc_var_tot <- apply(pred_gnls, 2, var) # total variance per prediction, for prediction total uncertainty
+
+## computes prediction interval 
+pi <- t(
+  apply(pred_gnls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi) <- c("lower", "upper")
+
+boot_pred_gnls <- colMeans(pred_gnls, na.rm = T)
+
+## insert in galabre_for_gnls
+
+galabre_for_gnls <- galabre_for_gnls %>% mutate(poc_boot_pred = boot_pred_gnls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# plot
+
+ggplot(galabre_for_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  ylim(-0.05,0.1)
+
+ggplot(galabre_for_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+
+
+
+```{r exit, cache = F}
 knitr::knit_exit()
 ```
 
+
+
+
+# Flux 
+
+## Annual flux based on gnls model + Monte Carlo
+
+
+```{r annual-flux-reference, cache.lazy=F}
+# create matrix of q
+q_u = 0.1 # Cédric - avis d'expert NOT WORKING; has to be 10% of the Q measured, not ALWAYS 0.1!
+
+q_meas <- matrix(isere_for_gnls$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+
+q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
+
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+
+
+# compute flux
+period_mat <- matrix(isere_for_gnls$period, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
+
+flux_kg.s_mat <- pred_gnls*mes_mat_gnls*q_mat*1e-2*period_mat #pred_gnls * mes_mat : poc in mg/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period. 
+
+index_years <- sapply(unique(isere_for_gnls$year), function(y){which(isere_for_gnls$year == y)}) # list of indices corresponding to each year
+
+annual_flux_kg.y <- sapply(index_years, function(idx){apply(flux_kg.s_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_ci <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_df <- data.frame(year = unique(isere_for_gnls$year), 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = rep(NA, 19), # no physical sense in calculating "annual variability". Would be standard deviation of annual flux. But we prefer to show the prediction interval.
+                        annual_flux_ci_lower = annual_flux_ci[1,], 
+                        annual_flux_ci_upper = annual_flux_ci[3,])
+
+ggplot(annual_flux_df)+
+  geom_col(aes(x=year, y = annual_flux_mean), fill = "lightblue")+
+  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper), width = 0.2)+
+  theme_minimal()
+```
 
 # Archives
 
@@ -383,7 +1124,8 @@ ggplot(sample_n(galabre,5000))+
   theme_minimal()+
   theme(legend.position = "none")
 ```
-# predict fluxes using LM POC g/L ~ MES
+
+## predict fluxes using LM POC g/L ~ MES
 
 ```{r predict-poc-lm}
 galabre$pocgl_pred <- predict(lm_pocgl, newdata = galabre)
@@ -438,7 +1180,7 @@ ggplot(yearly_fluxes, aes(x = year))+
 
 ```
 
-# predict fluxes using powerlaw POC % ~ MES
+## predict fluxes using powerlaw POC % ~ MES
 
 ```{r predict-poc-power}
 galabre$log_pocpercent_pred <- predict(adjust_pocpercent, newdata = galabre)
