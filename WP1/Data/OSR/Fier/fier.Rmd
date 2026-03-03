@@ -1,0 +1,199 @@
+---
+title: "fier"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+date: "2025-06-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(imputeTS)
+```
+
+# Get data
+
+```{r load-data-from-excel, message = F}
+
+cmes <- readxl::read_xlsx(path = "fier.xlsx", sheet = "cmes", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+
+fmes <- readxl::read_xlsx(path = "fier.xlsx", sheet = "fmes") %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+poc <- readxl::read_xlsx(path = "fier.xlsx", sheet = "poc") %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+poc$poc_timeinterval <- poc$Debut %--% poc$Fin
+poc$poc_g.kg <- as.numeric(poc$poc_g.kg)
+
+# debit <- readxl::read_xlsx(path = "New data/OSR/Ardèche/ardeche.xlsx", sheet = "Debit", col_types = c("date","numeric","numeric")) # aucune idée de comment évaluer la qualité à partir des chiffres? pas de métadonnées
+debit <- readxl::read_xlsx(path = "fier.xlsx", sheet = "débit") %>% mutate(Statut = NULL, Methode = NULL, Continuite = NULL) %>% setNames(c("DateHeure","q_m3.s", "Qualification"))
+
+debit$DateHeure <- ymd_hms(debit$DateHeure)
+debit$q_m3.s <- as.numeric(debit$q_m3.s)
+
+
+#tet <- tet %>% mutate(period = as.numeric(-(datetime - lead(datetime))), period_j = period / 60 / 60 / 24)
+
+```
+
+
+```{r join-debit-mes}
+na_interval <- poc$Fin[112] %--% poc$Debut[1]  %>% as.character()
+
+# poc$poc_timeinterval[debit$DateHeure[100] >= poc$Debut & debit$DateHeure[100] <= poc$Fin]
+
+debit_timeinterval <- sapply(debit$DateHeure, FUN = function (x){as.character(poc$poc_timeinterval[x >= poc$Debut & x <= poc$Fin])}, simplify = T)
+na_timeinterval <- which(lengths(debit_timeinterval) == 0)
+debit_timeinterval[na_timeinterval] <- na_interval
+
+debit$poc_timeinterval <- do.call(c, (debit_timeinterval))
+```
+
+
+```{r merge}
+fier <- merge(debit, cmes, by = "DateHeure") %>% merge(poc, by = "poc_timeinterval")
+
+fier$year <- year(fier$DateHeure)
+fier$commondate <- as.Date(paste0("2000-", format(fier$DateHeure,"%j")), "%Y-%j")
+fier$Date <- format(fier$DateHeure, "%Y-%m-%d")
+```
+
+
+```{r plot, fig.dim = c(10, 10)}
+n <- 10
+  
+ggplot(data = subset(fier, year != 2019), aes(x=commondate))+ 
+  geom_point(aes(y= q_m3.s, col = "Discharge, m3/s"), alpha = 0.5, size = 0.5) +
+  geom_point(aes(y= cmes_mg.L/n, col = "CMES, mg/L"), alpha = 0.5, size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  scale_y_continuous(sec.axis = sec_axis(~.*n, name = "CMES, mg/L"))+
+  scale_color_manual(values = c("palegreen4","lightblue"))+
+  facet_grid(rows = vars(year), scales = "free")+
+  labs(title = "Discarge (m3/s) and MES (mg/L)", x = "", y = "Débit, m3/s")+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+
+```
+
+```{r cmes-interpol}
+fier$cmes_interpol <- na_interpolation(fier$cmes_mg.L, maxgap = 24)
+
+ggplot(fier, aes(x=q_m3.s))+ 
+  geom_point(aes(y= cmes_mg.L, col = "measured"), alpha = 0.5, size = 1) +
+  geom_point(aes(y = cmes_interpol, col = "interpol"), alpha = 0.5, size = 0.5)+
+  labs(title = "", x = "Débit, mg/L", y = "MES, mg/L")+
+  scale_color_manual(values = c("lightblue","palegreen4"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+
+ggplot(fier, aes(x=DateHeure))+ 
+  geom_point(aes(y= cmes_mg.L, col = "measured"), alpha = 0.5, size = 1) +
+  geom_point(aes(y = cmes_interpol, col = "interpol"), alpha = 0.5, size = 0.5)+
+  labs(title = "", x = "Date", y = "MES, mg/L")+
+  scale_color_manual(values = c("lightblue","palegreen4"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+```
+
+```{r poc-mg-L}
+fier$poc_mg.L <- with(fier, cmes_interpol*1e-6*poc_g.kg*1e3) # CMES converted from mg/L to kg/L, POC obtained in g is converted to mg
+fier$fpoc_kg.h <- with(fier, q_m3.s * 1e3 * poc_mg.L * 3600 * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s and converted to kg/h
+
+ggplot()+ 
+  geom_line(data = subset(fier, !is.na(cmes_mg.L)),aes(x=commondate, y= fpoc_kg.h, col = "POC flux"), alpha = 0.5, size = 0.5) +
+  geom_line(data = subset(fier, !is.na(cmes_mg.L)),aes(x=commondate, y= cmes_interpol*q_m3.s*1e3*3600*1e-6, col = "CMES interpol"), alpha = 0.5, size = 0.5) +
+  scale_y_continuous(transform = "log10")+
+  scale_color_manual(values = c("palegreen4","lightblue"), name = "")+
+  facet_grid(rows = vars(year))+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+```{r calcul-yearly-flux} 
+yearly_fluxes <- fier %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.h, na.rm = T), 
+                              percent_poc_included = sum(!is.na(fpoc_kg.h))/n()*100,
+                              nb_day_sampled = length(unique(Date)),
+                              sum_discharge.year = sum(q_m3.s, na.rm = T),  # faut-il inclure les débits correspondants à des heures où le POC n'est pas mesuré?
+                              mean_discharge.year = mean(q_m3.s, na.rm = T), 
+                              sd_discharge.year = sd(q_m3.s, na.rm = T),
+                              average_fpoc = mean(fpoc_kg.h, na.rm = T),
+    nb_days_sampled = length(unique(Date)),
+    nb_days_sampled_poc = length(unique(Date[!is.na(poc_mg.L) & !is.na(q_m3.s)])))
+
+# discharge is converted from m3/s to L/h before being summed, as in the formula for fpoc
+
+bv <- 1180
+  
+# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$fpoc_kg.year.km2 <- yearly_fluxes$fpoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+yearly_fluxes$fpoc_ww_kg.year.km2 <- with(yearly_fluxes, fpoc_kg.year/sum_discharge.year*mean_discharge.year) * 24 * 365 / bv
+
+# fluxes only average
+yearly_fluxes$fpoc_average_kg.y.km2 <- yearly_fluxes$average_fpoc *24*365 / bv
+```
+
+The weighted method does not work if the river is well sampled, because too much weight is given to the large values. In this case, the weighted method is equivalent to taking the average FPOC / h and multiply it by the number of hours in a year. 
+
+
+
+```{r figures-flux} 
+yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable() %>% kableExtra::kable_styling()
+```
+
+```{r compare-fluxes}
+yearly_fluxes$label <- paste(round(yearly_fluxes$nb_days_sampled,2), "Q\n", round(yearly_fluxes$nb_days_sampled_poc,2), "POC")
+
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 500, label.size = 0.1)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+```{r fluxes-as-sum}
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+```{r interrannual-fluxes}
+
+mixedfluxes_mean <- with(yearly_fluxes, ifelse(nb_days_sampled_poc < 200, fpoc_ww_kg.year.km2, fpoc_kg.year.km2)) %>% mean()
+mixedfluxes_sd <- with(yearly_fluxes, ifelse(nb_days_sampled_poc < 200, fpoc_ww_kg.year.km2, fpoc_kg.year.km2)) %>% sd()
+
+means <- data.frame(
+  "Mean FPOC sum, kg/year/m2" = mean(yearly_fluxes$fpoc_kg.year.km2),
+  "Sd FPOC sum" = sd(yearly_fluxes$fpoc_kg.year.km2),
+  "Mean FPOC weighted, kg/m2/year" = mean(yearly_fluxes$fpoc_ww_kg.year.km2, na.rm = T),
+  "Sd FPOC weighted" = sd(yearly_fluxes$fpoc_ww_kg.year.km2, na.rm = T),
+  "Mean FPOC mixed" = mixedfluxes_mean,
+  "Sd FPOC mixed" = mixedfluxes_sd
+)
+
+knitr::kable(t(means), digits = 3) %>% kableExtra::kable_styling()
+```

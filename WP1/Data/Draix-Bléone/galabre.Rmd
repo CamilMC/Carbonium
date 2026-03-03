@@ -29,12 +29,13 @@ library(nlme)
 
 ## Load 
 
-Sur BDOH les chroniques de débit et MES sont disponibles jusqu'à 2019.
+Sur BDOH les chroniques de débit et MES sont disponibles jusqu'à 2019. Données 2020-2021 fournies par Ophélie. 
+
+Vérifier l'unité de "period"
 
 
 ```{r load-data}
 crues <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "Crues") 
-crues$mes_for_fit <- crues$mes_g.L 
 
 mes <- readxl::read_xlsx(path = "galabre.xlsx", sheet = "SSC", col_types = c("date","numeric")) 
 
@@ -60,11 +61,15 @@ galabre %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc 
 galabre %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n()),
 by = "year", all = T) %>% 
   merge(galabre %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>%
-  merge(galabre %>% subset(!is.na(period)) %>% group_by(year) %>% summarise(total_period_j = round(sum(period)/(24*60*60))), by = "year", all = T)
-  
+  merge(galabre %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(period_q = round(n()*10/(24*60),0)), by = "year", all = T) 
+
+
 summary_galabre %>% knitr::kable(caption = "Nombre d'observations de DOC, POC, CMES et débit par an") %>% kableExtra::kable_styling()
 
+complete_years <- c(2009:2014)
+
 ```
+
 
 
 ## Explore data
@@ -112,332 +117,121 @@ ncol = 2
 )
 
 ```
+
+`
+
+# Fit MES-POC
+
+Objectif: construire la relation MES-POC pour pouvoir reconstruire la chronique de POC à partir de la chronique de MES. Cette relation prend la forme de $POC\% = a*MES^b + c$. Le modèle est fitté sur les données de crues dont la concentration en POC a été mesurée: **poc_galabre**.
+
+```{r poc-galabre}
+poc_galabre <- galabre %>% filter(!is.na(poc_percent) & !is.na(mes_g.L) & mes_g.L != 0) # one missing value for MES, one MES = 0
+
+poc_galabre$mes_for_fit <- poc_galabre$mes_g.L 
+
+n_obs <- nrow(poc_galabre)
+n_boot <- 1000
+```
+
+
+```{r uncertainties}
+q_u <- 0.1 # vérifier chiffre galabre
+mes_u <- 0.05 # au pif
+```
+
+On cherche à fitter le modèle $POC (prop) = a \* MES^{b} + aspt$. Deux fonctions R sont disponibles : *nls* et *gnls*. nls est robuste, mais gnls permet de choisir la structure de la variance. On sait que la variance diminue pour les hautes valeurs de MES (on tend vers l'asymptote). L'erreur dépend probablement de $y*\sigma^{2\delta}.
+
+```{r asymptot}
+# find asymptotic value : arbitrarily decide that it corresponds to the median of the 10% of poc_percent corresponding to the 10% of highest MES values.
+aspt_value <- poc_galabre[order(poc_galabre$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_galabre)[1]/10) %>% mean() 
+aspt_value_sd <- poc_galabre[order(poc_galabre$cmes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_galabre)[1]/10) %>% sd() 
+
+poc_galabre$aspt <- aspt_value
+```
+
 ## Regression MES (POC) and CMES
 
 ```{r mes-cmes}
-galabre[which(galabre$cmes_g.L == galabre$mes_g.L), ] # only 6, including 4 zero -> can be used for mes_u
 
-fit_mes <- lm(Cmes_g.L~mes_g.L, data = galabre)
+fit_mes <- lm(cmes_g.L~mes_g.L, data = poc_galabre)
 summary(fit_mes)
 
 cmes_u <- summary(fit_mes)$coef[2,2] # standard error on cmes
 
-ggplot(galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
+ggarrange(
+ggplot(poc_galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
   scale_color_viridis_d()+
   scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
   geom_abline(slope = 1, intercept =0, col ="darkred")+
   geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
   xlim(0,200)+
-  theme_minimal()
+  theme_minimal(),
 
-ggplot(galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
+ggplot(poc_galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
   scale_color_viridis_d()+
   scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
   geom_abline(slope = 1, intercept =0, col ="darkred")+
   geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
   xlim(0,50)+ylim(0,50)+
-  theme_minimal()
+  theme_minimal(),
 
-ggplot(galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
+ggplot(poc_galabre) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = crue, shape = crue))+
   scale_color_viridis_d()+
   scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
   geom_abline(slope = 1, intercept =0, col ="darkred")+
   geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
   xlim(0,10)+ylim(0,10)+
-  theme_minimal()
+  theme_minimal(),
+
+ncol = 3, common.legend = T, legend = "bottom")
 
 ```
 
+## Log-log linear regression: get starting values
 
 
-# Fit MES POC
-
-mes_for_fit in mg/L.
-
-q in m3/s.
-
-## Fit all events
-
-```{r prepare-df}
-poc_galabre <- galabre %>% filter(!is.na(poc_percent)) %>% mutate(mes_for_fit = mes_g.L) %>% filter(!is.na(mes_for_fit) & mes_for_fit !=0) # has to be !=0 for the bootstrap
-
-```
-
-
-### NLS
-
-```{r get-starting-values}
-
-
-fit_linear <- lm(log(poc_percent)~log(mes_g.L), data = subset(crues, !is.na(poc_percent) & !is.na(mes_g.L) & poc_percent != 0 & mes_g.L != 0)) 
-
-start_a <- exp(coef(fit_linear)[1])
-start_b <- coef(fit_linear)[2]
-
-ggplot(poc_galabre)+
-  geom_point(aes(x=log(mes_g.L), y = log(poc_percent), col = "measured"))+ 
-  labs(x = "MES, mg/L", y = "POC, %")+
-  geom_abline(slope = coef(fit_linear)[2], intercept = coef(fit_linear)[1], linetype = 2)+
-  scale_color_manual(values = c("lightblue"))+
-  theme_minimal()+
-  theme(legend.position = "none")
-
-```
-
-```{r fit-poc-mes-nls}
-
-# find asymptotic value
-aspt_value <- poc_galabre[order(poc_galabre$mes_g.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(crues)[1]/10) %>% median() # 10% of poc_percent corresponding to the max cmes
-
-# add mes for POC 2011
-poc_galabre$mes_for_fit <- poc_galabre$mes_g.L
-poc_galabre$aspt <- aspt_value
-
-# nls avec aspt
-pocfit <- nls(
-  poc_percent ~ a * mes_for_fit^b + aspt,
-  data = subset(poc_galabre, !is.na(poc_percent) & !is.na(mes_for_fit) & poc_percent != 0 & mes_g.L != 0),
-  start = list(a = start_a, b = start_b)
-)
+```{r lm-poc-mes}
+pocfit <- lm(log(poc_percent)~log(mes_for_fit), data = select(poc_galabre, c(poc_percent, mes_for_fit)))
 
 summary(pocfit)
-poc_galabre$poc_nls_fitted <- predict(pocfit, poc_galabre)
-
-formula_pocfit <- paste("NLS : POC =", round(coef(pocfit)[1],2), "* MES (mg/L) ^", round(coef(pocfit)[2],2), "+", round(aspt_value,2))
-
-ggplot(poc_galabre)+
-  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_nls_fitted, col = "fitted"))+ 
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %")+
-  theme_minimal()
-
-plot(pocfit)
-
-# nls sans aspt
-pocfitnas <- nls(
-  poc_percent ~ a * mes_for_fit^b,
-  data = subset(poc_galabre, !is.na(poc_percent) & !is.na(mes_for_fit) & poc_percent != 0 & mes_g.L != 0),
-  start = list(a = start_a, b = start_b)
-)
-
-summary(pocfitnas)
-poc_galabre$poc_nls_fitted <- predict(pocfitnas, poc_galabre)
-
-formula_pocfitnas <- paste("NLS : POC =", round(coef(pocfitnas)[1],2), "* MES (mg/L) ^", round(coef(pocfitnas)[2],2))
-
-ggplot(poc_galabre)+
-  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_nls_fitted, col = "fitted"))+ 
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitnas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %")+
-  theme_minimal()
-
-plot(pocfitnas)
-
-```
-#### NLS Bootstrap
-
-```{r nls-bootstrap-with-aspt}
-
-n_boot <- 1000
-n_obs <- nrow(poc_galabre)
-
-coefs_wboot_nls <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
-
-
-for(i in seq_len(n_boot)){
-  
-  weights <- sample(c(-1,1), size = length(residuals(pocfit)), replace = T)
-  resid_wboot <- residuals(pocfit) * weights
-  
-  y_wboot <- fitted(pocfit) + resid_wboot
-  
-  df_wboot <- poc_galabre %>% mutate(poc_percent = y_wboot)
-  
-  tryCatch(
-    {pocfit_wb <- nls(
-      poc_percent~a*mes_for_fit^b+aspt,
-      data = df_wboot,
-      start = coef(pocfit))
-    coefs_wboot_nls[i,] <- coef(pocfit_wb)}, 
-    error = function(e) NULL) 
-}
-
-coefs_wboot_nls <- na.omit(coefs_wboot_nls) 
-length(coefs_wboot_nls)
-apply(coefs_wboot_nls, 2, quantile, probs = c(0.025, 0.975)) #ic coef
-
-
-ggplot(as.data.frame(coefs_wboot_nls))+
-  geom_point(aes(x = a, y = b))+
-  theme_minimal()+
-  theme(legend.position = "none")
-
-
-fitted_wboot_nls <- apply(coefs_wboot_nls, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"] + aspt_value}) # les MC worlds sont en colonne
-
-fitted_wboot_nls_ic <- apply(fitted_wboot_nls, 1, quantile,
-                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-fitted_wboot_nls_mean <- apply(fitted_wboot_nls, 1, mean)
-
-poc_galabre_wboot_nls <- poc_galabre %>% mutate(poc_fitted = fitted_wboot_nls_mean, upr = fitted_wboot_nls_ic[3, ], lwr = fitted_wboot_nls_ic[1,])
-
-ggplot(poc_galabre_wboot_nls)+
-  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
-  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-ggplot(poc_galabre_wboot_nls, aes(x=poc_percent))+
-  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
-  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
-  geom_abline(slope = 1, intercept = 0, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-```
-
-```{r nls-bootstrap-no-aspt}
-
-n_boot <- 1000
-n_obs <- nrow(poc_galabre)
-
-coefs_wboot_nls <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
-
-
-for(i in seq_len(n_boot)){
-  
-  weights <- sample(c(-1,1), size = length(residuals(pocfit)), replace = T)
-  resid_wboot <- residuals(pocfit) * weights
-  
-  y_wboot <- fitted(pocfitnas) + resid_wboot
-  
-  df_wboot <- poc_galabre %>% mutate(poc_percent = y_wboot)
-  
-  tryCatch(
-    {pocfit_wb <- nls(
-      poc_percent~a*mes_for_fit^b,
-      data = df_wboot,
-      start = coef(pocfit))
-    coefs_wboot_nls[i,] <- coef(pocfit_wb)}, 
-    error = function(e) NULL) 
-}
-
-coefs_wboot_nls <- na.omit(coefs_wboot_nls) 
-length(coefs_wboot_nls)
-apply(coefs_wboot_nls, 2, quantile, probs = c(0.025, 0.975)) #ic coef
-
-
-ggplot(as.data.frame(coefs_wboot_nls))+
-  geom_point(aes(x = a, y = b))+
-  theme_minimal()+
-  theme(legend.position = "none")
-
-
-fitted_wboot_nls <- apply(coefs_wboot_nls, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"]}) # les MC worlds sont en colonne
-
-fitted_wboot_nls_ic <- apply(fitted_wboot_nls, 1, quantile,
-                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-fitted_wboot_nls_mean <- apply(fitted_wboot_nls, 1, mean)
-
-poc_galabre_wboot_nls <- poc_galabre %>% mutate(poc_fitted = fitted_wboot_nls_mean, upr = fitted_wboot_nls_ic[3, ], lwr = fitted_wboot_nls_ic[1,])
-
-ggplot(poc_galabre_wboot_nls)+
-  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
-  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
-ggplot(poc_galabre_wboot_nls, aes(x=poc_percent))+
-  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
-  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
-  geom_abline(slope = 1, intercept = 0, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
-
 ```
 
 
-### GNLS
+## GNLS with aspt 
 
-#### Model
+### Fit GNLS model 
 
 ```{r fit-poc-mes-gnls}
 
-# on utilise les valeurs de pocfit NLS comme coefficients initiaux
-
+# fit gnls
 pocfitg <- gnls(
-  model = poc_percent ~ a*mes_for_fit^b + aspt,
-  data = select(poc_galabre, c(mes_for_fit, poc_percent, aspt)), #select columns to avoid NA in other columns - makes gnls unhappy
-  params = list(a~1, b~1),
-  start = list(a = coef(pocfit)[1], b = coef(pocfit)[2]),
+  poc_percent ~ a*mes_for_fit^b + aspt,
+  data = select(poc_galabre, c(mes_for_fit, poc_percent, aspt)),
+  start = list(a = coef(pocfit)[[2]], b = coef(pocfit)[[1]]), # on utilise les valeurs de pocfit comme coefficients initiaux
   weights = varPower(value = 1, form = ~ fitted(.)),
-#  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
+  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
 )
 
+# summary 
+summary(pocfitg) %>% print()
+
+# variance parameters
+theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
+sigma_gnls <- pocfitg$sigma
+
+# formula
 formula_pocfitg <- paste("GNLS:", round(coef(pocfitg)[1], 3), "x MES ^", round(coef(pocfitg)[2],3), "+", round(aspt_value, 3), sep = "")
 
-poc_galabre$poc_gnls_fitted <- predict(pocfitg, poc_galabre)
-
-ggplot(poc_galabre)+
-  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_gnls_fitted, col = "fitted"))+ 
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %")+
-  theme_minimal()
-
-plot(pocfitg)
-
-# Sans asymptote
-
-pocfitgnas <- gnls(
-  model = poc_percent ~ a*mes_for_fit^b,
-  data = select(poc_galabre, c(mes_for_fit, poc_percent, aspt)), #select columns to avoid NA in other columns - makes gnls unhappy
-  params = list(a~1, b~1),
-  start = list(a = coef(pocfitnas)[1], b = coef(pocfitnas)[2]),
-  weights = varPower(value = 1, form = ~ fitted(.)),
-#  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
-)
-
-formula_pocfitgnas <- paste("GNLS:", round(coef(pocfitgnas)[1], 3), "x MES ^", round(coef(pocfitgnas)[2],3), "+", round(aspt_value, 3), sep = "")
-
-poc_galabre$poc_gnls_fitted <- predict(pocfitg, poc_galabre)
-
-ggplot(poc_galabre)+
-  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured"))+ 
-  geom_point(aes(x=mes_for_fit, y = poc_gnls_fitted, col = "fitted"))+ 
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  scale_color_manual(values = c("darkblue", "lightblue"))+
-  labs(x = "MES, mg/L", y = "POC, %")+
-  theme_minimal()
-
-plot(pocfitg)
+## model function 
+f <- function(x, a, b, aspt){
+  a * x ^ b + aspt
+}
 ```
 
 
-#### GNLS bootstrap
+### GNLS bootstrap
 
 ```{r intervalles-de-confiance-bootstrap}
-n_boot <- 1000
-n_obs <- nrow(poc_galabre)
 
 coefs_boot <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
                      
@@ -466,27 +260,27 @@ for(i in seq_len(n_boot)){
     error = function(e) NULL) 
 }
 
+# removes NA
 coefs_boot <- na.omit(coefs_boot)
-length(coefs_boot)
-apply(coefs_boot, 2, quantile, probs = c(0.025, 0.975)) #ic coef
-
-
-
+apply(coefs_boot, 2, quantile, probs = c(0.025, 0.975)) %>% knitr::kable() #ic coef
 ggplot(as.data.frame(coefs_boot))+
   geom_point(aes(x = a, y = b))+
   theme_minimal()+
   theme(legend.position = "none")
 
-mes_for_fit <- poc_galabre$mes_for_fit
-fitted_boot <- apply(coefs_boot, 1, function(p){p["a"] * mes_for_fit^p["b"] + aspt_value}) # les MC worlds sont en colonne
+# adds uncertainty around aspt
+coefs_boot <- cbind(coefs_boot, "aspt" = rnorm(length(coefs_boot)/2, mean = aspt_value, sd = aspt_value_sd))
 
-fitted_boot_ic <- apply(fitted_boot, 1, quantile,
-                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-fitted_boot_mean <- apply(fitted_boot, 1, mean)
+# compute POC
+fitted_boot <- apply(coefs_boot, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"] + p["aspt"]}) # MC worlds in columns
+fitted_boot_ic <- apply(fitted_boot, 1, quantile, 
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE) # prediction intervals
+fitted_boot_mean <- apply(fitted_boot, 1, mean) # meet bottstrapped valur
 
-poc_galabre_boot <- poc_galabre %>% mutate(poc_fitted = fitted_boot_mean, upr = fitted_boot_ic[3, ], lwr = fitted_boot_ic[1,])
+# intergrates in poc_galabre
+poc_galabre_boot_gnls <- poc_galabre %>% mutate(poc_fitted = fitted_boot_mean, upr = fitted_boot_ic[3, ], lwr = fitted_boot_ic[1,])
 
-ggplot(poc_galabre_boot)+
+ggplot(poc_galabre_boot_gnls)+
   geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
   geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
   geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
@@ -496,18 +290,145 @@ ggplot(poc_galabre_boot)+
   labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
   theme_minimal()
 
-ggplot(poc_galabre_boot, aes(x=poc_percent))+
+ggplot(poc_galabre_boot_gnls, aes(x=poc_percent))+
   geom_point(aes(y=poc_fitted), col = "darkblue")+ 
-  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
   geom_abline(slope = 1, intercept = 0, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
   theme_minimal()
 ```
 
+
+### GNLS extension to galabre
+
+**mes_for_fit** contient beaucoup de zéros (462553). Ils ne peuvent pas être inclus dans le modèle parce qu'il est instable avec 0^(-b). On va fitter les autres lignes et imposer POC% = 0 pour les lignes où MES = 0. 
+
+Pour la méthode, on utilise uniquement les années où les chroniques de débit sont complètes... de 2009 à 2014. 
+
+```{r constant-numbers}
+# prepare dataframe
+galabre_gnls <- galabre %>% filter(year %in% complete_years)
+galabre_gnls$mes_for_fit <- galabre_gnls$cmes_g.L
+with(galabre_gnls, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 291686
+
+na_lines <- which(is.na(galabre_gnls$mes_for_fit)) # 0
+zero_lines <- which(galabre_gnls$mes_for_fit == 0)
+fit_lines <- which(galabre_gnls$mes_for_fit != 0 & !is.na(galabre_gnls$mes_for_fit))
+
+galabre_pwl_gnls <- galabre_gnls[fit_lines, ]
+galabre_pwl_gnls$aspt <- aspt_value # from nls fitting
+
+nrow_boot <- nrow(coefs_boot)
+nrow_galabre_gnls <- nrow(galabre_gnls)
+```
+
+
+```{r pred-galabre-gnls, cache.lazy = F}
+
+# predict POC pour mes > 0
+poc_fitted <- predict(pocfitg, newdata = galabre_pwl_gnls, na.action = na.pass)
+galabre_gnls$poc_fitted <- NA
+galabre_gnls[fit_lines, ]$poc_fitted <- poc_fitted
+galabre_gnls[zero_lines, ]$poc_fitted <- 0
+
+
+# MES matrix
+mes_meas <- matrix(galabre_gnls$mes_for_fit, nrow = nrow_boot, ncol = nrow_galabre_gnls, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+mes_noise <- matrix(rnorm(nrow_boot*nrow_galabre_gnls, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_galabre_gnls) # 
+mes_mat <- mes_meas * (1 + mes_noise) # final value of q, with noise. 
+
+
+# Prediction matrix, no model noise
+mu_gnls <- f(mes_mat, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+# Prediction matrix, with noise
+noise_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre_gnls)
+sigma_mat_gnls <- sigma_gnls * abs(mu_gnls)^theta # variance depends on predicted value
+
+noise_mat_gnls <- matrix(rnorm(nrow_boot*nrow_galabre_gnls, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_galabre_gnls)
+noise_mat_gnls <- noise_mat_gnls*sigma_mat_gnls
+
+pred_gnls <- mu_gnls + noise_mat_gnls
+pred_gnls[,zero_lines] <- 0
+pred_gnls <- pmin(pmax(pred_gnls, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro et au dessus de 100 (no case)
+
+# Prediction interval 
+pi <- t(apply(pred_gnls, 2, quantile, probs = c(0.025, 0.975), na.rm = T))
+colnames(pi) <- c("lower", "upper")
+
+# Mean bootstrap value
+boot_pred_gnls <- colMeans(pred_gnls, na.rm = T)
+
+## insert in galabre_for_gnls
+galabre_gnls <- galabre_gnls %>% mutate(poc_boot_pred = boot_pred_gnls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# variances
+galabre_gnls$poc_var_mean <- apply(mu_gnls, 2, var) # variance of fit parameters + MES 
+galabre_gnls$poc_var_tot <- apply(pred_gnls, 2, var) # total variance per prediction, for prediction total uncertainty
+
+# plot
+ggplot(galabre_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5, size = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+# plot variance
+ggplot(galabre_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_var_mean, col = "model variance"))+
+  geom_line(aes(y = poc_var_tot, col = "total variance (includes noise)"))+
+  scale_color_manual(values = c("lightblue", "darkblue"))+
+  scale_x_continuous(trans = "log", breaks = c(0.01,0.1,1,10,50))+
+  labs(x = "MES, g/L", y = "variance")+
+  theme_minimal()
+    
+```
+
+## No aspt
+
+### Fit GNLS model 
+
+```{r fit-poc-mes-gnls-nas}
+
+# fit gnls
+pocfitg_nas <- gnls(
+  poc_percent ~ a*mes_for_fit^b,
+  data = select(poc_galabre, c(mes_for_fit, poc_percent)),
+  start = list(a = coef(pocfit)[[2]], b = coef(pocfit)[[1]]), # on utilise les valeurs de pocfit comme coefficients initiaux
+  weights = varPower(value = 1, form = ~ fitted(.)),
+  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
+)
+
+# summary 
+summary(pocfitg_nas) %>% print()
+
+# variance parameters
+theta_nas <- as.numeric(coef(pocfitg_nas$modelStruct$varStruct, unconstrained = F))
+sigma_gnls_nas <- pocfitg_nas$sigma
+
+# formula
+formula_pocfitg_nas <- paste("GNLS:", round(coef(pocfitg_nas)[1], 3), "x MES ^", round(coef(pocfitg_nas)[2],3), "+", round(aspt_value, 3), sep = "")
+
+## model function 
+f <- function(x, a, b){
+  a * x ^ b
+}
+```
+
+
+### GNLS bootstrap
+
 ```{r intervalles-de-confiance-bootstrap-nas}
-n_boot <- 1000
-n_obs <- nrow(poc_galabre)
 
 coefs_boot_nas <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
                      
@@ -515,13 +436,13 @@ coefs_boot_nas <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a
 for(i in seq_len(n_boot)){
   
   idx_boot <- sample(n_obs, replace = T)
-  df_boot <- poc_galabre[idx_boot, c("mes_for_fit","poc_percent","aspt")]
+  df_boot <- poc_galabre[idx_boot, c("mes_for_fit","poc_percent")]
   
   tryCatch(
     {fit_init <- nls(
       poc_percent ~ a * mes_for_fit^b,
       data = df_boot,
-      start = coef(pocfitgnas))
+      start = coef(pocfitg_nas))
       # fit init is necessary to find the correct starting values for gnls. Otherwise, too much convergence result in extreme values in a and b
 
       pocfit_bg <- gnls(
@@ -536,725 +457,1499 @@ for(i in seq_len(n_boot)){
     error = function(e) NULL) 
 }
 
+# removes NA
 coefs_boot_nas <- na.omit(coefs_boot_nas)
-length(coefs_boot_nas)
-apply(coefs_boot_nas, 2, quantile, probs = c(0.025, 0.975)) #ic coef
-
-
-
+apply(coefs_boot_nas, 2, quantile, probs = c(0.025, 0.975)) %>% knitr::kable() #ic coef
 ggplot(as.data.frame(coefs_boot_nas))+
   geom_point(aes(x = a, y = b))+
   theme_minimal()+
   theme(legend.position = "none")
 
-fitted_boot_nas <- apply(coefs_boot_nas, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"]}) # les MC worlds sont en colonne
 
-fitted_boot_nas_ic <- apply(fitted_boot_nas, 1, quantile,
-                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
-fitted_boot_nas_mean <- apply(fitted_boot_nas, 1, mean)
+# compute POC
+fitted_boot_nas <- apply(coefs_boot_nas, 1, function(p){p["a"] * poc_galabre$mes_for_fit^p["b"]}) # MC worlds in columns
+fitted_boot_nas_ic <- apply(fitted_boot_nas, 1, quantile, 
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE) # prediction intervals
+fitted_boot__nasmean <- apply(fitted_boot_nas, 1, mean) # meet bottstrapped valur
 
-poc_galabre_boot_nas <- poc_galabre %>% mutate(poc_fitted = fitted_boot_nas_mean, upr = fitted_boot_nas_ic[3, ], lwr = fitted_boot_nas_ic[1,])
+# intergrates in poc_galabre
+poc_galabre_boot_gnls_nas <- poc_galabre %>% mutate(poc_fitted = fitted_boot__nasmean, upr = fitted_boot_nas_ic[3, ], lwr = fitted_boot_nas_ic[1,])
 
-ggplot(poc_galabre_boot_nas)+
+ggplot(poc_galabre_boot_gnls_nas)+
   geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
   geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
   geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitgnas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  annotate(geom = "label", label = formula_pocfitg_nas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   scale_color_manual(values = c("darkblue", "lightblue"))+
   labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
   theme_minimal()
 
-ggplot(poc_galabre_boot_nas, aes(x=poc_percent))+
+ggplot(poc_galabre_boot_gnls_nas, aes(x=poc_percent))+
   geom_point(aes(y=poc_fitted), col = "darkblue")+ 
-  geom_errorbar(aes(ymin = lwr, ymax = upr), col = "gray80", alpha = 0.5)+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
   geom_abline(slope = 1, intercept = 0, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitgnas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
   theme_minimal()
 ```
 
-```{r comparaison-nls-gnls}
 
-par(mfrow = c(2, 2))
+### GNLS extension to galabre
 
-# nls : les résidus montrent un pattern en éventail
-plot(fitted(pocfit), residuals(pocfit),
-     main = "Résidus nls (non pondérés)",
-     xlab = "Fitted", ylab = "Résidus")
-abline(h = 0, col = "red")
+**mes_for_fit** contient beaucoup de zéros. Ils ne peuvent pas être inclus dans le modèle parce qu'il est instable avec 0^(-b). On va fitter les autres lignes et imposer POC% = 0 pour les lignes où MES = 0
 
-# gnls : les résidus normalisés sont homoscédastiques
-plot(fitted(pocfitg), residuals(pocfitg, type = "normalized"),
-     main = "Résidus gnls (normalisés)",
-     xlab = "Fitted", ylab = "Résidus normalisés")
-abline(h = 0, col = "red")
-       
-# nls : les résidus montrent un pattern en éventail
-plot(fitted(pocfitnas), residuals(pocfitnas),
-     main = "Résidus nls (non pondérés)",
-     xlab = "Fitted", ylab = "Résidus")
-abline(h = 0, col = "red")
-
-# gnls : les résidus normalisés sont homoscédastiques
-plot(fitted(pocfitgnas), residuals(pocfitgnas, type = "normalized"),
-     main = "Résidus gnls (normalisés)",
-     xlab = "Fitted", ylab = "Résidus normalisés")
-abline(h = 0, col = "red")       
-       
-
-```
-### NLS extension to Galabre
-
-No difference of residuals between gnls and nls + 2/3 of mes_for_fit are 0
-
-
-```{r nls-extention-galabre-aspt}
-
+```{r constant-numbers-nas}
 # prepare dataframe
-with(galabre, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
-galabre_nls <- galabre %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+galabre_nas <- galabre %>% filter(year %in% complete_years)
+galabre_nas$mes_for_fit <- galabre_nas$cmes_g.L
+with(galabre_nas, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 462553
 
+na_lines <- which(is.na(galabre_nas$mes_for_fit)) # 0
+zero_lines <- which(galabre_nas$mes_for_fit == 0)
+fit_lines <- which(galabre_nas$mes_for_fit != 0 & !is.na(galabre_nas$mes_for_fit))
 
-galabre_nls$aspt <- aspt_value # from nls fitting
-nrow_galabre <- nrow(galabre_nls)
-nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
+galabre_nas_pwl <- galabre_nas[fit_lines, ]
+galabre_nas_pwl$aspt <- aspt_value # from nls fitting
 
-# predict POC pour mes > 0
-galabre_nls$poc_fitted <- predict(pocfit, newdata = galabre_nls) 
-
-
-# Prediction interval
-mes_mat_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
-
-for(i in 1:nrow_galabre){
-  mes_mat_nls[,i] <-rnorm(nrow_boot, mean = galabre_nls$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
-}
-
-
-## model function 
-f <- function(x, a, b){
-  a * x ^ b + aspt_value
-}
-
-## paramètres de variance
-sigma_nls <- summary(pocfit)$sigma
-
-
-### Matrice de prédictions, sans bruit
-
-mu_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
-for(i in 1:nrow_boot){
-   mu_nls[i,] <- with(as.list(coefs_wboot_nls[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat_nls[i, ], a, b))
-}
-
-
-galabre_nls$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
-
-# adds noise
-noise_mat_nls <- matrix(rnorm(nrow_boot*nrow_galabre, mean = 0, sd = sigma_nls), nrow = nrow_boot, ncol = nrow_galabre)
-
-pred_nls <- mu_nls + noise_mat_nls
-
-### computes variance, y-wise
-galabre_nls$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi <- t(
-  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
-colnames(pi) <- c("lower", "upper")
-
-boot_pred_nls <- colMeans(pred_nls, na.rm = T)
-
-## insert in galabre_for_nls
-
-galabre_nls <- galabre_nls %>% mutate(poc_boot_pred = boot_pred_nls,
-                          poc_pred_lower = pi[,1],
-                          poc_pred_upper = pi[,2])
-
-# plot
-
-ggplot(galabre_nls, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
+nrow_boot <- nrow(coefs_boot_nas)
+nrow_galabre_nas <- nrow(galabre_nas)
 ```
-```{r nls-extention-galabre-no-aspt}
 
-# prepare dataframe
-with(galabre, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
-galabre_nls_nas <- galabre %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
 
-nrow_galabre <- nrow(galabre_nls_nas)
-nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
+```{r pred-galabre-gnls-nas, cache.lazy = F}
 
 # predict POC pour mes > 0
-galabre_nls_nas$poc_fitted <- predict(pocfitnas, newdata = galabre_nls_nas) 
+poc_fitted_nas <- predict(pocfitg_nas, newdata = galabre_nas_pwl, na.action = na.pass)
+galabre_nas$poc_fitted <- NA
+galabre_nas[fit_lines, ]$poc_fitted <- poc_fitted_nas
+galabre_nas[zero_lines, ]$poc_fitted <- 0
 
 
-# Prediction interval
-mes_mat_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
-
-for(i in 1:nrow_galabre){
-  mes_mat_nls[,i] <-rnorm(nrow_boot, mean = galabre_nls_nas$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES
-}
+# MES matrix
+mes_meas <- matrix(galabre_nas$mes_for_fit, nrow = nrow_boot, ncol = nrow_galabre_nas, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+mes_noise <- matrix(rnorm(nrow_boot*nrow_galabre_nas, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_galabre_nas) # 
+mes_mat <- mes_meas * (1 + mes_noise) # final value of q, with noise. 
 
 
-## model function 
-f <- function(x, a, b){
-  a * x ^ b
-}
-
-## paramètres de variance
-sigma_nls <- summary(pocfit)$sigma
+# Prediction matrix, no model noise
+mu_gnls <- f(mes_mat, coefs_boot_nas[,"a"], coefs_boot_nas[,"b"])
 
 
-### Matrice de prédictions, sans bruit
+# Prediction matrix, with noise
+noise_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre_nas)
+sigma_mat_gnls <- sigma_gnls_nas * abs(mu_gnls)^theta_nas # variance depends on predicted value
 
-
-mu_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
-for(i in 1:nrow_boot){
-   mu_nls[i,] <- with(as.list(coefs_wboot_nls[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat_nls[i, ], a, b))
-}
-
-
-galabre_nls_nas$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
-
-# adds noise
-noise_mat_nls <- matrix(rnorm(nrow_boot*nrow_galabre, mean = 0, sd = sigma_nls), nrow = nrow_boot, ncol = nrow_galabre)
-
-pred_nls <- mu_nls + noise_mat_nls
-
-### computes variance, y-wise
-galabre_nls_nas$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi <- t(
-  apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
-colnames(pi) <- c("lower", "upper")
-
-boot_pred_nls <- colMeans(pred_nls, na.rm = T)
-
-## insert in galabre_nls_nas
-
-galabre_nls_nas <- galabre_nls_nas %>% mutate(poc_boot_pred = boot_pred_nls,
-                          poc_pred_lower = pi[,1],
-                          poc_pred_upper = pi[,2])
-
-# plot
-
-ggplot(galabre_nls_nas, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-```
-#### GNLS extension to Galabre
-
-```{r pred-isere-gnls, cache.lazy = F}
-galabre$mes_for_fit <- galabre$cmes_g.L 
-with(galabre, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
-
-galabre_for_gnls <- galabre %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
-
-galabre_for_gnls$aspt <- aspt_value
-
-nrow_galabre <- nrow(galabre_for_gnls)
-nrow_boot <- nrow(coefs_boot)
-
-# predict POC pour mes > 0
-galabre_for_gnls$poc_fitted <- predict(pocfitg, newdata = galabre_for_gnls, na.action = na.pass) 
-
-
-# Prediction interval
-mes_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
-
-for(i in 1:nrow(galabre_for_gnls)){
-  mes_mat_gnls[,i] <-rnorm(nrow_boot, mean = galabre_for_gnls$mes_for_fit[i], sd = mes_u) # chaque colonne de la matrice correspond à une observation de MES. Exactly same code as when working on lines.
-}
-
-
-## model function 
-f <- function(x, a, b){
-  a * x ^ b + aspt_value
-}
-
-## paramètres de variance
-theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
-sigma_gnls <- pocfitg$sigma
-
-
-### Matrice de prédictions, sans bruit
-
-
-mu_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
-for(i in 1:nrow_boot){
-   mu_gnls[i,] <- with(as.list(coefs_boot[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat_gnls[i, ], a, b))
-}
-
-
-galabre_for_gnls$poc_var_mean <- apply(mu_gnls, 2, var) # variance of fit parameters + MES 
-
-# adds noise
-noise_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
-sigma_mat_gnls <- sigma_gnls * abs(mu_gnls)^theta
-
-noise_mat_gnls <- matrix(rnorm(nrow_boot*nrow_galabre, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_galabre)
+noise_mat_gnls <- matrix(rnorm(nrow_boot*nrow_galabre_nas, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_galabre_nas)
 noise_mat_gnls <- noise_mat_gnls*sigma_mat_gnls
 
 pred_gnls <- mu_gnls + noise_mat_gnls
+pred_gnls[,zero_lines] <- 0
 
-pred_gnls <- pmin(pmax(pred_gnls, 0), 1) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+pred_gnls <- pmin(pmax(pred_gnls, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro (et au dessus de 100, mais on ne devrait pas avoir ce cas) 
 
-### computes variance, y-wise
-galabre_for_gnls$poc_var_tot <- apply(pred_gnls, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi <- t(
-  apply(pred_gnls, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
+# Prediction interval 
+pi <- t(apply(pred_gnls, 2, quantile, probs = c(0.025, 0.975), na.rm = T))
 colnames(pi) <- c("lower", "upper")
 
+# Mean bootstrap value
 boot_pred_gnls <- colMeans(pred_gnls, na.rm = T)
 
-## insert in galabre_for_gnls
-
-galabre_for_gnls <- galabre_for_gnls %>% mutate(poc_boot_pred = boot_pred_gnls,
+## insert in galabre_nas
+galabre_nas <- galabre_nas %>% mutate(poc_boot_pred = boot_pred_gnls,
                           poc_pred_lower = pi[,1],
                           poc_pred_upper = pi[,2])
 
+# variances
+galabre_nas$poc_var_mean <- apply(mu_gnls, 2, var) # variance of fit parameters + MES 
+galabre_nas$poc_var_tot <- apply(pred_gnls, 2, var) # total variance per prediction, for prediction total uncertainty
+
 # plot
-
-ggplot(galabre_for_gnls, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
+ggplot(galabre_nas, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5, size = 0.5)+
   geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
   scale_color_manual(values = c("darkblue","gray50","lightblue"))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")+
-  ylim(-0.05,0.1)
-
-ggplot(galabre_for_gnls, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  annotate(geom = "label", label = formula_pocfitg_nas, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
   theme_minimal()+
   theme(legend.position = "bottom")
+
+# plot variance
+ggplot(galabre_nas, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_var_mean, col = "model variance"))+
+  geom_line(aes(y = poc_var_tot, col = "total variance (includes noise)"))+
+  scale_color_manual(values = c("lightblue", "darkblue"))+
+  scale_x_continuous(trans = "log", breaks = c(0.01,0.1,1,10,50))+
+  labs(x = "MES, g/L", y = "variance")+
+  theme_minimal()
+    
 ```
 
 
-
-
-```{r exit, cache = F}
-knitr::knit_exit()
-```
-
-
-
-
-# Flux 
+# Reference annual and interannual fluxes 
 
 ## Annual flux based on gnls model + Monte Carlo
 
 
 ```{r annual-flux-reference, cache.lazy=F}
 # create matrix of q
-q_u = 0.1 # Cédric - avis d'expert NOT WORKING; has to be 10% of the Q measured, not ALWAYS 0.1!
-
-q_meas <- matrix(isere_for_gnls$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
-
-q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
-
+q_meas <- matrix(galabre_nas$q_m3.s, nrow = nrow_boot, ncol = nrow_galabre_nas, byrow = T) # repeats nrow_boot times the vector galabre_nas$q_m3.s
+q_noise <- matrix(rnorm(nrow_boot*nrow_galabre_nas, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_galabre_nas) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
 
-# compute flux
-period_mat <- matrix(isere_for_gnls$period, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
+# matrix of period (no uncertainty,tge same repeated nrow_boot times)
+galabre_nas$period <- as.numeric(-(galabre_nas$DateHeure - lead(galabre_nas$DateHeure))) # period in s, updated for remaining lines
+period_mat <- matrix(galabre_nas$period, nrow = nrow_boot, ncol = nrow_galabre_nas, byrow = T)
 
-flux_kg.s_mat <- pred_gnls*mes_mat_gnls*q_mat*1e-2*period_mat #pred_gnls * mes_mat : poc in mg/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period. 
+# Instant flux matrix
+flux_kg.s_mat <- pred_gnls*mes_mat*1e-6*q_mat*1e-2*10*60 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period, that is uniformely 10 minutes. 
 
-index_years <- sapply(unique(isere_for_gnls$year), function(y){which(isere_for_gnls$year == y)}) # list of indices corresponding to each year
+# Get index for the columns corresponding to the same year
+index_years <- sapply(unique(galabre_nas$year), function(y){which(galabre_nas$year == y)}) # list of indices corresponding to each year
 
-annual_flux_kg.y <- sapply(index_years, function(idx){apply(flux_kg.s_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+# Annual flux
+annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_kg.s_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
 
-annual_flux_ci <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
-
-annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
- 
-
-annual_flux_df <- data.frame(year = unique(isere_for_gnls$year), 
+# Merge in df
+annual_flux_df <- data.frame(year = unique(galabre_nas$year), 
                         annual_flux_mean = annual_flux_mean, 
-                        annual_flux_variability = rep(NA, 19), # no physical sense in calculating "annual variability". Would be standard deviation of annual flux. But we prefer to show the prediction interval.
-                        annual_flux_ci_lower = annual_flux_ci[1,], 
-                        annual_flux_ci_upper = annual_flux_ci[3,])
-
+                        annual_flux_variability = annual_flux_sd, 
+                        annual_flux_pi_lower = annual_flux_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_pi[3,])
+# Plot
 ggplot(annual_flux_df)+
   geom_col(aes(x=year, y = annual_flux_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper), width = 0.2)+
+  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
+  labs(title = "Mean annual flux with prediction interval", x = "", y = "Mean annual flux, ton")+
   theme_minimal()
 ```
 
-# Archives
+## Interannual flux
 
-```{r crues-without-na}
-crues_nona <- crues %>% filter(!if_any(everything(), is.na)) %>% subset(crue != "Crue du 13/07/2011") %>% filter(mes_g.L != 0)
+```{r interannual-flux-reference}
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
 
-crues_nona <- tibble::rownames_to_column(crues_nona, "id")
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_pi_lower = interannual_flux_pi[1], 
+                        annual_flux_pi_upper = interannual_flux_pi[3])
 
-crues_train <- crues_nona %>% sample_frac(.75)
-crues_test <- crues_nona %>% dplyr::anti_join(crues_train, by = "id")
-```
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", length(unique(galabre_nas$year))), "interannual")
 
-```{r power-law-poc-percent}
-adjust_pocpercent <- lm(log(poc_percent)~log(mes_g.L), data = crues_train) 
-
-summary(adjust_pocpercent)
-
-coefs_pocpercent <- summary(adjust_pocpercent)$coefficients %>% as.data.frame() %>% mutate_if(is.numeric, round, digits = 2)
-powerlaw_pocpercent <- paste0("POC (g/L) = (",round(exp(coefs_pocpercent[1,1]),2), " ± ", round(exp(coefs_pocpercent[2,1]),2), ") *", " MES (g/L)^(", coefs_pocpercent[1,2], "±", coefs_pocpercent[2,2],")")
-
-crues_test$log_pocpercent_pred <- predict(object = adjust_pocpercent, newdata = crues_test)
-crues_test$pocpercent_pred <- exp(crues_test$log_pocpercent_pred)
-
-crues_test$log_pocpercent_pred_se <- predict(object = adjust_pocpercent, newdata = crues_test, se.fit = T)$se.fit
-crues_test$pocpercent_pred_se <- exp(crues_test$log_pocpercent_pred_se)
-
-ggplot(crues_test, aes(x= mes_g.L))+geom_point(aes(y = poc_percent, col = "measured"))+
-  geom_point(aes(y = pocpercent_pred, col = "predicted"))+
-  geom_errorbar(aes(ymin = pocpercent_pred-pocpercent_pred_se, ymax = pocpercent_pred + pocpercent_pred_se, col = "predicted"), width = 0.05)+
-  #scale_x_continuous(transform = "log10")+
-  # scale_y_continuous(transform = "log10")+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  theme_minimal()
-```
-
-
-```{r power-law-poc-percent-on-crues}
-crues_nona$log_pocpercent_pred <- predict(object = adjust_pocpercent, newdata = crues_nona)
-crues_nona$pocpercent_pred <- exp(crues_nona$log_pocpercent_pred)
-
-crues_nona$log_pocpercent_pred_se <- predict(object = adjust_pocpercent, newdata = crues_nona, se.fit = T)$se.fit
-crues_nona$pocpercent_pred_se <- exp(crues_nona$log_pocpercent_pred_se)
-
-ggplot(crues_nona, aes(x= mes_g.L))+geom_point(aes(y = poc_percent, col = "measured"), size = 2)+
-  geom_point(aes(y = pocpercent_pred, col = "predicted"))+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  labs(x = "MES, g/L", y = "POC, %", col = "")+
-  annotate(x = 25, y = 0.8, geom = "label", label = powerlaw_pocpercent)+
-  theme_minimal(base_size = 15)+
-    theme(legend.position = "bottom")
-
-
-```
-
-```{r lm-pocgl-mes}
-lm_pocgl <- lm(poc_g.L~mes_g.L, data = crues_train) 
-summary(lm_pocgl)
-
-
-coefs_pocgl <- summary(lm_pocgl)$coefficients %>% as.data.frame() %>% mutate_if(is.numeric, round, digits = 4)
-lmformula_pocgl <- paste0("POC (g/L) = (" , coefs_pocgl[1,1] , " ± " , coefs_pocgl[2,1] , ") + MES (g/L) * (", coefs_pocgl[1,2], "±", coefs_pocgl[2,2], ")")
-
-
-crues_test$pocgl_pred <- predict(object = lm_pocgl, newdata = crues_test)
-crues_test$pocgl_pred_se <- predict(object = lm_pocgl, newdata = crues_test, se.fit = T)$se.fit
-
-crues_train$pocgl_pred <- predict(object = lm_pocgl)
-crues_train$pocgl_pred_se <- predict(object = lm_pocgl, se.fit = T)$se.fit
-
-ggplot(crues_test, aes(x = mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
-  geom_point(aes(y = pocgl_pred, col = "predicted"))+
-  geom_errorbar(aes(ymin = pocgl_pred - pocgl_pred_se, ymax = pocgl_pred + pocgl_pred_se, col = "predicted"), width = 0.05)+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  scale_x_continuous(transform = "log10")+
-  scale_y_continuous(transform = "log10")+
-  theme_minimal()
-
-ggplot(crues_test, aes(x = mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
-  geom_point(aes(y = pocgl_pred, col = "predicted"))+
-  geom_errorbar(aes(ymin = pocgl_pred - pocgl_pred_se, ymax = pocgl_pred + pocgl_pred_se, col = "predicted"), width = 1)+
-    annotate(x = 70, y = 0.10, geom = "label", label = lmformula_pocgl)+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  theme_minimal()
-
-ggplot(crues_train, aes(x = mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
-  geom_point(aes(y = pocgl_pred, col = "predicted"))+
-  geom_errorbar(aes(ymin = pocgl_pred - pocgl_pred_se, ymax = pocgl_pred + pocgl_pred_se, col = "predicted"), width = 1)+
-    annotate(x = 100, y = 0.10, geom = "label", label = lmformula_pocgl)+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  theme_minimal()
-
-```
-
-```{r power-law-mes-pocgl}
-
-adjust_pocgl <- lm(log(poc_g.L)~log(mes_g.L), data = crues_train)
-summary(adjust_pocgl)
-
-coefs_pocgl <- summary(adjust_pocgl)$coefficients %>% as.data.frame() %>% mutate_if(is.numeric, round, digits = 2)
-powerlaw_pocgl <- paste0("POC (g/L) = (",round(exp(coefs_pocgl[1,1]),2), " ± ", round(exp(coefs_pocgl[2,1]),2), ") *", " MES (g/L)^(", coefs_pocgl[1,2], "±", coefs_pocgl[2,2],")")
-
-crues_test$log_pocgl_pred <- predict(object = adjust_pocgl, newdata = crues_test)
-crues_test$pl_pocgl_pred <- exp(crues_test$log_pocgl_pred)
-
-crues_test$log_pocgl_pred_se <- predict(object = adjust_pocgl, newdata = crues_test, se.fit = T)$se.fit
-crues_test$pl_pocgl_pred_se <- exp(crues_test$log_pocgl_pred_se)
-
-
-ggplot(crues_test, aes(x= mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
-  geom_point(aes(y = pl_pocgl_pred, col = "predicted"))+
-  geom_errorbar(aes(ymin = pl_pocgl_pred - pl_pocgl_pred_se, ymax = pl_pocgl_pred + pl_pocgl_pred_se, col = "predicted"), width = 1)+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  scale_x_continuous(transform = "log10")+
-  scale_y_continuous(transform = "log10")+
-  theme_minimal()
-
-
-ggplot(crues_test, aes(x= mes_g.L))+geom_point(aes(y = poc_g.L, col = "measured"))+
-  geom_point(aes(y = pl_pocgl_pred, col = "predicted"))+
-  geom_errorbar(aes(ymin = pl_pocgl_pred - pl_pocgl_pred_se, ymax = pl_pocgl_pred + pl_pocgl_pred_se, col = "predicted"), width = 1)+
-  scale_color_manual(values = c("palegreen4", "lightblue"))+
-  annotate(x = 70, y = -0.5, geom = "label", label = powerlaw_pocgl)+
-  theme_minimal()
-
-```
-
-```{r merge-q-mes}
-
-galabre <- merge(debit, mes, by = "DateHeure")
-
-sum(is.na(galabre$mes_g.L) == T)
-
-galabre$year <- year(galabre$DateHeure)
-galabre$commondate <- as.Date(paste0("2000-", format(galabre$DateHeure,"%j")), "%Y-%j")
-galabre <- galabre %>%
-  mutate(Saison = case_when(month(DateHeure) %in% c(12, 1, 2) ~ "Hiver", 
-                            month(DateHeure) %in% c(3, 4, 5) ~ "Printemps", 
-                            month(DateHeure) %in% c(6, 7, 8) ~ "Ete", 
-                            TRUE ~ "Automne"))
-
-galabre$Saison <- ordered(galabre$Saison, levels = c("Automne", "Hiver", "Printemps", "Ete"))
-
-
-ggpubr::ggarrange(
-ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
-  geom_point(aes(x=commondate, y= mes_g.L,col="mes g/L"), alpha = 0.5, size = 0.5) +
-  scale_color_manual(values = c("palegreen4"))+
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
-  scale_y_continuous( name = "MES g/L")+
-  facet_grid(cols = vars(year), scales = "free")+
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
   theme_minimal()+
-  theme(legend.position = "none", axis.text.x = element_blank()),
-
-ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
-  geom_point(aes(x=commondate, y= q_m3.s,col="discharge_m3/s"), alpha = 0.5, size = 0.5) +
-  scale_color_manual(values = c("lightblue"))+
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
-  scale_y_continuous( name = "Discharge, m3/s")+
-  facet_grid(cols = vars(year), scales = "free")+
-  theme_minimal()+
-  theme(legend.position = "none", axis.text.x = element_text(angle = 90), strip.text.x = element_blank()),
-
-nrow = 2)
-
-ggplot(sample_n(galabre,5000))+
-  geom_point(aes(x = q_m3.s, y = mes_g.L, col = Saison))+
-  scale_color_viridis_d()+
-  labs(x = "Débit, m3/s", y = "MES, g/L", col = "Saison")+
-  facet_grid(cols = vars(Saison))+
-  scale_color_manual(values = c("orange","grey80","chartreuse4","goldenrod2"))+
-    scale_x_continuous(transform = "log10")+
-  theme_minimal()+
-  theme(legend.position = "none")
-
-ggplot(sample_n(galabre,5000))+
-  geom_point(aes(x = q_m3.s, y = mes_g.L, col = Saison))+
-  scale_color_viridis_d()+
-  labs(x = "Débit, m3/s", y = "MES, g/L", col = "Saison")+
-  facet_grid(cols = vars(Saison))+
-  scale_color_manual(values = c("orange","grey80","chartreuse4","goldenrod2"))+
-  theme_minimal()+
-  theme(legend.position = "none")
-
-ggplot(sample_n(galabre,5000))+
-  geom_point(aes(x = q_m3.s, y = mes_g.L, col = Saison))+
-  scale_color_viridis_d()+
-  labs(x = "Débit, m3/s", y = "MES, g/L", col = "Saison")+
-  scale_color_manual(values = c("orange","grey80","chartreuse4","goldenrod2"))+
-  theme_minimal()+
-  theme(legend.position = "none")
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
-## predict fluxes using LM POC g/L ~ MES
+# Time steps
 
-```{r predict-poc-lm}
-galabre$pocgl_pred <- predict(lm_pocgl, newdata = galabre)
-galabre$pocgl_pred_se <- predict(lm_pocgl, newdata = galabre, se.fit = T)$se.fit
+Time step for CMES and Q: 10 min 
 
-ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
-  geom_point(aes(x=commondate, y= pocgl_pred,col="POC predicted, g/L"), alpha = 0.5, size = 0.5) +
-  scale_color_manual(values = c("lightblue"))+
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
-  scale_y_continuous( name = "POC predicted, g/L")+
-  facet_grid(cols = vars(year), scales = "free")+
+```{r common-data}
+galabre_time <- galabre %>% filter(!is.na(mes_for_fit))
+
+mes_u <- 0.05
+q_u <- 0.05
+
+set.seed(2502)
+
+library(future.apply)
+plan(multisession, workers = 6)
+```
+
+
+Random CMES over timer period: mean Q, then GNLS. 
+
+## 2-Hour
+
+```{r pred-galabre-gnls-hour2, cache.lazy = F}
+# prepare df
+galabre_group_hour2 <- galabre_time %>% 
+  mutate(day = format(DateHeure, "%Y-%m-%d"), 
+         year = year(DateHeure),
+         hour2 =  floor(hour(DateHeure) / 2) * 2, # creates a 2-hours interval
+         DateHeure = NULL) %>% group_by(hour2,day,year) # group galabre_time by hour
+nrow_hour2 <- n_groups(galabre_group_hour2)
+
+# get mean q
+q_hour2 <- galabre_group_hour2 %>% select(c("hour2", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each hour2
+
+
+# creates matrix for MES
+galabre_mes_hour2 <- galabre_group_hour2 %>% select(c("hour2", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each hour2
+
+list_mes_hour2 <- galabre_mes_hour2$list_mes
+mes_hour2_random <- future_replicate(nrow_boot, vapply(list_mes_hour2, 
+                                                function(x) sample(x,1), numeric(1)),
+                              future.seed = T) %>% 
+                    t() # matrix of mes: one random sample per hour2, replicated 1000 times
+
+mes_hour2_noise <- matrix(rnorm(nrow_boot*nrow_hour2, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_hour2) 
+mes_mat_hour2 <- mes_hour2_random * (1 + mes_hour2_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_hour2)
+
+# Prediction matrix
+mu_hour2 <- f(mes_mat_hour2, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_hour2 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_hour2 <- sigma_gnls * abs(mu_hour2)^theta
+
+noise_mat_hour2 <- matrix(rnorm(nrow_boot*nrow_hour2, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_hour2)
+noise_mat_hour2 <- noise_mat_hour2*sigma_mat_hour2
+
+pred_hour2 <- mu_hour2 + noise_mat_hour2
+pred_hour2 <- pmin(pmax(pred_hour2, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_hour2 <- t(
+  apply(pred_hour2, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_hour2) <- c("lower", "upper")
+
+boot_pred_hour2 <- colMeans(pred_hour2, na.rm = T)
+
+## insert in galabre_hour2
+galabre_hour2 <- q_hour2 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_hour2,
+                          poc_pred_lower = pi_hour2[,"lower"],
+                          poc_pred_upper = pi_hour2[,"upper"],
+                          aspt = aspt_value)
+
+galabre_hour2$poc_fitted <- predict(pocfitg, galabre_hour2)
+
+# variance 
+galabre_hour2$poc_var_mean <- apply(mu_hour2, 2, var) # variance of fit parameters + MES 
+galabre_hour2$poc_var_tot <- apply(pred_hour2, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_hour2, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd hour", subtitle = "Prediction interval in grey")+
   theme_minimal()+
-  theme(legend.position = "none", axis.text.x = element_text(angle = 90), strip.text.x = element_blank())
+  theme(legend.position = "bottom")
 
 ```
 
-```{r carbon-flux}
+```{r annual-flux-hour2, cache.lazy= F}
 
-yearly_fluxes <- galabre %>% group_by(year) %>% 
-  summarise(
-    fpoc_kg.year = sum(pocgl_pred * q_m3.s * 10 * 60, na.rm = T), # poc in g/L equivalent to kg/m3, discharge in m3/s converted to L/s, and then in L/10 min. So we sum the amount of poc that flows for 10 min, for each 10-min interval
-    sum_fpoc_kg.s = sum(pocgl_pred * q_m3.s, na.rm = T), # g/L equivalent to kg/m3 -> fpoc obtained in kg/s
-    percent_of_year_included = sum(!is.na(pocgl_pred) & !is.na(q_m3.s))/n()*100, # how many missing data is there
-    sum_discharge_m3.s = sum(q_m3.s, na.rm = T),  #sum of instant fluxes 
-    mean_discharge_m3.s = mean(q_m3.s, na.rm = T), #mean of fluxes for year 
-    sd_discharge_m3.s = sd(q_m3.s, na.rm = T)) #sd
+# creates matrix for Q
 
-bv <- 20 # from Justin
-  
-# fluxes by adding all 10min fluxes, with uncertainty depending on the nb of observations per year
-yearly_fluxes$fpoc_kg.year.km2 <- yearly_fluxes$fpoc_kg.year/bv
+q_hour2_mean <-  matrix(q_hour2$q_mean, nrow = nrow_boot, ncol = nrow_hour2, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_hour2, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_hour2) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_hour2 <- q_hour2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
 
-# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
-yearly_fluxes$fpoc_ww_kg.year.km2 <- with(yearly_fluxes, sum_fpoc_kg.s/sum_discharge_m3.s*mean_discharge_m3.s* 365*24*60*60) / bv # fpoc obtained in kg/s, then converted to kg/year
 
-knitr::kable(yearly_fluxes)
+# compute flux
+flux_kg.s_mat_hour2 <- pred_hour2*mes_mat_hour2*1e-6*q_mat_hour2*1e-2*60*60*2 #pred_hour2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour2. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_hour2$year), function(y){which(galabre_hour2$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_hour2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_hour2_pi <- apply(annual_flux_ton.y_hour2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_hour2_mean <- colMeans(annual_flux_ton.y_hour2, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_hour2_sd <- apply(annual_flux_ton.y_hour2, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_hour2_df <- data.frame(year = unique(galabre_hour2$year), 
+                        annual_flux_mean = annual_flux_hour2_mean, 
+                        annual_flux_variability = annual_flux_hour2_sd, 
+                        annual_flux_pi_lower = annual_flux_hour2_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_hour2_pi[3,])
+
+interannual_flux_ton.y_hour2 <- rowMeans(annual_flux_ton.y_hour2, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_hour2 <- quantile(interannual_flux_ton.y_hour2, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_hour2 <- mean(interannual_flux_ton.y_hour2, na.rm = T) # mean interannual flux
+interannual_flux_variability_hour2 <- sd(annual_flux_hour2_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_hour2_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_hour2, 
+                                  annual_flux_variability = interannual_flux_variability_hour2,
+                        annual_flux_pi_lower = interannual_flux_pi_hour2[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_hour2[3])
+
+total_flux_hour2_df <- rbind(annual_flux_hour2_df, interannual_flux_hour2_df)
+total_flux_hour2_df$group <- c(rep("annual", length(unique(galabre_hour2$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_hour2_df, 
+           aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_errorbar(data = total_flux_hour2_df, 
+                aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"),
+                width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_hour2_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, 
+                    ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from 2-hourly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
-```{r plot-fluxes}
-yearly_fluxes$label <- paste(round(yearly_fluxes$percent_of_year_included,2), " %")
-ggplot(yearly_fluxes, aes(x = year))+
-  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
-  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
-  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 500, label.size = 0.1)+
-  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
-  scale_size_continuous(range = c(0.1,10))+
-  scale_fill_manual(values = c("palegreen4", "lightblue"))+
-  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+
+## 4-Hour
+
+```{r pred-galabre-gnls-hour4, cache.lazy = F}
+# prepare df
+galabre_group_hour4 <- galabre_time %>% 
+  mutate(day = format(DateHeure, "%Y-%m-%d"), 
+         year = year(DateHeure),
+         hour4 =  floor(hour(DateHeure) / 4) * 4, # creates a 2-hours interval
+         DateHeure = NULL) %>% group_by(hour4,day,year) # group galabre_time by hour
+nrow_hour4 <- n_groups(galabre_group_hour4)
+
+# get mean q
+q_hour4 <- galabre_group_hour4 %>% select(c("hour4", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each hour4
+
+
+# creates matrix for MES
+galabre_mes_hour4 <- galabre_group_hour4 %>% select(c("hour4", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each hour4
+
+list_mes_hour4 <- galabre_mes_hour4$list_mes
+mes_hour4_random <- future_replicate(nrow_boot, vapply(list_mes_hour4, 
+                                                function(x) sample(x,1), numeric(1)),
+                              future.seed = T) %>% 
+                    t() # matrix of mes: one random sample per hour4, replicated 1000 times
+
+mes_hour4_noise <- matrix(rnorm(nrow_boot*nrow_hour4, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_hour4) 
+mes_mat_hour4 <- mes_hour4_random * (1 + mes_hour4_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_hour4)
+
+# Prediction matrix
+mu_hour4 <- f(mes_mat_hour4, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_hour4 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_hour4 <- sigma_gnls * abs(mu_hour4)^theta
+
+noise_mat_hour4 <- matrix(rnorm(nrow_boot*nrow_hour4, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_hour4)
+noise_mat_hour4 <- noise_mat_hour4*sigma_mat_hour4
+
+pred_hour4 <- mu_hour4 + noise_mat_hour4
+pred_hour4 <- pmin(pmax(pred_hour4, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_hour4 <- t(
+  apply(pred_hour4, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_hour4) <- c("lower", "upper")
+
+boot_pred_hour4 <- colMeans(pred_hour4, na.rm = T)
+
+## insert in galabre_hour4
+galabre_hour4 <- q_hour4 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_hour4,
+                          poc_pred_lower = pi_hour4[,"lower"],
+                          poc_pred_upper = pi_hour4[,"upper"],
+                          aspt = aspt_value)
+
+galabre_hour4$poc_fitted <- predict(pocfitg, galabre_hour4)
+
+# variance 
+galabre_hour4$poc_var_mean <- apply(mu_hour4, 2, var) # variance of fit parameters + MES 
+galabre_hour4$poc_var_tot <- apply(pred_hour4, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_hour4, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 4 hour", subtitle = "Prediction interval in grey")+
   theme_minimal()+
   theme(legend.position = "bottom")
 
 
 ```
 
-## predict fluxes using powerlaw POC % ~ MES
+```{r annual-flux-hour4, cache.lazy= F}
 
-```{r predict-poc-power}
-galabre$log_pocpercent_pred <- predict(adjust_pocpercent, newdata = galabre)
-galabre$pocpercent_pred <- exp(galabre$log_pocpercent_pred)
+# creates matrix for Q
 
-galabre$pocpercent_pred[which(galabre$mes_g.L == 0)] <- 0
+q_hour4_mean <-  matrix(q_hour4$q_mean, nrow = nrow_boot, ncol = nrow_hour4, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_hour4, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_hour4) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_hour4 <- q_hour4_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
 
-galabre$log_pocpercent_pred_se <- predict(adjust_pocpercent, newdata = galabre, se.fit = T)$se.fit
-galabre$pocpercent_pred_se <- exp(galabre$log_pocpercent_pred_se)
 
-galabre$poc_g.L_pred <- with(galabre, pocpercent_pred / 100 * mes_g.L)
-  
-ggplot(galabre)+geom_boxplot(aes(y = pocpercent_pred))
+# compute flux
+flux_kg.s_mat_hour4 <- pred_hour4*mes_mat_hour4*1e-6*q_mat_hour4*1e-2*60*60*4 #pred_hour4 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour4. 
 
-ggplot(subset(galabre, year %in% c(2010,2014,2018)))+ 
-  geom_point(aes(x=commondate, y= pocpercent_pred,col="POC predicted, %"), alpha = 0.5, size = 0.5) +
-  scale_color_manual(values = c("lightblue"))+
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
-  scale_y_continuous( name = "POC predicted, %")+
-  facet_grid(cols = vars(year), scales = "free")+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_hour4$year), function(y){which(galabre_hour4$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_hour4 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour4[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_hour4_pi <- apply(annual_flux_ton.y_hour4, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_hour4_mean <- colMeans(annual_flux_ton.y_hour4, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_hour4_sd <- apply(annual_flux_ton.y_hour4, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_hour4_df <- data.frame(year = unique(galabre_hour4$year), 
+                        annual_flux_mean = annual_flux_hour4_mean, 
+                        annual_flux_variability = annual_flux_hour4_sd, 
+                        annual_flux_pi_lower = annual_flux_hour4_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_hour4_pi[3,])
+
+interannual_flux_ton.y_hour4 <- rowMeans(annual_flux_ton.y_hour4, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_hour4 <- quantile(interannual_flux_ton.y_hour4, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_hour4 <- mean(interannual_flux_ton.y_hour4, na.rm = T) # mean interannual flux
+interannual_flux_variability_hour4 <- sd(annual_flux_hour4_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_hour4_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_hour4, 
+                                  annual_flux_variability = interannual_flux_variability_hour4,
+                        annual_flux_pi_lower = interannual_flux_pi_hour4[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_hour4[3])
+
+total_flux_hour4_df <- rbind(annual_flux_hour4_df, interannual_flux_hour4_df)
+total_flux_hour4_df$group <- c(rep("annual", length(unique(galabre_hour4$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_hour4_df, 
+           aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_errorbar(data = total_flux_hour4_df, 
+                aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"),
+                width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_hour4_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, 
+                    ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from 4-hourly mean values (ton/year)", fill = "")+
   theme_minimal()+
-  theme(legend.position = "none", axis.text.x = element_text(angle = 90), strip.text.x = element_blank())
-
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
-```{r carbon-flux-p}
-
-yearly_fluxes_p <- galabre %>% group_by(year) %>% 
-  summarise(
-    fpoc_kg.year = sum(poc_g.L_pred * q_m3.s * 10 * 60, na.rm = T), # poc in g/L equivalent to kg/m3, discharge in m3/s converted to L/s, and then in L/10 min. So we sum the amount of poc that flows for 10 min, for each 10-min interval
-    sum_fpoc_kg.s = sum(poc_g.L_pred * q_m3.s, na.rm = T), # g/L equivalent to kg/m3 -> fpoc obtained in kg/s
-    percent_of_year_included = sum(!is.na(poc_g.L_pred) & !is.na(q_m3.s))/n()*100, # how many missing data is there
-    sum_discharge_m3.s = sum(q_m3.s, na.rm = T),  #sum of instant fluxes 
-    mean_discharge_m3.s = mean(q_m3.s, na.rm = T), #mean of fluxes for year 
-    sd_discharge_m3.s = sd(q_m3.s, na.rm = T)) #sd
-
-bv <- 20 # from Justin
-  
-# fluxes by adding all 10min fluxes, with uncertainty depending on the nb of observations per year
-yearly_fluxes_p$fpoc_kg.year.km2 <- yearly_fluxes_p$fpoc_kg.year/bv
-
-# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
-yearly_fluxes_p$fpoc_ww_kg.year.km2 <- with(yearly_fluxes_p, sum_fpoc_kg.s/sum_discharge_m3.s*mean_discharge_m3.s* 365*24*60*60) / bv # fpoc obtained in kg/s, then converted to kg/year
-
-knitr::kable(yearly_fluxes_p)
 
 
-print(paste("Mean FPOC (sum) = ", round(mean(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
-print(paste("sd FPOC (sum) = ", round(sd(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
+## 8-Hour
 
-print(paste("Mean FPOC (weighted) = ", round(mean(yearly_fluxes_p$fpoc_ww_kg.year.km2),2), "kg/year/km2"))
-print(paste("sd FPOC (weighted) = ", round(sd(yearly_fluxes_p$fpoc_ww_kg.year.km2),2), "kg/year/km2"))
+```{r pred-galabre-gnls-hour8, cache.lazy = F}
+# prepare df
+galabre_group_hour8 <- galabre_time %>% 
+  mutate(day = format(DateHeure, "%Y-%m-%d"), 
+         year = year(DateHeure),
+         hour8 =  floor(hour(DateHeure) / 8) * 8, # creates a 2-hours interval
+         DateHeure = NULL) %>% group_by(hour8,day,year) # group galabre_time by hour
+nrow_hour8 <- n_groups(galabre_group_hour8)
+
+# get mean q
+q_hour8 <- galabre_group_hour8 %>% select(c("hour8", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each hour8
 
 
-print(paste("Mean FPOC (sum) = ", round(mean(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
-print(paste("sd FPOC (sum) = ", round(sd(yearly_fluxes_p$fpoc_kg.year.km2),2), "kg/year/km2"))
+# creates matrix for MES
+galabre_mes_hour8 <- galabre_group_hour8 %>% select(c("hour8", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each hour8
 
-print(paste("Débit moyen = ", round(mean(galabre$q_m3.s),2), "kg/year/km2"))
-print(paste("sd FPOC (weighted) = ", round(sd(yearly_fluxes_p$fpoc_ww_kg.year.km2),2), "kg/year/km2"))
-```
+list_mes_hour8 <- galabre_mes_hour8$list_mes
+mes_hour8_random <- future_replicate(nrow_boot, vapply(list_mes_hour8, 
+                                                function(x) sample(x,1), numeric(1)),
+                              future.seed = T) %>% 
+                    t() # matrix of mes: one random sample per hour8, replicated 1000 times
 
-```{r plot-fluxes-p}
-yearly_fluxes_p$label <- paste(round(yearly_fluxes_p$percent_of_year_included,2), " %")
-ggplot(yearly_fluxes_p, aes(x = year))+
-  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
-  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
-  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 500, label.size = 0.1)+
-  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
-  scale_size_continuous(range = c(0.1,10))+
-  scale_fill_manual(values = c("palegreen4", "lightblue"))+
-  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
-  theme_minimal(base_size = 15)+
+mes_hour8_noise <- matrix(rnorm(nrow_boot*nrow_hour8, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_hour8) 
+mes_mat_hour8 <- mes_hour8_random * (1 + mes_hour8_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_hour8)
+
+# Prediction matrix
+mu_hour8 <- f(mes_mat_hour8, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_hour8 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_hour8 <- sigma_gnls * abs(mu_hour8)^theta
+
+noise_mat_hour8 <- matrix(rnorm(nrow_boot*nrow_hour8, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_hour8)
+noise_mat_hour8 <- noise_mat_hour8*sigma_mat_hour8
+
+pred_hour8 <- mu_hour8 + noise_mat_hour8
+pred_hour8 <- pmin(pmax(pred_hour8, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_hour8 <- t(
+  apply(pred_hour8, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_hour8) <- c("lower", "upper")
+
+boot_pred_hour8 <- colMeans(pred_hour8, na.rm = T)
+
+## insert in galabre_hour8
+galabre_hour8 <- q_hour8 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_hour8,
+                          poc_pred_lower = pi_hour8[,"lower"],
+                          poc_pred_upper = pi_hour8[,"upper"],
+                          aspt = aspt_value)
+
+galabre_hour8$poc_fitted <- predict(pocfitg, galabre_hour8)
+
+# variance 
+galabre_hour8$poc_var_mean <- apply(mu_hour8, 2, var) # variance of fit parameters + MES 
+galabre_hour8$poc_var_tot <- apply(pred_hour8, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_hour8, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 8 hour", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
   theme(legend.position = "bottom")
 
+```
 
+```{r annual-flux-hour8, cache.lazy= F}
+
+# creates matrix for Q
+
+q_hour8_mean <-  matrix(q_hour8$q_mean, nrow = nrow_boot, ncol = nrow_hour8, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_hour8, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_hour8) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_hour8 <- q_hour8_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_hour8 <- pred_hour8*mes_mat_hour8*1e-6*q_mat_hour8*1e-2*60*60*8 #pred_hour8 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour8. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_hour8$year), function(y){which(galabre_hour8$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_hour8 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour8[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_hour8_pi <- apply(annual_flux_ton.y_hour8, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_hour8_mean <- colMeans(annual_flux_ton.y_hour8, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_hour8_sd <- apply(annual_flux_ton.y_hour8, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_hour8_df <- data.frame(year = unique(galabre_hour8$year), 
+                        annual_flux_mean = annual_flux_hour8_mean, 
+                        annual_flux_variability = annual_flux_hour8_sd, 
+                        annual_flux_pi_lower = annual_flux_hour8_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_hour8_pi[3,])
+
+
+interannual_flux_ton.y_hour8 <- rowMeans(annual_flux_ton.y_hour8, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_hour8 <- quantile(interannual_flux_ton.y_hour8, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_hour8 <- mean(interannual_flux_ton.y_hour8, na.rm = T) # mean interannual flux
+interannual_flux_variability_hour8 <- sd(annual_flux_hour8_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_hour8_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_hour8, 
+                                  annual_flux_variability = interannual_flux_variability_hour8,
+                        annual_flux_pi_lower = interannual_flux_pi_hour8[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_hour8[3])
+
+total_flux_hour8_df <- rbind(annual_flux_hour8_df, interannual_flux_hour8_df)
+total_flux_hour8_df$group <- c(rep("annual", length(unique(galabre_hour8$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_hour8_df, 
+           aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_errorbar(data = total_flux_hour8_df, 
+                aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"),
+                width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_hour8_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, 
+                    ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from 4-hourly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+
+## Day 
+
+```{r pred-galabre-gnls-day, cache.lazy = F}
+# prepare df
+galabre_group_day <- galabre_time %>% mutate("day" = format(DateHeure, "%Y-%m-%d"), year = year(DateHeure), DateHeure = NULL) %>% group_by(day,year) # group galabre_time by day
+nrow_day <- n_groups(galabre_group_day)
+
+# get mean q
+q_day <- galabre_group_day %>% select(c("day", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each day
+
+
+# creates matrix for MES
+galabre_mes_day <- galabre_group_day %>% select(c("day", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each day
+mes_day_random <- replicate(nrow_boot, sapply(galabre_mes_day$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per day, replicated 1000 times
+mes_day_noise <- matrix(rnorm(nrow_boot*nrow_day, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_day) 
+mes_mat_day <- mes_day_random * (1 + mes_day_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_day)
+
+# Prediction matrix
+mu_day <- f(mes_mat_day, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_day <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_day <- sigma_gnls * abs(mu_day)^theta
+
+noise_mat_day <- matrix(rnorm(nrow_boot*nrow_day, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_day)
+noise_mat_day <- noise_mat_day*sigma_mat_day
+
+pred_day <- mu_day + noise_mat_day
+pred_day <- pmin(pmax(pred_day, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_day <- t(
+  apply(pred_day, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_day) <- c("lower", "upper")
+
+boot_pred_day <- colMeans(pred_day, na.rm = T)
+
+## insert in galabre_day
+galabre_day <- q_day %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_day,
+                          poc_pred_lower = pi_day[,"lower"],
+                          poc_pred_upper = pi_day[,"upper"],
+                          aspt = aspt_value)
+
+galabre_day$poc_fitted <- predict(pocfitg, galabre_day)
+
+# variance 
+galabre_day$poc_var_mean <- apply(mu_day, 2, var) # variance of fit parameters + MES 
+galabre_day$poc_var_tot <- apply(pred_day, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_day, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every day", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
 
 ```
+
+```{r annual-flux-day, cache.lazy=F}
+
+# creates matrix for Q
+
+q_day_mean <-  matrix(q_day$q_mean, nrow = nrow_boot, ncol = nrow_day, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_day, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_day) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_day <- q_day_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_day <- pred_day*mes_mat_day*1e-6*q_mat_day*1e-2*60*60*24 #pred_day * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_day$year), function(y){which(galabre_day$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_day <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_day_pi <- apply(annual_flux_ton.y_day, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_day_mean <- colMeans(annual_flux_ton.y_day, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_day_sd <- apply(annual_flux_ton.y_day, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_day_df <- data.frame(year = unique(galabre_day$year), 
+                        annual_flux_mean = annual_flux_day_mean, 
+                        annual_flux_variability = annual_flux_day_sd, 
+                        annual_flux_pi_lower = annual_flux_day_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_day_pi[3,])
+
+interannual_flux_ton.y_day <- rowMeans(annual_flux_ton.y_day, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_day <- quantile(interannual_flux_ton.y_day, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_day <- mean(interannual_flux_ton.y_day, na.rm = T) # mean interannual flux
+interannual_flux_variability_day <- sd(annual_flux_day_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_day_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_day, 
+                                  annual_flux_variability = interannual_flux_variability_day,
+                        annual_flux_pi_lower = interannual_flux_pi_day[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_day[3])
+
+total_flux_day_df <- rbind(annual_flux_day_df, interannual_flux_day_df)
+total_flux_day_df$group <- c(rep("annual", length(unique(galabre_day$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_day_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_day_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_day_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from dayly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+## 2 Day 
+
+```{r pred-galabre-gnls-day2, cache.lazy = F}
+# prepare df
+galabre_group_day2 <- galabre_time %>% mutate(day = as.Date(format(DateHeure, "%Y-%m-%d")), day2 = floor(as.numeric(day - min(day)) / 2), year = year(DateHeure), DateHeure = NULL) %>% group_by(day2,year) # group galabre_time by day
+nrow_day2 <- n_groups(galabre_group_day2)
+
+# get mean q
+q_day2 <- galabre_group_day2 %>% select(c("day2", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each day2
+
+
+# creates matrix for MES
+galabre_mes_day2 <- galabre_group_day2 %>% select(c("day2", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each day2
+mes_day2_random <- replicate(nrow_boot, sapply(galabre_mes_day2$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per day2, replicated 1000 times
+mes_day2_noise <- matrix(rnorm(nrow_boot*nrow_day2, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_day2) 
+mes_mat_day2 <- mes_day2_random * (1 + mes_day2_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_day2)
+
+# Prediction matrix
+mu_day2 <- f(mes_mat_day2, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_day2 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_day2 <- sigma_gnls * abs(mu_day2)^theta
+
+noise_mat_day2 <- matrix(rnorm(nrow_boot*nrow_day2, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_day2)
+noise_mat_day2 <- noise_mat_day2*sigma_mat_day2
+
+pred_day2 <- mu_day2 + noise_mat_day2
+pred_day2 <- pmin(pmax(pred_day2, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_day2 <- t(
+  apply(pred_day2, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_day2) <- c("lower", "upper")
+
+boot_pred_day2 <- colMeans(pred_day2, na.rm = T)
+
+## insert in galabre_day2
+galabre_day2 <- q_day2 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_day2,
+                          poc_pred_lower = pi_day2[,"lower"],
+                          poc_pred_upper = pi_day2[,"upper"],
+                          aspt = aspt_value)
+
+galabre_day2$poc_fitted <- predict(pocfitg, galabre_day2)
+
+# variance 
+galabre_day2$poc_var_mean <- apply(mu_day2, 2, var) # variance of fit parameters + MES 
+galabre_day2$poc_var_tot <- apply(pred_day2, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_day2, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd day", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-day2, cache.lazy=F}
+
+# creates matrix for Q
+
+q_day2_mean <-  matrix(q_day2$q_mean, nrow = nrow_boot, ncol = nrow_day2, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_day2, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_day2) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_day2 <- q_day2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_day2 <- pred_day2*mes_mat_day2*1e-6*q_mat_day2*1e-2*60*60*24*2 #pred_day2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day2. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_day2$year), function(y){which(galabre_day2$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_day2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_day2_pi <- apply(annual_flux_ton.y_day2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_day2_mean <- colMeans(annual_flux_ton.y_day2, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_day2_sd <- apply(annual_flux_ton.y_day2, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_day2_df <- data.frame(year = unique(galabre_day2$year), 
+                        annual_flux_mean = annual_flux_day2_mean, 
+                        annual_flux_variability = annual_flux_day2_sd, 
+                        annual_flux_pi_lower = annual_flux_day2_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_day2_pi[3,])
+
+ggplot(annual_flux_day2_df)+
+  geom_col(aes(x=year, y = annual_flux_day2_mean), fill = "lightblue")+
+  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
+  labs(title = "Mean annual flux with prediction interval", subtitle = "Sampling grequency: day2", x = "", y = "Mean annual flux, ton")+
+  theme_minimal()
+
+interannual_flux_ton.y_day2 <- rowMeans(annual_flux_ton.y_day2, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_day2 <- quantile(interannual_flux_ton.y_day2, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_day2 <- mean(interannual_flux_ton.y_day2, na.rm = T) # mean interannual flux
+interannual_flux_variability_day2 <- sd(annual_flux_day2_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_day2_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_day2, 
+                                  annual_flux_variability = interannual_flux_variability_day2,
+                        annual_flux_pi_lower = interannual_flux_pi_day2[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_day2[3])
+
+total_flux_day2_df <- rbind(annual_flux_day2_df, interannual_flux_day2_df)
+total_flux_day2_df$group <- c(rep("annual", length(unique(galabre_day2$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_day2_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_day2_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_day2_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from bi-dayly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+## 4 days
+
+```{r pred-galabre-gnls-day4, cache.lazy = F}
+# prepare df
+galabre_group_day4 <- galabre_time %>% mutate(day = as.Date(format(DateHeure, "%Y-%m-%d")), day4 = floor(as.numeric(day - min(day)) / 4), year = year(DateHeure), DateHeure = NULL) %>% group_by(day4,year) # group galabre_time by day
+nrow_day4 <- n_groups(galabre_group_day4)
+
+# get mean q
+q_day4 <- galabre_group_day4 %>% select(c("day4", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each day4
+
+
+# creates matrix for MES
+galabre_mes_day4 <- galabre_group_day4 %>% select(c("day4", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each day4
+mes_day4_random <- replicate(nrow_boot, sapply(galabre_mes_day4$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per day4, replicated 1000 times
+mes_day4_noise <- matrix(rnorm(nrow_boot*nrow_day4, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_day4) 
+mes_mat_day4 <- mes_day4_random * (1 + mes_day4_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_day4)
+
+# Prediction matrix
+mu_day4 <- f(mes_mat_day4, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_day4 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_day4 <- sigma_gnls * abs(mu_day4)^theta
+
+noise_mat_day4 <- matrix(rnorm(nrow_boot*nrow_day4, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_day4)
+noise_mat_day4 <- noise_mat_day4*sigma_mat_day4
+
+pred_day4 <- mu_day4 + noise_mat_day4
+pred_day4 <- pmin(pmax(pred_day4, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_day4 <- t(
+  apply(pred_day4, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_day4) <- c("lower", "upper")
+
+boot_pred_day4 <- colMeans(pred_day4, na.rm = T)
+
+## insert in galabre_day4
+galabre_day4 <- q_day4 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_day4,
+                          poc_pred_lower = pi_day4[,"lower"],
+                          poc_pred_upper = pi_day4[,"upper"],
+                          aspt = aspt_value)
+
+galabre_day4$poc_fitted <- predict(pocfitg, galabre_day4)
+
+# variance 
+galabre_day4$poc_var_mean <- apply(mu_day4, 2, var) # variance of fit parameters + MES 
+galabre_day4$poc_var_tot <- apply(pred_day4, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_day4, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 4 day", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-day4, cache.lazy=F}
+
+# creates matrix for Q
+
+q_day4_mean <-  matrix(q_day4$q_mean, nrow = nrow_boot, ncol = nrow_day4, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_day4, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_day4) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_day4 <- q_day4_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_day4 <- pred_day4*mes_mat_day4*1e-6*q_mat_day4*1e-2*60*60*24*4 #pred_day4 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day4. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_day4$year), function(y){which(galabre_day4$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_day4 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day4[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_day4_pi <- apply(annual_flux_ton.y_day4, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_day4_mean <- colMeans(annual_flux_ton.y_day4, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_day4_sd <- apply(annual_flux_ton.y_day4, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_day4_df <- data.frame(year = unique(galabre_day4$year), 
+                        annual_flux_mean = annual_flux_day4_mean, 
+                        annual_flux_variability = annual_flux_day4_sd, 
+                        annual_flux_pi_lower = annual_flux_day4_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_day4_pi[3,])
+
+
+interannual_flux_ton.y_day4 <- rowMeans(annual_flux_ton.y_day4, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_day4 <- quantile(interannual_flux_ton.y_day4, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_day4 <- mean(interannual_flux_ton.y_day4, na.rm = T) # mean interannual flux
+interannual_flux_variability_day4 <- sd(annual_flux_day4_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_day4_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_day4, 
+                                  annual_flux_variability = interannual_flux_variability_day4,
+                        annual_flux_pi_lower = interannual_flux_pi_day4[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_day4[3])
+
+total_flux_day4_df <- rbind(annual_flux_day4_df, interannual_flux_day4_df)
+total_flux_day4_df$group <- c(rep("annual", length(unique(galabre_day4$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_day4_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_day4_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_day4_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from bi-dayly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+
+## Week
+
+```{r pred-galabre-gnls-week, cache.lazy = F}
+# prepare df
+galabre_group_week <- galabre_time %>% mutate("week" = week(DateHeure), year = year(DateHeure), DateHeure = NULL) %>% group_by(week,year) # group galabre_time by week
+nrow_week <- n_groups(galabre_group_week)
+
+# get mean q
+q_week <- galabre_group_week %>% select(c("week", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each week
+
+
+# creates matrix for MES
+galabre_mes_week <- galabre_group_week %>% select(c("week", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each week
+mes_week_random <- replicate(nrow_boot, sapply(galabre_mes_week$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per week, replicated 1000 times
+mes_week_noise <- matrix(rnorm(nrow_boot*nrow_week, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_week) 
+mes_mat_week <- mes_week_random * (1 + mes_week_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_week)
+
+# Prediction matrix
+mu_week <- f(mes_mat_week, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_week <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_week <- sigma_gnls * abs(mu_week)^theta
+
+noise_mat_week <- matrix(rnorm(nrow_boot*nrow_week, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_week)
+noise_mat_week <- noise_mat_week*sigma_mat_week
+
+pred_week <- mu_week + noise_mat_week
+pred_week <- pmin(pmax(pred_week, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_week <- t(
+  apply(pred_week, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_week) <- c("lower", "upper")
+
+boot_pred_week <- colMeans(pred_week, na.rm = T)
+
+## insert in galabre_week
+galabre_week <-q_week %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_week,
+                          poc_pred_lower = pi_week[,"lower"],
+                          poc_pred_upper = pi_week[,"upper"],
+                          aspt = aspt_value)
+
+galabre_week$poc_fitted <- predict(pocfitg, galabre_week)
+
+# variance 
+galabre_week$poc_var_mean <- apply(mu_week, 2, var) # variance of fit parameters + MES 
+galabre_week$poc_var_tot <- apply(pred_week, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_week, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every week", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-week, cache.lazy=F}
+
+# creates matrix for Q
+
+q_week_mean <-  matrix(q_week$q_mean, nrow = nrow_boot, ncol = nrow_week, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_week, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_week) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_week <- q_week_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_week <- pred_week*mes_mat_week*1e-6*q_mat_week*1e-2*60*60*24*7 #pred_week * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_week$year), function(y){which(galabre_week$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_week <- sapply(index_years, function(idx){apply(flux_kg.s_mat_week[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_week_pi <- apply(annual_flux_ton.y_week, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_week_mean <- colMeans(annual_flux_ton.y_week, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_week_sd <- apply(annual_flux_ton.y_week, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_week_df <- data.frame(year = unique(galabre_week$year), 
+                        annual_flux_mean = annual_flux_week_mean, 
+                        annual_flux_variability = annual_flux_week_sd, 
+                        annual_flux_pi_lower = annual_flux_week_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_week_pi[3,])
+
+interannual_flux_ton.y_week <- rowMeans(annual_flux_ton.y_week, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_week <- quantile(interannual_flux_ton.y_week, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_week <- mean(interannual_flux_ton.y_week, na.rm = T) # mean interannual flux
+interannual_flux_variability_week <- sd(annual_flux_week_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_week_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_week, 
+                                  annual_flux_variability = interannual_flux_variability_week,
+                        annual_flux_pi_lower = interannual_flux_pi_week[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_week[3])
+
+total_flux_week_df <- rbind(annual_flux_week_df, interannual_flux_week_df)
+total_flux_week_df$group <- c(rep("annual", length(unique(galabre_week$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_week_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_week_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_week_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from weekly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+## Bi-weekly
+
+```{r pred-galabre-gnls-week2, cache.lazy = F}
+# prepare df
+galabre_group_week2 <- galabre_time %>% mutate(week2 = week(DateHeure), week2 =  floor(as.numeric(week2 - min(week2)) / 2), year = year(DateHeure), DateHeure = NULL) %>% group_by(week2,year) # group galabre_time by week2
+nrow_week2 <- n_groups(galabre_group_week2)
+
+# get mean q
+q_week2 <- galabre_group_week2 %>% select(c("week2", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each week2
+
+
+# creates matrix for MES
+galabre_mes_week2 <- galabre_group_week2 %>% select(c("week2", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each week2
+mes_week2_random <- replicate(nrow_boot, sapply(galabre_mes_week2$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per week2, replicated 1000 times
+mes_week2_noise <- matrix(rnorm(nrow_boot*nrow_week2, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_week2) 
+mes_mat_week2 <- mes_week2_random * (1 + mes_week2_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_week2)
+
+# Prediction matrix
+mu_week2 <- f(mes_mat_week2, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_week2 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_week2 <- sigma_gnls * abs(mu_week2)^theta
+
+noise_mat_week2 <- matrix(rnorm(nrow_boot*nrow_week2, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_week2)
+noise_mat_week2 <- noise_mat_week2*sigma_mat_week2
+
+pred_week2 <- mu_week2 + noise_mat_week2
+pred_week2 <- pmin(pmax(pred_week2, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_week2 <- t(
+  apply(pred_week2, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_week2) <- c("lower", "upper")
+
+boot_pred_week2 <- colMeans(pred_week2, na.rm = T)
+
+## insert in galabre_week2
+galabre_week2 <-q_week2 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_week2,
+                          poc_pred_lower = pi_week2[,"lower"],
+                          poc_pred_upper = pi_week2[,"upper"],
+                          aspt = aspt_value)
+
+galabre_week2$poc_fitted <- predict(pocfitg, galabre_week2)
+
+# variance 
+galabre_week2$poc_var_mean <- apply(mu_week2, 2, var) # variance of fit parameters + MES 
+galabre_week2$poc_var_tot <- apply(pred_week2, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_week2, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd week", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-week2, cache.lazy=F}
+
+# creates matrix for Q
+
+q_week2_mean <-  matrix(q_week2$q_mean, nrow = nrow_boot, ncol = nrow_week2, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_week2, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_week2) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_week2 <- q_week2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_week2 <- pred_week2*mes_mat_week2*1e-6*q_mat_week2*1e-2*60*60*24*14 #pred_week2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week2. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_week2$year), function(y){which(galabre_week2$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_week2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_week2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_week2_pi <- apply(annual_flux_ton.y_week2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_week2_mean <- colMeans(annual_flux_ton.y_week2, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_week2_sd <- apply(annual_flux_ton.y_week2, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_week2_df <- data.frame(year = unique(galabre_week2$year), 
+                        annual_flux_mean = annual_flux_week2_mean, 
+                        annual_flux_variability = annual_flux_week2_sd, 
+                        annual_flux_pi_lower = annual_flux_week2_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_week2_pi[3,])
+
+interannual_flux_ton.y_week2 <- rowMeans(annual_flux_ton.y_week2, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_week2 <- quantile(interannual_flux_ton.y_week2, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_week2 <- mean(interannual_flux_ton.y_week2, na.rm = T) # mean interannual flux
+interannual_flux_variability_week2 <- sd(annual_flux_week2_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_week2_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_week2, 
+                                  annual_flux_variability = interannual_flux_variability_week2,
+                        annual_flux_pi_lower = interannual_flux_pi_week2[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_week2[3])
+
+total_flux_week2_df <- rbind(annual_flux_week2_df, interannual_flux_week2_df)
+total_flux_week2_df$group <- c(rep("annual", length(unique(galabre_week2$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_week2_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_week2_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_week2_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from week2ly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+## Month
+
+```{r pred-galabre-gnls-month, cache.lazy = F}
+# prepare df
+galabre_group_month <- galabre_time %>% mutate("month" = month(DateHeure), year = year(DateHeure), DateHeure = NULL) %>% group_by(month,year) # group galabre_time by month
+nrow_month <- n_groups(galabre_group_month)
+
+# get mean q
+q_month <- galabre_group_month %>% select(c("month", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each month
+
+
+# creates matrix for MES
+galabre_mes_month <- galabre_group_month %>% select(c("month", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each month
+mes_month_random <- replicate(nrow_boot, sapply(galabre_mes_month$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per month, replicated 1000 times
+mes_month_noise <- matrix(rnorm(nrow_boot*nrow_month, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_month) 
+mes_mat_month <- mes_month_random * (1 + mes_month_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_month)
+
+# Prediction matrix
+mu_month <- f(mes_mat_month, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_month <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_galabre)
+sigma_mat_month <- sigma_gnls * abs(mu_month)^theta
+
+noise_mat_month <- matrix(rnorm(nrow_boot*nrow_month, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_month)
+noise_mat_month <- noise_mat_month*sigma_mat_month
+
+pred_month <- mu_month + noise_mat_month
+pred_month <- pmin(pmax(pred_month, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_month <- t(
+  apply(pred_month, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_month) <- c("lower", "upper")
+
+boot_pred_month <- colMeans(pred_month, na.rm = T)
+
+## insert in galabre_month
+galabre_month <-q_month %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_month,
+                          poc_pred_lower = pi_month[,"lower"],
+                          poc_pred_upper = pi_month[,"upper"],
+                          aspt = aspt_value)
+
+galabre_month$poc_fitted <- predict(pocfitg, galabre_month)
+
+# variance 
+galabre_month$poc_var_mean <- apply(mu_month, 2, var) # variance of fit parameters + MES 
+galabre_month$poc_var_tot <- apply(pred_month, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(galabre_month, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every month", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-month, cache.lazy=F}
+
+# creates matrix for Q
+
+q_month_mean <-  matrix(q_month$q_mean, nrow = nrow_boot, ncol = nrow_month, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_month, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_month) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_month <- q_month_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_month <- pred_month*mes_mat_month*1e-6*q_mat_month*1e-2*60*60*24*30 #pred_month * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 month. 
+
+# Get index for columns by year
+index_years <- sapply(unique(galabre_month$year), function(y){which(galabre_month$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_month <- sapply(index_years, function(idx){apply(flux_kg.s_mat_month[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_month_pi <- apply(annual_flux_ton.y_month, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_month_mean <- colMeans(annual_flux_ton.y_month, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_month_sd <- apply(annual_flux_ton.y_month, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_month_df <- data.frame(year = unique(galabre_month$year), 
+                        annual_flux_mean = annual_flux_month_mean, 
+                        annual_flux_variability = annual_flux_month_sd, 
+                        annual_flux_pi_lower = annual_flux_month_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_month_pi[3,])
+
+interannual_flux_ton.y_month <- rowMeans(annual_flux_ton.y_month, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_month <- quantile(interannual_flux_ton.y_month, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_month <- mean(interannual_flux_ton.y_month, na.rm = T) # mean interannual flux
+interannual_flux_variability_month <- sd(annual_flux_month_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_month_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_month, 
+                                  annual_flux_variability = interannual_flux_variability_month,
+                        annual_flux_pi_lower = interannual_flux_pi_month[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_month[3])
+
+total_flux_month_df <- rbind(annual_flux_month_df, interannual_flux_month_df)
+total_flux_month_df$group <- c(rep("annual", length(unique(galabre_month$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_month_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_month_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_month_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from monthly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+
+
+## Compare fluxes
+
+```{r interannual-error-in-percent}
+# relative error by Monte-Carlo world
+error_hour2 <- (interannual_flux_ton.y_hour2 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_hour2_pi <- quantile(error_hour2, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_hour2_mean <- mean(error_hour2)
+
+error_hour4 <- (interannual_flux_ton.y_hour4 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_hour4_pi <- quantile(error_hour4, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_hour4_mean <- mean(error_hour4)
+
+error_hour8 <- (interannual_flux_ton.y_hour8 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_hour8_pi <- quantile(error_hour8, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_hour8_mean <- mean(error_hour8)
+
+error_day <- (interannual_flux_ton.y_day - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_day_pi <- quantile(error_day, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_day_mean <- mean(error_day)
+
+error_day2 <- (interannual_flux_ton.y_day2 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_day2_pi <- quantile(error_day2, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_day2_mean <- mean(error_day2)
+
+error_day4 <- (interannual_flux_ton.y_day4 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_day4_pi <- quantile(error_day4, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_day4_mean <- mean(error_day4)
+
+error_week <- (interannual_flux_ton.y_week - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_week_pi <- quantile(error_week, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_week_mean <- mean(error_week)
+
+error_week2 <- (interannual_flux_ton.y_week2 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_week2_pi <- quantile(error_week2, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_week2_mean <- mean(error_week2)
+
+error_month <- (interannual_flux_ton.y_month - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_month_pi <- quantile(error_month, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_month_mean <- mean(error_month)
+
+error <- data.frame(time_step = factor(c("2hours","4hours","8hours","day","2days","4days","week","2weeks","month"), levels = c("2hours","4hours","8hours","day","2days","4days","week","2weeks","month")),
+                    error = c(error_hour2_mean, error_hour4_mean, error_hour8_mean, error_day_mean, error_day2_mean, error_day4_mean, error_week_mean, error_week2_mean, error_month_mean),
+                    pi_upr = c(error_hour2_pi[3], error_hour4_pi[3], error_hour8_pi[3], error_day_pi[3], error_day2_pi[3], error_day4_pi[3], error_week_pi[3], error_week2_pi[3], error_month_pi[3]),
+                    pi_lwr = c(error_hour2_pi[1], error_hour4_pi[1], error_hour8_pi[1], error_day_pi[1], error_day2_pi[1], error_day4_pi[1], error_week_pi[1], error_week2_pi[1], error_month_pi[1])) 
+
+ggplot(data=error, aes(x = time_step))+
+  geom_point(aes(y = error))+
+  geom_errorbar(aes(ymin=pi_lwr, ymax=pi_upr))+
+  theme_minimal()
+
+error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
+
+
+
+
+
+

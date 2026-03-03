@@ -1,0 +1,193 @@
+---
+title: "gier"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+date: "2025-06-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(imputeTS)
+```
+
+# Get data
+
+```{r load-data-from-excel, message = F}
+
+cmes <- readxl::read_xlsx(path = "gier.xlsx", sheet = "CMES", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+poc <- readxl::read_xlsx(path = "gier.xlsx", sheet = "POC") %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+poc$poc_timeinterval <- poc$Debut %--% poc$Fin
+poc$poc_g.kg <- as.numeric(poc$poc_g.kg)
+
+debit <- readxl::read_xlsx(path = "gier.xlsx", sheet = "Débit", col_types = c("date","numeric","text")) %>%  setNames(c("DateHeure","q_m3.s", "Qualification")) %>% subset(Qualification == "v")
+
+
+```
+
+
+```{r join-debit-mes}
+na_interval <- poc$Fin[dim(poc)[1]] %--% poc$Debut[1]  %>% as.character()
+
+# poc$poc_timeinterval[debit$DateHeure[100] >= poc$Debut & debit$DateHeure[100] <= poc$Fin]
+
+debit_timeinterval <- sapply(debit$DateHeure, FUN = function (x){as.character(poc$poc_timeinterval[x >= poc$Debut & x <= poc$Fin])}, simplify = T)
+na_timeinterval <- which(lengths(debit_timeinterval) == 0)
+debit_timeinterval[na_timeinterval] <- na_interval
+
+debit$poc_timeinterval <- do.call(c, (debit_timeinterval))
+```
+
+
+```{r merge}
+gier <- merge(debit, cmes, by = "DateHeure", all = T) %>% merge(poc, by = "poc_timeinterval", all = T)
+
+gier$year <- year(gier$DateHeure)
+gier$commondate <- as.Date(paste0("2000-", format(gier$DateHeure,"%j")), "%Y-%j")
+gier$Date <- format(gier$DateHeure, "%Y-%m-%d")
+```
+
+
+```{r plot, fig.dim = c(10, 10)}
+n <- 10
+  
+ggplot(data = gier, aes(x=commondate))+ 
+  geom_point(aes(y= q_m3.s, col = "Discharge, m3/s"), alpha = 0.5, size = 0.5) +
+  geom_point(aes(y= cmes_mg.L/n, col = "CMES, mg/L"), alpha = 0.5, size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  scale_y_continuous(sec.axis = sec_axis(~.*n, name = "CMES, mg/L"))+
+  scale_color_manual(values = c("palegreen4","lightblue"))+
+  facet_grid(rows = vars(year), scales = "free")+
+  labs(title = "Discharge (m3/s) and MES (mg/L)", x = "", y = "Débit, m3/s", col = "")+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+```
+
+
+```{r view-discharge}
+ggplot(debit)+ 
+  geom_point(aes(x = DateHeure, y= q_m3.s, col = "Discharge, m3/s"),
+             alpha = 0.5, size = 0.5) +
+  scale_color_manual(values = c("palegreen4","lightblue"))+
+  labs(title = " in debit", x = "", y = "Q, m3/s", col = "")+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+
+```
+
+```{r mean-q}
+meanQcommondate <- gier %>% group_by(commondate) %>% summarise(meanQ = mean(q_m3.s, na.rm = T))
+
+ggplot()+geom_line(data = gier, aes(x=commondate, y = q_m3.s, group = year, col = as.character(year)), alpha = 0.2)+
+  geom_line(data = meanQcommondate, aes(x=commondate, y = meanQ), col = "black")+
+  scale_color_viridis_d(option = "G", end = 0.8)+
+  labs(x = "", y = "Débit, m3/s", col = "")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+
+```{r cmes-interpol}
+gier$cmes_interpol <- na_interpolation(gier$cmes_mg.L, maxgap = 24)
+
+ggplot(gier, aes(x=DateHeure))+ 
+  geom_point(aes(y= cmes_mg.L, col = "measured"), alpha = 0.5, size = 1) +
+  geom_point(aes(y = cmes_interpol, col = "interpol"), alpha = 0.5, size = 0.5)+
+  labs(title = "", x = "Date", y = "MES, mg/L")+
+  scale_color_manual(values = c("lightblue","palegreen4"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+```
+
+```{r poc-mg-L}
+gier$poc_mg.L <- with(gier, cmes_interpol*1e-6*poc_g.kg*1e3) # CMES converted from mg/L to kg/L, POC obtained in g is converted to mg
+gier$fpoc_kg.h <- with(gier, q_m3.s * 1e3 * poc_mg.L * 3600 * 1e-6) # discharge converted from m3/s to L/h; fPOC is obtained in mg/L/s and converted to kg/h
+
+ggplot()+ 
+  geom_point(data = subset(gier, !is.na(cmes_mg.L)),aes(x=commondate, y= fpoc_kg.h, col = "POC flux"), alpha = 0.5, size = 0.5) +
+  geom_point(data = subset(gier, !is.na(cmes_mg.L)),aes(x=commondate, y= cmes_interpol*q_m3.s*1e3*3600*1e-6, col = "CMES interpol"), alpha = 0.5, size = 0.5) +
+  scale_y_continuous(transform = "log10")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("palegreen4","lightblue"), name = "")+
+  facet_grid(rows = vars(year))+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+Q and CMES dates match
+
+```{r calcul-yearly-flux} 
+yearly_fluxes <- gier %>% 
+                  group_by(year) %>% 
+                    summarise(fpoc_kg.year = sum(fpoc_kg.h, na.rm = T), 
+                              percent_poc_included = sum(!is.na(fpoc_kg.h))/n()*100,
+                              nb_days_sampled = length(unique(Date)),
+                              nb_days_sampled_poc = length(unique(Date[!is.na(poc_g.kg)])),
+                              sum_discharge.year = sum(q_m3.s[!is.na(fpoc_kg.h)], na.rm = T),  # faut-il inclure les débits correspondants à des heures où le POC n'est pas mesuré?
+                              mean_discharge.year = mean(q_m3.s[!is.na(fpoc_kg.h)], na.rm = T), 
+                              sd_discharge.year = sd(q_m3.s[!is.na(fpoc_kg.h)], na.rm = T)) 
+# discharge is converted from m3/s to L/h before being summed, as in the formula for fpoc
+
+bv <- 406
+  
+# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$fpoc_kg.year.km2 <- yearly_fluxes$fpoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+yearly_fluxes$fpoc_ww_kg.year.km2 <- with(yearly_fluxes, fpoc_kg.year/sum_discharge.year*mean_discharge.year) * 24 * 365 / bv
+```
+
+the weight method works if all discharge values are included not only those with a poc value??
+
+```{r figures-flux} 
+yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable() %>% kableExtra::kable_styling()
+```
+
+```{r compare-fluxes}
+yearly_fluxes$label <- paste(round(yearly_fluxes$nb_days_sampled,2), "days q\n", round(yearly_fluxes$nb_days_sampled_poc,2), " days poc")
+
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fpoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fpoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fpoc_ww_kg.year.km2, label = label), nudge_y = 500, label.size = 0.1)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+```{r interrannual-fluxes}
+yf <- yearly_fluxes %>% subset(year != 2024)
+
+mixedfluxes_mean <- with(yf, ifelse(nb_days_sampled_poc < 200, fpoc_ww_kg.year.km2, fpoc_kg.year.km2)) %>% mean(na.rm = T)
+mixedfluxes_sd <- with(yf, ifelse(nb_days_sampled_poc < 200, fpoc_ww_kg.year.km2, fpoc_kg.year.km2)) %>% sd(na.rm = T)
+
+means <- data.frame(
+  "Mean FPOC sum, kg/year/m2" = mean(yf$fpoc_kg.year.km2),
+  "Sd FPOC sum" = sd(yf$fpoc_kg.year.km2),
+  "Mean FPOC weighted, kg/m2/year" = mean(yf$fpoc_ww_kg.year.km2, na.rm = T),
+  "Sd FPOC weighted" = sd(yf$fpoc_ww_kg.year.km2, na.rm = T),
+    "Mean FPOC mixed" = mixedfluxes_mean,
+  "Sd FPOC mixed" = mixedfluxes_sd
+)
+
+knitr::kable(t(means), digits = 3) %>% kableExtra::kable_styling()
+```
+

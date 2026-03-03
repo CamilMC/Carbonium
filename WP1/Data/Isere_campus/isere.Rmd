@@ -43,18 +43,19 @@ Les données dont on dispose pour la station de mesures d'Isère - campus sont:
   - Carbonisère: suivi hebdo de 2006 à 2008 + crue du 19 mai 2006  + chasse du 27/06/2006 + crue du 30/08/2006 + chasse du 5/06/2006
   - suivi hebdo Carbonium (pas encore dispo)
 
-## Charger les données
+## Charger les données POC
 
 ```{r data}
 
 # Crues
-carbonisere <- read_xlsx("Bilan carbonisère.xlsx")
+carbonisere <- read_xlsx("Bilan carbonisère.xlsx") 
 
 
 crues_2022 <- read_xlsx(path = "Crues_Isère_2022.xlsx", sheet = "test_match") 
 crues_2022$mes_mg.L <- NA
 crues_2022$debit_m3.s <- NA
 crues_2022$doc_mg.L <- NA
+
 
 doc_isere_2011 <- read_excel("doc_isere_2011-2012.xls")
 doc_isere_2011$name <- "DOC 2011"
@@ -66,8 +67,8 @@ poc_isere_2011$doc_mg.L <- NA
 poc_isere_2011$name <- "POC 2011"
 poc_isere_2011$mes_mg.L <- poc_isere_2011$mes_g.L * 1e3
 
-crues <- rbind(select(carbonisere, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent", "doc_mg.L")),select(crues_2022, c("DateHeure","name","debit_m3.s", "mes_mg.L","poc_percent", "doc_mg.L"))) %>%
-  rbind(select(doc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent", "doc_mg.L"))) %>% rbind(select(poc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent", "doc_mg.L")))
+crues <- rbind(select(carbonisere, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent","doc_mg.L")),select(crues_2022, c("DateHeure","name","debit_m3.s", "mes_mg.L","poc_percent","doc_mg.L"))) %>%
+  rbind(select(doc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent","doc_mg.L"))) %>% rbind(select(poc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent","doc_mg.L")))
 
 # Chroniques BDOH
 cmes <- readxl::read_xlsx(path = "isere.xlsx", sheet = "cmes", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
@@ -87,7 +88,7 @@ isere %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n(
 by = "year", all = T) %>% 
   merge(isere %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_doc = n()), by = "year", all = T) %>%
   merge(isere %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>%
-  merge(isere %>% subset(!is.na(period)) %>% group_by(year) %>% summarise(total_period_j = round(sum(period)/(24*60*60))), by = "year", all = T)
+  merge(isere %>% subset(!is.na(period) & !is.na(q_m3.s) & !is.na(cmes_g.L)) %>% group_by(year) %>% summarise(total_period_j_nona = round(sum(period)/(24*60*60))), by = "year", all = T)
 
 isere$mes_for_fit <- isere$cmes_g.L
   
@@ -188,8 +189,7 @@ ggarrange(
 
 
 ```
-
-On obtient l'incertitude sur les MES en réalisant une régression linéaire MES~CMES. L'incertitude **cmes_sd** sera utilisée pour les prédictions de **poc_percent** par Monte-Carlo. ????
+Test de régression linéaire CMES~MES
 
 ```{r fit-mes-cmes}
 ## Uncertainty on MES
@@ -392,7 +392,7 @@ for(i in name_crues){
 
 ## Powerlaw
 
-On cherche à fitter le modèle $POC (prop) = a \* MES^{b} + aspt$. Deux fonctions R sont disponibles : *nls* et *gnls*. nls est robuste, mais gnls permet de choisir la structure de la variance. On sait que la variance diminue pour les hautes valeurs de MES (on tend vers l'asymptote). L'erreur dépend probablement de $y*\sigma^{2\delta}.
+On cherche à fitter le modèle $POC \% = a * MES^{b} + aspt$. Deux fonctions R sont disponibles : *nls* et *gnls*. nls est robuste, mais gnls permet de choisir la structure de la variance. On sait que la variance diminue pour les hautes valeurs de MES (on tend vers l'asymptote). L'erreur dépend probablement de $y*\sigma^{2\delta}.
 
 ```{r asymptot}
 # find asymptotic value : arbitrarily decide that it corresponds to the median of the 10% of poc_percent corresponding to the 10% of highest MES values.
@@ -402,8 +402,17 @@ aspt_value_sd <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(
 ```
 
 ```{r constant-numbers}
+  
+# prepare dataframe
+with(isere, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
+
+isere_pwl <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+isere_pwl$aspt <- aspt_value # from nls fitting
+  
+  
 n_boot <- 1000
 n_obs <- nrow(poc_isere)
+nrow_isere <- nrow(isere_pwl)
 ```
 
 
@@ -509,13 +518,7 @@ ggplot(poc_isere_wboot_nls, aes(x=poc_percent))+
 #### NLS extention to Isère
 
 ```{r pred-isere-nls, cache.lazy = F}
-
-# prepare dataframe
-with(isere, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
-
-isere_for_nls <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
-isere_for_nls$aspt <- aspt_value # from nls fitting
-
+isere_for_nls <- isere_pwl # new df to store results
 nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
 
 # predict POC pour mes > 0
@@ -726,13 +729,13 @@ isere_for_gnls <- isere_for_gnls %>% mutate(poc_boot_pred = boot_pred_gnls,
                           poc_pred_upper = pi[,2])
 
 # variances
-isere_for_gnls$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
-isere_for_gnls$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
+isere_for_gnls$poc_var_mean <- apply(mu_gnls, 2, var) # variance of fit parameters + MES 
+isere_for_gnls$poc_var_tot <- apply(pred_gnls, 2, var) # total variance per prediction, for prediction total uncertainty
 
 # plot
 ggplot(isere_for_gnls, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
   geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5, size = 0.5)+
   geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
   geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
@@ -775,7 +778,7 @@ abline(h = 0, col = "red")
 
 ```
 
-# Reference annual and interannual fluxes
+# Reference annual and interannual fluxes (time step: hour for 2006-2015, half hour for 2015-2024)
 
 ## Annual flux based on gnls model + Monte Carlo
 
@@ -788,6 +791,7 @@ q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
 
 # matrix of period (no uncertainty,tge same repeated nrow_boot times)
+isere_for_gnls$period <- as.numeric(-(isere_for_gnls$DateHeure - lead(isere_for_gnls$DateHeure))) # period in s, updated for remaining lines
 period_mat <- matrix(isere_for_gnls$period, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
 
 # Instant flux matrix
@@ -832,12 +836,12 @@ interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = inter
 total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
 total_flux_df$group <- c(rep("annual", length(unique(isere_for_gnls$year))), "interannual")
 
-ggplot(total_flux_df)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "variability"), width = 0.2, size = 0.8, linetype = 2)+
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "variability" = "darkred"), name = "")+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux (kg/year)", fill = "")+
   theme_minimal()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
@@ -852,10 +856,451 @@ mes_u <- 0.05
 q_u <- 0.05
 
 set.seed(2502)
+
+library(future.apply)
+plan(multisession, workers = 6)
 ```
 
 
 Random CMES over timer period: mean Q, then GNLS. 
+
+## 2-Hour
+
+```{r pred-isere-gnls-hour2, cache.lazy = F}
+# prepare df
+isere_group_hour2 <- isere_time %>% 
+  mutate(day = format(DateHeure, "%Y-%m-%d"), 
+         year = year(DateHeure),
+         hour2 =  floor(hour(DateHeure) / 2) * 2, # creates a 2-hours interval
+         DateHeure = NULL) %>% group_by(hour2,day,year) # group isere_time by hour
+nrow_hour2 <- n_groups(isere_group_hour2)
+
+# get mean q
+q_hour2 <- isere_group_hour2 %>% select(c("hour2", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each hour2
+
+
+# creates matrix for MES
+isere_mes_hour2 <- isere_group_hour2 %>% select(c("hour2", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each hour2
+
+list_mes_hour2 <- isere_mes_hour2$list_mes
+mes_hour2_random <- future_replicate(nrow_boot, vapply(list_mes_hour2, 
+                                                function(x) sample(x,1), numeric(1)),
+                              future.seed = T) %>% 
+                    t() # matrix of mes: one random sample per hour2, replicated 1000 times
+
+mes_hour2_noise <- matrix(rnorm(nrow_boot*nrow_hour2, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_hour2) 
+mes_mat_hour2 <- mes_hour2_random * (1 + mes_hour2_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_hour2)
+
+# Prediction matrix
+mu_hour2 <- f(mes_mat_hour2, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_hour2 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+sigma_mat_hour2 <- sigma_gnls * abs(mu_hour2)^theta
+
+noise_mat_hour2 <- matrix(rnorm(nrow_boot*nrow_hour2, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_hour2)
+noise_mat_hour2 <- noise_mat_hour2*sigma_mat_hour2
+
+pred_hour2 <- mu_hour2 + noise_mat_hour2
+pred_hour2 <- pmin(pmax(pred_hour2, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_hour2 <- t(
+  apply(pred_hour2, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_hour2) <- c("lower", "upper")
+
+boot_pred_hour2 <- colMeans(pred_hour2, na.rm = T)
+
+## insert in isere_hour2
+isere_hour2 <- q_hour2 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_hour2,
+                          poc_pred_lower = pi_hour2[,"lower"],
+                          poc_pred_upper = pi_hour2[,"upper"],
+                          aspt = aspt_value)
+
+isere_hour2$poc_fitted <- predict(pocfitg, isere_hour2)
+
+# variance 
+isere_hour2$poc_var_mean <- apply(mu_hour2, 2, var) # variance of fit parameters + MES 
+isere_hour2$poc_var_tot <- apply(pred_hour2, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_hour2, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd hour", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-hour2, cache.lazy= F}
+
+# creates matrix for Q
+
+q_hour2_mean <-  matrix(q_hour2$q_mean, nrow = nrow_boot, ncol = nrow_hour2, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_hour2, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_hour2) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_hour2 <- q_hour2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_hour2 <- pred_hour2*mes_mat_hour2*1e-6*q_mat_hour2*1e-2*60*60*2 #pred_hour2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour2. 
+
+# Get index for columns by year
+index_years <- sapply(unique(isere_hour2$year), function(y){which(isere_hour2$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_hour2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_hour2_pi <- apply(annual_flux_ton.y_hour2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_hour2_mean <- colMeans(annual_flux_ton.y_hour2, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_hour2_sd <- apply(annual_flux_ton.y_hour2, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_hour2_df <- data.frame(year = unique(isere_hour2$year), 
+                        annual_flux_mean = annual_flux_hour2_mean, 
+                        annual_flux_variability = annual_flux_hour2_sd, 
+                        annual_flux_pi_lower = annual_flux_hour2_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_hour2_pi[3,])
+
+interannual_flux_ton.y_hour2 <- rowMeans(annual_flux_ton.y_hour2, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_hour2 <- quantile(interannual_flux_ton.y_hour2, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_hour2 <- mean(interannual_flux_ton.y_hour2, na.rm = T) # mean interannual flux
+interannual_flux_variability_hour2 <- sd(annual_flux_hour2_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_hour2_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_hour2, 
+                                  annual_flux_variability = interannual_flux_variability_hour2,
+                        annual_flux_pi_lower = interannual_flux_pi_hour2[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_hour2[3])
+
+total_flux_hour2_df <- rbind(annual_flux_hour2_df, interannual_flux_hour2_df)
+total_flux_hour2_df$group <- c(rep("annual", length(unique(isere_hour2$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_hour2_df, 
+           aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_errorbar(data = total_flux_hour2_df, 
+                aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"),
+                width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_hour2_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, 
+                    ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from 2-hourly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+
+## 4-Hour
+
+```{r pred-isere-gnls-hour4, cache.lazy = F}
+# prepare df
+isere_group_hour4 <- isere_time %>% 
+  mutate(day = format(DateHeure, "%Y-%m-%d"), 
+         year = year(DateHeure),
+         hour4 =  floor(hour(DateHeure) / 4) * 4, # creates a 2-hours interval
+         DateHeure = NULL) %>% group_by(hour4,day,year) # group isere_time by hour
+nrow_hour4 <- n_groups(isere_group_hour4)
+
+# get mean q
+q_hour4 <- isere_group_hour4 %>% select(c("hour4", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each hour4
+
+
+# creates matrix for MES
+isere_mes_hour4 <- isere_group_hour4 %>% select(c("hour4", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each hour4
+
+list_mes_hour4 <- isere_mes_hour4$list_mes
+mes_hour4_random <- future_replicate(nrow_boot, vapply(list_mes_hour4, 
+                                                function(x) sample(x,1), numeric(1)),
+                              future.seed = T) %>% 
+                    t() # matrix of mes: one random sample per hour4, replicated 1000 times
+
+mes_hour4_noise <- matrix(rnorm(nrow_boot*nrow_hour4, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_hour4) 
+mes_mat_hour4 <- mes_hour4_random * (1 + mes_hour4_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_hour4)
+
+# Prediction matrix
+mu_hour4 <- f(mes_mat_hour4, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_hour4 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+sigma_mat_hour4 <- sigma_gnls * abs(mu_hour4)^theta
+
+noise_mat_hour4 <- matrix(rnorm(nrow_boot*nrow_hour4, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_hour4)
+noise_mat_hour4 <- noise_mat_hour4*sigma_mat_hour4
+
+pred_hour4 <- mu_hour4 + noise_mat_hour4
+pred_hour4 <- pmin(pmax(pred_hour4, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_hour4 <- t(
+  apply(pred_hour4, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_hour4) <- c("lower", "upper")
+
+boot_pred_hour4 <- colMeans(pred_hour4, na.rm = T)
+
+## insert in isere_hour4
+isere_hour4 <- q_hour4 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_hour4,
+                          poc_pred_lower = pi_hour4[,"lower"],
+                          poc_pred_upper = pi_hour4[,"upper"],
+                          aspt = aspt_value)
+
+isere_hour4$poc_fitted <- predict(pocfitg, isere_hour4)
+
+# variance 
+isere_hour4$poc_var_mean <- apply(mu_hour4, 2, var) # variance of fit parameters + MES 
+isere_hour4$poc_var_tot <- apply(pred_hour4, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_hour4, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 4 hour", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+```
+
+```{r annual-flux-hour4, cache.lazy= F}
+
+# creates matrix for Q
+
+q_hour4_mean <-  matrix(q_hour4$q_mean, nrow = nrow_boot, ncol = nrow_hour4, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_hour4, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_hour4) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_hour4 <- q_hour4_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_hour4 <- pred_hour4*mes_mat_hour4*1e-6*q_mat_hour4*1e-2*60*60*4 #pred_hour4 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour4. 
+
+# Get index for columns by year
+index_years <- sapply(unique(isere_hour4$year), function(y){which(isere_hour4$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_hour4 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour4[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_hour4_pi <- apply(annual_flux_ton.y_hour4, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_hour4_mean <- colMeans(annual_flux_ton.y_hour4, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_hour4_sd <- apply(annual_flux_ton.y_hour4, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_hour4_df <- data.frame(year = unique(isere_hour4$year), 
+                        annual_flux_mean = annual_flux_hour4_mean, 
+                        annual_flux_variability = annual_flux_hour4_sd, 
+                        annual_flux_pi_lower = annual_flux_hour4_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_hour4_pi[3,])
+
+interannual_flux_ton.y_hour4 <- rowMeans(annual_flux_ton.y_hour4, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_hour4 <- quantile(interannual_flux_ton.y_hour4, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_hour4 <- mean(interannual_flux_ton.y_hour4, na.rm = T) # mean interannual flux
+interannual_flux_variability_hour4 <- sd(annual_flux_hour4_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_hour4_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_hour4, 
+                                  annual_flux_variability = interannual_flux_variability_hour4,
+                        annual_flux_pi_lower = interannual_flux_pi_hour4[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_hour4[3])
+
+total_flux_hour4_df <- rbind(annual_flux_hour4_df, interannual_flux_hour4_df)
+total_flux_hour4_df$group <- c(rep("annual", length(unique(isere_hour4$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_hour4_df, 
+           aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_errorbar(data = total_flux_hour4_df, 
+                aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"),
+                width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_hour4_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, 
+                    ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from 4-hourly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+
+
+## 8-Hour
+
+```{r pred-isere-gnls-hour8, cache.lazy = F}
+# prepare df
+isere_group_hour8 <- isere_time %>% 
+  mutate(day = format(DateHeure, "%Y-%m-%d"), 
+         year = year(DateHeure),
+         hour8 =  floor(hour(DateHeure) / 8) * 8, # creates a 2-hours interval
+         DateHeure = NULL) %>% group_by(hour8,day,year) # group isere_time by hour
+nrow_hour8 <- n_groups(isere_group_hour8)
+
+# get mean q
+q_hour8 <- isere_group_hour8 %>% select(c("hour8", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each hour8
+
+
+# creates matrix for MES
+isere_mes_hour8 <- isere_group_hour8 %>% select(c("hour8", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each hour8
+
+list_mes_hour8 <- isere_mes_hour8$list_mes
+mes_hour8_random <- future_replicate(nrow_boot, vapply(list_mes_hour8, 
+                                                function(x) sample(x,1), numeric(1)),
+                              future.seed = T) %>% 
+                    t() # matrix of mes: one random sample per hour8, replicated 1000 times
+
+mes_hour8_noise <- matrix(rnorm(nrow_boot*nrow_hour8, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_hour8) 
+mes_mat_hour8 <- mes_hour8_random * (1 + mes_hour8_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_hour8)
+
+# Prediction matrix
+mu_hour8 <- f(mes_mat_hour8, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_hour8 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+sigma_mat_hour8 <- sigma_gnls * abs(mu_hour8)^theta
+
+noise_mat_hour8 <- matrix(rnorm(nrow_boot*nrow_hour8, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_hour8)
+noise_mat_hour8 <- noise_mat_hour8*sigma_mat_hour8
+
+pred_hour8 <- mu_hour8 + noise_mat_hour8
+pred_hour8 <- pmin(pmax(pred_hour8, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_hour8 <- t(
+  apply(pred_hour8, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_hour8) <- c("lower", "upper")
+
+boot_pred_hour8 <- colMeans(pred_hour8, na.rm = T)
+
+## insert in isere_hour8
+isere_hour8 <- q_hour8 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_hour8,
+                          poc_pred_lower = pi_hour8[,"lower"],
+                          poc_pred_upper = pi_hour8[,"upper"],
+                          aspt = aspt_value)
+
+isere_hour8$poc_fitted <- predict(pocfitg, isere_hour8)
+
+# variance 
+isere_hour8$poc_var_mean <- apply(mu_hour8, 2, var) # variance of fit parameters + MES 
+isere_hour8$poc_var_tot <- apply(pred_hour8, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_hour8, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 8 hour", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-hour8, cache.lazy= F}
+
+# creates matrix for Q
+
+q_hour8_mean <-  matrix(q_hour8$q_mean, nrow = nrow_boot, ncol = nrow_hour8, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_hour8, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_hour8) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_hour8 <- q_hour8_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_hour8 <- pred_hour8*mes_mat_hour8*1e-6*q_mat_hour8*1e-2*60*60*8 #pred_hour8 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour8. 
+
+# Get index for columns by year
+index_years <- sapply(unique(isere_hour8$year), function(y){which(isere_hour8$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_hour8 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour8[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_hour8_pi <- apply(annual_flux_ton.y_hour8, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_hour8_mean <- colMeans(annual_flux_ton.y_hour8, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_hour8_sd <- apply(annual_flux_ton.y_hour8, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_hour8_df <- data.frame(year = unique(isere_hour8$year), 
+                        annual_flux_mean = annual_flux_hour8_mean, 
+                        annual_flux_variability = annual_flux_hour8_sd, 
+                        annual_flux_pi_lower = annual_flux_hour8_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_hour8_pi[3,])
+
+
+interannual_flux_ton.y_hour8 <- rowMeans(annual_flux_ton.y_hour8, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_hour8 <- quantile(interannual_flux_ton.y_hour8, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_hour8 <- mean(interannual_flux_ton.y_hour8, na.rm = T) # mean interannual flux
+interannual_flux_variability_hour8 <- sd(annual_flux_hour8_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_hour8_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_hour8, 
+                                  annual_flux_variability = interannual_flux_variability_hour8,
+                        annual_flux_pi_lower = interannual_flux_pi_hour8[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_hour8[3])
+
+total_flux_hour8_df <- rbind(annual_flux_hour8_df, interannual_flux_hour8_df)
+total_flux_hour8_df$group <- c(rep("annual", length(unique(isere_hour8$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_hour8_df, 
+           aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_errorbar(data = total_flux_hour8_df, 
+                aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"),
+                width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_hour8_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, 
+                    ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from 4-hourly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
 
 ## Day 
 
@@ -918,32 +1363,17 @@ isere_day$poc_var_tot <- apply(pred_day, 2, var) # total variance per prediction
 # plot
 
 ggplot(isere_day, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
   geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
   geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  scale_color_manual(values = c("darkblue","lightblue"))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every day", subtitle = "Prediction interval in grey")+
   theme_minimal()+
   theme(legend.position = "bottom")
 
-# plot, log-transformed x
-ggplot(isere_day, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
 ```
 
 ```{r annual-flux-day, cache.lazy=F}
@@ -976,12 +1406,6 @@ annual_flux_day_df <- data.frame(year = unique(isere_day$year),
                         annual_flux_pi_lower = annual_flux_day_pi[1,], 
                         annual_flux_pi_upper = annual_flux_day_pi[3,])
 
-ggplot(annual_flux_day_df)+
-  geom_col(aes(x=year, y = annual_flux_day_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
-  labs(title = "Mean annual flux with prediction interval", subtitle = "Sampling grequency: day", x = "", y = "Mean annual flux, ton")+
-  theme_minimal()
-
 interannual_flux_ton.y_day <- rowMeans(annual_flux_ton.y_day, na.rm = T) # mean interannual flux per iteration of the bootstrap
 interannual_flux_pi_day <- quantile(interannual_flux_ton.y_day, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
 interannual_flux_mean_day <- mean(interannual_flux_ton.y_day, na.rm = T) # mean interannual flux
@@ -995,16 +1419,280 @@ interannual_flux_day_df <- data.frame(year = "interannual", annual_flux_mean = i
 total_flux_day_df <- rbind(annual_flux_day_df, interannual_flux_day_df)
 total_flux_day_df$group <- c(rep("annual", length(unique(isere_day$year))), "interannual")
 
-ggplot(total_flux_day_df)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+ggplot()+
+  geom_col(data = total_flux_day_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_day_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_day_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from dayly mean values (ton/year)", fill = "")+
   theme_minimal()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
+
+## 2 Day 
+
+```{r pred-isere-gnls-day2, cache.lazy = F}
+# prepare df
+isere_group_day2 <- isere_time %>% mutate(day = as.Date(format(DateHeure, "%Y-%m-%d")), day2 = floor(as.numeric(day - min(day)) / 2), year = year(DateHeure), DateHeure = NULL) %>% group_by(day2,year) # group isere_time by day
+nrow_day2 <- n_groups(isere_group_day2)
+
+# get mean q
+q_day2 <- isere_group_day2 %>% select(c("day2", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each day2
+
+
+# creates matrix for MES
+isere_mes_day2 <- isere_group_day2 %>% select(c("day2", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each day2
+mes_day2_random <- replicate(nrow_boot, sapply(isere_mes_day2$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per day2, replicated 1000 times
+mes_day2_noise <- matrix(rnorm(nrow_boot*nrow_day2, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_day2) 
+mes_mat_day2 <- mes_day2_random * (1 + mes_day2_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_day2)
+
+# Prediction matrix
+mu_day2 <- f(mes_mat_day2, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_day2 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+sigma_mat_day2 <- sigma_gnls * abs(mu_day2)^theta
+
+noise_mat_day2 <- matrix(rnorm(nrow_boot*nrow_day2, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_day2)
+noise_mat_day2 <- noise_mat_day2*sigma_mat_day2
+
+pred_day2 <- mu_day2 + noise_mat_day2
+pred_day2 <- pmin(pmax(pred_day2, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_day2 <- t(
+  apply(pred_day2, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_day2) <- c("lower", "upper")
+
+boot_pred_day2 <- colMeans(pred_day2, na.rm = T)
+
+## insert in isere_day2
+isere_day2 <- q_day2 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_day2,
+                          poc_pred_lower = pi_day2[,"lower"],
+                          poc_pred_upper = pi_day2[,"upper"],
+                          aspt = aspt_value)
+
+isere_day2$poc_fitted <- predict(pocfitg, isere_day2)
+
+# variance 
+isere_day2$poc_var_mean <- apply(mu_day2, 2, var) # variance of fit parameters + MES 
+isere_day2$poc_var_tot <- apply(pred_day2, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_day2, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd day", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-day2, cache.lazy=F}
+
+# creates matrix for Q
+
+q_day2_mean <-  matrix(q_day2$q_mean, nrow = nrow_boot, ncol = nrow_day2, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_day2, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_day2) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_day2 <- q_day2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_day2 <- pred_day2*mes_mat_day2*1e-6*q_mat_day2*1e-2*60*60*24*2 #pred_day2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day2. 
+
+# Get index for columns by year
+index_years <- sapply(unique(isere_day2$year), function(y){which(isere_day2$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_day2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_day2_pi <- apply(annual_flux_ton.y_day2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_day2_mean <- colMeans(annual_flux_ton.y_day2, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_day2_sd <- apply(annual_flux_ton.y_day2, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_day2_df <- data.frame(year = unique(isere_day2$year), 
+                        annual_flux_mean = annual_flux_day2_mean, 
+                        annual_flux_variability = annual_flux_day2_sd, 
+                        annual_flux_pi_lower = annual_flux_day2_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_day2_pi[3,])
+
+ggplot(annual_flux_day2_df)+
+  geom_col(aes(x=year, y = annual_flux_day2_mean), fill = "lightblue")+
+  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
+  labs(title = "Mean annual flux with prediction interval", subtitle = "Sampling grequency: day2", x = "", y = "Mean annual flux, ton")+
+  theme_minimal()
+
+interannual_flux_ton.y_day2 <- rowMeans(annual_flux_ton.y_day2, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_day2 <- quantile(interannual_flux_ton.y_day2, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_day2 <- mean(interannual_flux_ton.y_day2, na.rm = T) # mean interannual flux
+interannual_flux_variability_day2 <- sd(annual_flux_day2_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_day2_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_day2, 
+                                  annual_flux_variability = interannual_flux_variability_day2,
+                        annual_flux_pi_lower = interannual_flux_pi_day2[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_day2[3])
+
+total_flux_day2_df <- rbind(annual_flux_day2_df, interannual_flux_day2_df)
+total_flux_day2_df$group <- c(rep("annual", length(unique(isere_day2$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_day2_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_day2_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_day2_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from bi-dayly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+## 4 days
+
+```{r pred-isere-gnls-day4, cache.lazy = F}
+# prepare df
+isere_group_day4 <- isere_time %>% mutate(day = as.Date(format(DateHeure, "%Y-%m-%d")), day4 = floor(as.numeric(day - min(day)) / 4), year = year(DateHeure), DateHeure = NULL) %>% group_by(day4,year) # group isere_time by day
+nrow_day4 <- n_groups(isere_group_day4)
+
+# get mean q
+q_day4 <- isere_group_day4 %>% select(c("day4", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each day4
+
+
+# creates matrix for MES
+isere_mes_day4 <- isere_group_day4 %>% select(c("day4", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each day4
+mes_day4_random <- replicate(nrow_boot, sapply(isere_mes_day4$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per day4, replicated 1000 times
+mes_day4_noise <- matrix(rnorm(nrow_boot*nrow_day4, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_day4) 
+mes_mat_day4 <- mes_day4_random * (1 + mes_day4_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_day4)
+
+# Prediction matrix
+mu_day4 <- f(mes_mat_day4, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_day4 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+sigma_mat_day4 <- sigma_gnls * abs(mu_day4)^theta
+
+noise_mat_day4 <- matrix(rnorm(nrow_boot*nrow_day4, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_day4)
+noise_mat_day4 <- noise_mat_day4*sigma_mat_day4
+
+pred_day4 <- mu_day4 + noise_mat_day4
+pred_day4 <- pmin(pmax(pred_day4, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_day4 <- t(
+  apply(pred_day4, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_day4) <- c("lower", "upper")
+
+boot_pred_day4 <- colMeans(pred_day4, na.rm = T)
+
+## insert in isere_day4
+isere_day4 <- q_day4 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_day4,
+                          poc_pred_lower = pi_day4[,"lower"],
+                          poc_pred_upper = pi_day4[,"upper"],
+                          aspt = aspt_value)
+
+isere_day4$poc_fitted <- predict(pocfitg, isere_day4)
+
+# variance 
+isere_day4$poc_var_mean <- apply(mu_day4, 2, var) # variance of fit parameters + MES 
+isere_day4$poc_var_tot <- apply(pred_day4, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_day4, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 4 day", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-day4, cache.lazy=F}
+
+# creates matrix for Q
+
+q_day4_mean <-  matrix(q_day4$q_mean, nrow = nrow_boot, ncol = nrow_day4, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_day4, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_day4) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_day4 <- q_day4_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_day4 <- pred_day4*mes_mat_day4*1e-6*q_mat_day4*1e-2*60*60*24*4 #pred_day4 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day4. 
+
+# Get index for columns by year
+index_years <- sapply(unique(isere_day4$year), function(y){which(isere_day4$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_day4 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day4[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_day4_pi <- apply(annual_flux_ton.y_day4, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_day4_mean <- colMeans(annual_flux_ton.y_day4, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_day4_sd <- apply(annual_flux_ton.y_day4, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_day4_df <- data.frame(year = unique(isere_day4$year), 
+                        annual_flux_mean = annual_flux_day4_mean, 
+                        annual_flux_variability = annual_flux_day4_sd, 
+                        annual_flux_pi_lower = annual_flux_day4_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_day4_pi[3,])
+
+
+interannual_flux_ton.y_day4 <- rowMeans(annual_flux_ton.y_day4, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_day4 <- quantile(interannual_flux_ton.y_day4, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_day4 <- mean(interannual_flux_ton.y_day4, na.rm = T) # mean interannual flux
+interannual_flux_variability_day4 <- sd(annual_flux_day4_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_day4_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_day4, 
+                                  annual_flux_variability = interannual_flux_variability_day4,
+                        annual_flux_pi_lower = interannual_flux_pi_day4[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_day4[3])
+
+total_flux_day4_df <- rbind(annual_flux_day4_df, interannual_flux_day4_df)
+total_flux_day4_df$group <- c(rep("annual", length(unique(isere_day4$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_day4_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_day4_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_day4_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from bi-dayly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
 
 ## Week
 
@@ -1067,32 +1755,17 @@ isere_week$poc_var_tot <- apply(pred_week, 2, var) # total variance per predicti
 # plot
 
 ggplot(isere_week, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
   geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
   geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  scale_color_manual(values = c("darkblue","lightblue"))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every week", subtitle = "Prediction interval in grey")+
   theme_minimal()+
   theme(legend.position = "bottom")
 
-# plot, log-transformed x
-ggplot(isere_week, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
 ```
 
 ```{r annual-flux-week, cache.lazy=F}
@@ -1125,12 +1798,6 @@ annual_flux_week_df <- data.frame(year = unique(isere_week$year),
                         annual_flux_pi_lower = annual_flux_week_pi[1,], 
                         annual_flux_pi_upper = annual_flux_week_pi[3,])
 
-ggplot(annual_flux_week_df)+
-  geom_col(aes(x=year, y = annual_flux_week_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
-  labs(title = "Mean annual flux with prediction interval", subtitle = "Sampling grequency: week", x = "", y = "Mean annual flux, ton")+
-  theme_minimal()
-
 interannual_flux_ton.y_week <- rowMeans(annual_flux_ton.y_week, na.rm = T) # mean interannual flux per iteration of the bootstrap
 interannual_flux_pi_week <- quantile(interannual_flux_ton.y_week, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
 interannual_flux_mean_week <- mean(interannual_flux_ton.y_week, na.rm = T) # mean interannual flux
@@ -1144,10 +1811,10 @@ interannual_flux_week_df <- data.frame(year = "interannual", annual_flux_mean = 
 total_flux_week_df <- rbind(annual_flux_week_df, interannual_flux_week_df)
 total_flux_week_df$group <- c(rep("annual", length(unique(isere_week$year))), "interannual")
 
-ggplot(total_flux_week_df)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+ggplot()+
+  geom_col(data = total_flux_week_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_week_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_week_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from weekly mean values (ton/year)", fill = "")+
@@ -1155,6 +1822,133 @@ ggplot(total_flux_week_df)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
+## Bi-weekly
+
+```{r pred-isere-gnls-week2, cache.lazy = F}
+# prepare df
+isere_group_week2 <- isere_time %>% mutate(week2 = week(DateHeure), week2 =  floor(as.numeric(week2 - min(week2)) / 2), year = year(DateHeure), DateHeure = NULL) %>% group_by(week2,year) # group isere_time by week2
+nrow_week2 <- n_groups(isere_group_week2)
+
+# get mean q
+q_week2 <- isere_group_week2 %>% select(c("week2", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each week2
+
+
+# creates matrix for MES
+isere_mes_week2 <- isere_group_week2 %>% select(c("week2", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each week2
+mes_week2_random <- replicate(nrow_boot, sapply(isere_mes_week2$list_mes, function(x) sample(x,1)))%>% t() # matrix of mes: one random sample per week2, replicated 1000 times
+mes_week2_noise <- matrix(rnorm(nrow_boot*nrow_week2, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_week2) 
+mes_mat_week2 <- mes_week2_random * (1 + mes_week2_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_week2)
+
+# Prediction matrix
+mu_week2 <- f(mes_mat_week2, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+noise_mat_week2 <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+sigma_mat_week2 <- sigma_gnls * abs(mu_week2)^theta
+
+noise_mat_week2 <- matrix(rnorm(nrow_boot*nrow_week2, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_week2)
+noise_mat_week2 <- noise_mat_week2*sigma_mat_week2
+
+pred_week2 <- mu_week2 + noise_mat_week2
+pred_week2 <- pmin(pmax(pred_week2, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
+
+
+## computes prediction interval 
+pi_week2 <- t(
+  apply(pred_week2, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
+)
+
+colnames(pi_week2) <- c("lower", "upper")
+
+boot_pred_week2 <- colMeans(pred_week2, na.rm = T)
+
+## insert in isere_week2
+isere_week2 <-q_week2 %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_week2,
+                          poc_pred_lower = pi_week2[,"lower"],
+                          poc_pred_upper = pi_week2[,"upper"],
+                          aspt = aspt_value)
+
+isere_week2$poc_fitted <- predict(pocfitg, isere_week2)
+
+# variance 
+isere_week2$poc_var_mean <- apply(mu_week2, 2, var) # variance of fit parameters + MES 
+isere_week2$poc_var_tot <- apply(pred_week2, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_week2, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd week", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r annual-flux-week2, cache.lazy=F}
+
+# creates matrix for Q
+
+q_week2_mean <-  matrix(q_week2$q_mean, nrow = nrow_boot, ncol = nrow_week2, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_week2, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_week2) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_week2 <- q_week2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_kg.s_mat_week2 <- pred_week2*mes_mat_week2*1e-6*q_mat_week2*1e-2*60*60*24*14 #pred_week2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week2. 
+
+# Get index for columns by year
+index_years <- sapply(unique(isere_week2$year), function(y){which(isere_week2$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_week2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_week2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_week2_pi <- apply(annual_flux_ton.y_week2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_week2_mean <- colMeans(annual_flux_ton.y_week2, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_week2_sd <- apply(annual_flux_ton.y_week2, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_week2_df <- data.frame(year = unique(isere_week2$year), 
+                        annual_flux_mean = annual_flux_week2_mean, 
+                        annual_flux_variability = annual_flux_week2_sd, 
+                        annual_flux_pi_lower = annual_flux_week2_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_week2_pi[3,])
+
+interannual_flux_ton.y_week2 <- rowMeans(annual_flux_ton.y_week2, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_week2 <- quantile(interannual_flux_ton.y_week2, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_week2 <- mean(interannual_flux_ton.y_week2, na.rm = T) # mean interannual flux
+interannual_flux_variability_week2 <- sd(annual_flux_week2_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_week2_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_week2, 
+                                  annual_flux_variability = interannual_flux_variability_week2,
+                        annual_flux_pi_lower = interannual_flux_pi_week2[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_week2[3])
+
+total_flux_week2_df <- rbind(annual_flux_week2_df, interannual_flux_week2_df)
+total_flux_week2_df$group <- c(rep("annual", length(unique(isere_week2$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_week2_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_week2_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_week2_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from week2ly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
 
 ## Month
 
@@ -1217,32 +2011,17 @@ isere_month$poc_var_tot <- apply(pred_month, 2, var) # total variance per predic
 # plot
 
 ggplot(isere_month, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
   geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
   geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  scale_color_manual(values = c("darkblue","lightblue"))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every month", subtitle = "Prediction interval in grey")+
   theme_minimal()+
   theme(legend.position = "bottom")
 
-# plot, log-transformed x
-ggplot(isere_month, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
 ```
 
 ```{r annual-flux-month, cache.lazy=F}
@@ -1275,12 +2054,6 @@ annual_flux_month_df <- data.frame(year = unique(isere_month$year),
                         annual_flux_pi_lower = annual_flux_month_pi[1,], 
                         annual_flux_pi_upper = annual_flux_month_pi[3,])
 
-ggplot(annual_flux_month_df)+
-  geom_col(aes(x=year, y = annual_flux_month_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
-  labs(title = "Mean annual flux with prediction interval", subtitle = "Sampling grequency: month", x = "", y = "Mean annual flux, ton")+
-  theme_minimal()
-
 interannual_flux_ton.y_month <- rowMeans(annual_flux_ton.y_month, na.rm = T) # mean interannual flux per iteration of the bootstrap
 interannual_flux_pi_month <- quantile(interannual_flux_ton.y_month, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
 interannual_flux_mean_month <- mean(interannual_flux_ton.y_month, na.rm = T) # mean interannual flux
@@ -1294,10 +2067,10 @@ interannual_flux_month_df <- data.frame(year = "interannual", annual_flux_mean =
 total_flux_month_df <- rbind(annual_flux_month_df, interannual_flux_month_df)
 total_flux_month_df$group <- c(rep("annual", length(unique(isere_month$year))), "interannual")
 
-ggplot(total_flux_month_df)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+ggplot()+
+  geom_col(data = total_flux_month_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_month_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_month_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from monthly mean values (ton/year)", fill = "")+
@@ -1309,628 +2082,59 @@ ggplot(total_flux_month_df)+
 
 ## Compare fluxes
 
-```{r compare}
-
-compare_timesteps <- rbind(mutate(total_flux_df, "timestep" = "ref"), mutate(total_flux_day_df, "timestep" = "day"), mutate(total_flux_week_df, "timestep" = "week"), mutate(total_flux_month_df, "timestep" = "month")) %>%
-  mutate(timestep = factor(timestep, levels = c("ref", "day", "week", "month")))
-
-pd <- position_dodge(width = 0.9)
-
-ggplot(compare_timesteps)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = timestep), position = pd)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = timestep, group = timestep), width = 0.3, size = 0.5, position = pd)+
- # geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("ref" = "#CAD2C5", "day" = "#84A98C", week = "#52796F", month = "#354F52"))+
-  scale_color_manual(values = c("ref" = "grey20", "day" = "grey30", week = "grey50", month = "grey60"), name = "")+
-   labs(x = "Year", y = "Flux, from dayly mean values (kg/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
-```
 ```{r interannual-error-in-percent}
 # relative error by Monte-Carlo world
+error_hour2 <- (interannual_flux_ton.y_hour2 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_hour2_pi <- quantile(error_hour2, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_hour2_mean <- mean(error_hour2)
+
+error_hour4 <- (interannual_flux_ton.y_hour4 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_hour4_pi <- quantile(error_hour4, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_hour4_mean <- mean(error_hour4)
+
+error_hour8 <- (interannual_flux_ton.y_hour8 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_hour8_pi <- quantile(error_hour8, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_hour8_mean <- mean(error_hour8)
 
 error_day <- (interannual_flux_ton.y_day - interannual_flux_ton.y)/interannual_flux_ton.y * 100
 error_day_pi <- quantile(error_day, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 error_day_mean <- mean(error_day)
 
+error_day2 <- (interannual_flux_ton.y_day2 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_day2_pi <- quantile(error_day2, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_day2_mean <- mean(error_day2)
+
+error_day4 <- (interannual_flux_ton.y_day4 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_day4_pi <- quantile(error_day4, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_day4_mean <- mean(error_day4)
+
 error_week <- (interannual_flux_ton.y_week - interannual_flux_ton.y)/interannual_flux_ton.y * 100
 error_week_pi <- quantile(error_week, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 error_week_mean <- mean(error_week)
+
+error_week2 <- (interannual_flux_ton.y_week2 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_week2_pi <- quantile(error_week2, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_week2_mean <- mean(error_week2)
 
 error_month <- (interannual_flux_ton.y_month - interannual_flux_ton.y)/interannual_flux_ton.y * 100
 error_month_pi <- quantile(error_month, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 error_month_mean <- mean(error_month)
 
-error <- data.frame(time_step = c("day","week","month"),
-                    error = c(error_day_mean, error_week_mean, error_month_mean),
-                    pi_upr = c(error_day_pi[3], error_month_pi[3], error_month_pi[3]),
-                    pi_lwr = c(error_day_pi[1], error_month_pi[1], error_month_pi[1])) %>% 
-                    mutate(time_step = factor(time_step, levels = c("day", "week", "month")))
+error <- data.frame(time_step = factor(c("2hours","4hours","8hours","day","2days","4days","week","2weeks","month"), levels = c("2hours","4hours","8hours","day","2days","4days","week","2weeks","month")),
+                    error = c(error_hour2_mean, error_hour4_mean, error_hour8_mean, error_day_mean, error_day2_mean, error_day4_mean, error_week_mean, error_week2_mean, error_month_mean),
+                    pi_upr = c(error_hour2_pi[3], error_hour4_pi[3], error_hour8_pi[3], error_day_pi[3], error_day2_pi[3], error_day4_pi[3], error_week_pi[3], error_week2_pi[3], error_month_pi[3]),
+                    pi_lwr = c(error_hour2_pi[1], error_hour4_pi[1], error_hour8_pi[1], error_day_pi[1], error_day2_pi[1], error_day4_pi[1], error_week_pi[1], error_week2_pi[1], error_month_pi[1])) 
 
 ggplot(data=error, aes(x = time_step))+
   geom_point(aes(y = error))+
   geom_errorbar(aes(ymin=pi_lwr, ymax=pi_upr))+
   theme_minimal()
+
+error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
 
 
 
-
-
-
-
-# Archives
-## Timestep méthode 1: moyenne des flux MC
-
-Méthode: moyenner les flux MC par jour avant de calculer le flux annuel. Revient à: Somme par jour puis somme par an. Pb: flux annuels 10^3 plus élevés que flux de ref
-
-```{r group-by-day}
-isere_for_gnls$day <- isere_for_gnls$DateHeure %>% format("%Y-%m-%d")
-index_day <- sapply(unique(isere_for_gnls$day), function(y){which(isere_for_gnls$day == y)}) # list of indices corresponding to each day
-
-mean_flux_day <- lapply(index_day,
-                        function(idx){
-                        tryCatch({apply(flux_kg.s_mat[,idx], 1, sum, na.rm = T)},
-                        error = function(e) NULL)
-                        }) # sum of fluxes per day, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and many columns (1 per day)
-
-day_year <- names(index_day) %>% as.Date %>% year
-index_year <- sapply(unique(day_year), function(y){which(day_year == y)})
-
-annual_flux_day <- sapply(index_year, function(idx){
-                                      tryCatch({sum(unlist(mean_flux_day[idx]), na.rm = T)},
-                                               error = function(e) NULL)}) # sum of fluxes per year after grouping per day
-
-
-compare_flux <- total_flux_df %>% cbind("annual_flux_day" = c(annual_flux_day, mean(annual_flux_day)))
-
-ggplot(compare_flux) +
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-  geom_point(aes(x=year, y = annual_flux_day), fill = "darkgreen")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
-```
-
-## Timestep méthode 2: moyenne de CMES et Q par time step avant d'appliquer GNLS, avec sd de moyennage
-
-### Day 
-
-```{r pred-isere-gnls-day-sd, cache.lazy = F}
-
-isere_day <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit)) %>% select(c("DateHeure", "mes_for_fit", "q_m3.s")) %>% mutate("day" = format(DateHeure, "%Y-%m-%d"), year = year(DateHeure), DateHeure = NULL) %>% group_by(day,year) %>% summarize_all(list("mean" = mean, "sd" = sd)) %>% ungroup()
-names(isere_day) <- c("day","year","mes_for_fit","q_m3.s","mes_for_fit_sd","q_m3.s_sd")
-isere_day$aspt <- aspt_value
-
-
-nrow_isere <- nrow(isere_day)
-nrow_boot <- nrow(coefs_boot)
-
-# predict POC pour mes > 0
-isere_day$poc_fitted <- predict(pocfitg, newdata = isere_day, na.action = na.pass) 
-
-
-# Prediction interval
-
-## Uncertainty on MES - AJOUTER INCERTITUDE DUE A LA MOYENNE?
-mes_u <- summary(fit_cmes)$coefficients[4]
-
-mes_mat_day <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-
-for(i in 1:nrow_isere){
-  mes_mat_day[,i] <- rnorm(nrow_boot, mean = isere_day$mes_for_fit[i], sd = mes_u + isere_day$mes_for_fit_sd[i]) # chaque colonne de la matrice correspond à une observation de MES. Exactly same code as when working on lines.
-}
-
-
-## model function 
-f <- function(x, a, b){
-  a * x ^ b + aspt_value
-}
-
-## paramètres de variance from GNLS
-theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
-sigma_gnls <- pocfitg$sigma
-
-
-### Matrice de prédictions, sans bruit
-
-
-mu_day <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-for(i in 1:nrow_boot){
-   mu_day[i,] <- with(as.list(coefs_boot[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat_day[i, ], a, b))
-}
-
-
-isere_day$poc_var_mean <- apply(mu_day, 2, var) # variance of fit parameters + MES 
-
-# adds noise
-noise_mat_day <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-sigma_mat_day <- sigma_gnls * abs(mu_day)^theta
-
-noise_mat_day <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_isere)
-noise_mat_day <- noise_mat_day*sigma_mat_day
-
-pred_day <- mu_day + noise_mat_day
-
-pred_day <- pmin(pmax(pred_day, 0), 1) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
-
-### computes variance, y-wise
-isere_day$poc_var_tot <- apply(pred_day, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi_day <- t(
-  apply(pred_day, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
-colnames(pi_day) <- c("lower", "upper")
-
-boot_pred_day <- colMeans(pred_day, na.rm = T)
-
-## insert in isere_day
-
-isere_day <- isere_day %>% mutate(poc_boot_pred = boot_pred_day,
-                          poc_pred_lower = pi_day[,1],
-                          poc_pred_upper = pi_day[,2])
-
-# plot
-
-ggplot(isere_day, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-ggplot(isere_day, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-```
-
-```{r annual-flux-day-sd, cache.lazy=F}
-
-# create matrix of q
-q_day_mean <-  matrix(isere_day$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
-q_sd <- matrix(isere_day$q_m3.s_sd, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
-
-q_day_sd <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_sd))
-
-q_u = 0.1 # Cédric - avis d'expert NOT WORKING; has to be 10% of the Q measured, not ALWAYS 0.1!
-q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
-
-q_mat_day <- (q_day_mean + q_sd) * (1 + q_noise) # final MC of q, with sd variability + noise
-
-
-# compute flux
-
-flux_kg.s_mat_day <- pred_day*mes_mat_day*q_mat_day*1e-2*60*60*24 #pred_day * mes_mat : poc in mg/L; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day. 
-
-index_years <- sapply(unique(isere_day$year), function(y){which(isere_day$year == y)}) # list of indices corresponding to each year
-
-annual_flux_ton.y_day <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
-
-annual_flux_day_ci <- apply(annual_flux_ton.y_day, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_day_mean <- colMeans(annual_flux_ton.y_day, na.rm = T) # mean annual flux per year. 1 vector
-
-annual_flux_day_sd <- apply(annual_flux_ton.y_day, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
- 
-
-annual_flux_day_df <- data.frame(year = unique(isere_day$year), 
-                        annual_flux_mean = annual_flux_day_mean, 
-                        annual_flux_variability = rep(NA, 19), # no physical sense in calculating "annual variability". Would be standard deviation of annual flux. But we prefer to show the prediction interval.
-                        annual_flux_ci_lower = annual_flux_day_ci[1,], 
-                        annual_flux_ci_upper = annual_flux_day_ci[3,])
-
-ggplot(annual_flux_day_df)+
-  geom_col(aes(x=year, y = annual_flux_day_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper), width = 0.2)+
-  theme_minimal()
-
-interannual_flux_ton.y_day <- rowMeans(annual_flux_ton.y_day, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_ci_day <- quantile(interannual_flux_ton.y_day, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean_day <- mean(interannual_flux_ton.y_day, na.rm = T) # mean interannual flux
-interannual_flux_variability_day <- sd(annual_flux_day_mean, na.rm = T) # standard deviation of interannual flux per year
-
-interannual_flux_day_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_day, 
-                                  annual_flux_variability = interannual_flux_variability_day,
-                        annual_flux_ci_lower = interannual_flux_ci_day[1], 
-                        annual_flux_ci_upper = interannual_flux_ci_day[3])
-
-total_flux_day_df <- rbind(annual_flux_day_df, interannual_flux_day_df)
-total_flux_day_df$group <- c(rep("annual", length(unique(isere_day$year))), "interannual")
-
-ggplot(total_flux_day_df)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux, from dayly mean values (kg/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
-```
-
-### Week
-
-```{r pred-isere-gnls-week-sd, cache.lazy = F}
-
-isere_week <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit)) %>% select(c("DateHeure", "mes_for_fit", "q_m3.s")) %>% mutate("week" = week(DateHeure), year = year(DateHeure), DateHeure = NULL) %>% group_by(week,year) %>% summarize_all(list("mean" = mean, "sd" = sd)) %>% ungroup()
-names(isere_week) <- c("week","year","mes_for_fit","q_m3.s","mes_for_fit_sd","q_m3.s_sd")
-isere_week$aspt <- aspt_value
-
-
-nrow_isere <- nrow(isere_week)
-nrow_boot <- nrow(coefs_boot)
-
-# predict POC pour mes > 0
-isere_week$poc_fitted <- predict(pocfitg, newdata = isere_week, na.action = na.pass) 
-
-
-# Prediction interval
-
-## Uncertainty on MES - AJOUTER INCERTITUDE DUE A LA MOYENNE?
-mes_u <- summary(fit_cmes)$coefficients[4]
-
-mes_mat_week <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-
-for(i in 1:nrow_isere){
-  mes_mat_week[,i] <- rnorm(nrow_boot, mean = isere_week$mes_for_fit[i], sd = mes_u + isere_week$mes_for_fit_sd[i]) # chaque colonne de la matrice correspond à une observation de MES. Exactly same code as when working on lines.
-}
-
-
-## model function 
-f <- function(x, a, b){
-  a * x ^ b + aspt_value
-}
-
-## paramètres de variance from GNLS
-theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
-sigma_gnls <- pocfitg$sigma
-
-
-### Matrice de prédictions, sans bruit
-
-
-mu_week <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-for(i in 1:nrow_boot){
-   mu_week[i,] <- with(as.list(coefs_boot[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat_week[i, ], a, b))
-}
-
-
-isere_week$poc_var_mean <- apply(mu_week, 2, var) # variance of fit parameters + MES 
-
-# adds noise
-noise_mat_week <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-sigma_mat_week <- sigma_gnls * abs(mu_week)^theta
-
-noise_mat_week <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_isere)
-noise_mat_week <- noise_mat_week*sigma_mat_week
-
-pred_week <- mu_week + noise_mat_week
-
-pred_week <- pmin(pmax(pred_week, 0), 1) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
-
-### computes variance, y-wise
-isere_week$poc_var_tot <- apply(pred_week, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi_week <- t(
-  apply(pred_week, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
-colnames(pi_week) <- c("lower", "upper")
-
-boot_pred_week <- colMeans(pred_week, na.rm = T)
-
-## insert in isere_week
-
-isere_week <- isere_week %>% mutate(poc_boot_pred = boot_pred_week,
-                          poc_pred_lower = pi_week[,1],
-                          poc_pred_upper = pi_week[,2])
-
-# plot
-
-ggplot(isere_week, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-ggplot(isere_week, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-```
-```{r annual-flux-week-sd, cache.lazy=F}
-
-# create matrix of q
-q_week_mean <-  matrix(isere_week$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
-q_sd <- matrix(isere_week$q_m3.s_sd, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
-
-q_week_sd <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_sd))
-
-q_u = 0.1 # Cédric - avis d'expert NOT WORKING; has to be 10% of the Q measured, not ALWAYS 0.1!
-q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
-
-q_mat_week <- (q_week_mean + q_sd) * (1 + q_noise) # final MC of q, with sd variability + noise
-
-
-# compute flux
-
-flux_kg.s_mat_week <- pred_week*mes_mat_week*q_mat_week*1e-2*60*60*24*7 #pred_week * mes_mat : poc in mg/L; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week. 
-
-index_years <- sapply(unique(isere_week$year), function(y){which(isere_week$year == y)}) # list of indices corresponding to each year
-
-annual_flux_ton.y_week <- sapply(index_years, function(idx){apply(flux_kg.s_mat_week[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
-
-annual_flux_week_ci <- apply(annual_flux_ton.y_week, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_week_mean <- colMeans(annual_flux_ton.y_week, na.rm = T) # mean annual flux per year. 1 vector
-
-annual_flux_week_sd <- apply(annual_flux_ton.y_week, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
- 
-
-annual_flux_week_df <- data.frame(year = unique(isere_week$year), 
-                        annual_flux_mean = annual_flux_week_mean, 
-                        annual_flux_variability = rep(NA, 19), # no physical sense in calculating "annual variability". Would be standard deviation of annual flux. But we prefer to show the prediction interval.
-                        annual_flux_ci_lower = annual_flux_week_ci[1,], 
-                        annual_flux_ci_upper = annual_flux_week_ci[3,])
-
-ggplot(annual_flux_week_df)+
-  geom_col(aes(x=year, y = annual_flux_week_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper), width = 0.2)+
-  theme_minimal()
-
-interannual_flux_ton.y_week <- rowMeans(annual_flux_ton.y_week, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_ci_week <- quantile(interannual_flux_ton.y_week, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean_week <- mean(interannual_flux_ton.y_week, na.rm = T) # mean interannual flux
-interannual_flux_variability_week <- sd(annual_flux_week_mean, na.rm = T) # standard deviation of interannual flux per year
-
-interannual_flux_week_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_week, 
-                                  annual_flux_variability = interannual_flux_variability_week,
-                        annual_flux_ci_lower = interannual_flux_ci_week[1], 
-                        annual_flux_ci_upper = interannual_flux_ci_week[3])
-
-total_flux_week_df <- rbind(annual_flux_week_df, interannual_flux_week_df)
-total_flux_week_df$group <- c(rep("annual", length(unique(isere_week$year))), "interannual")
-
-ggplot(total_flux_week_df)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux, from weekly mean values (kg/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
-```
-
-
-### Month
-
-```{r pred-isere-gnls-month-sd, cache.lazy = F}
-
-isere_month <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit)) %>% select(c("DateHeure", "mes_for_fit", "q_m3.s")) %>% mutate("month" = month(DateHeure), year = year(DateHeure), DateHeure = NULL) %>% group_by(month,year) %>% summarize_all(list("mean" = mean, "sd" = sd)) %>% ungroup()
-names(isere_month) <- c("month","year","mes_for_fit","q_m3.s","mes_for_fit_sd","q_m3.s_sd")
-isere_month$aspt <- aspt_value
-
-
-nrow_isere <- nrow(isere_month)
-nrow_boot <- nrow(coefs_boot)
-
-# predict POC pour mes > 0
-isere_month$poc_fitted <- predict(pocfitg, newdata = isere_month, na.action = na.pass) 
-
-
-# Prediction interval
-
-## Uncertainty on MES - AJOUTER INCERTITUDE DUE A LA MOYENNE?
-mes_u <- summary(fit_cmes)$coefficients[4]
-
-mes_mat_month <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-
-for(i in 1:nrow_isere){
-  mes_mat_month[,i] <- rnorm(nrow_boot, mean = isere_month$mes_for_fit[i], sd = mes_u + isere_month$mes_for_fit_sd[i]) # chaque colonne de la matrice correspond à une observation de MES. Exactly same code as when working on lines.
-}
-
-
-## model function 
-f <- function(x, a, b){
-  a * x ^ b + aspt_value
-}
-
-## paramètres de variance from GNLS
-theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
-sigma_gnls <- pocfitg$sigma
-
-
-### Matrice de prédictions, sans bruit
-
-
-mu_month <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-for(i in 1:nrow_boot){
-   mu_month[i,] <- with(as.list(coefs_boot[i,]), # listing the coefficients allows to have 2 named numbers to be used in the function
-                      f(mes_mat_month[i, ], a, b))
-}
-
-
-isere_month$poc_var_mean <- apply(mu_month, 2, var) # variance of fit parameters + MES 
-
-# adds noise
-noise_mat_month <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-sigma_mat_month <- sigma_gnls * abs(mu_month)^theta
-
-noise_mat_month <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_isere)
-noise_mat_month <- noise_mat_month*sigma_mat_month
-
-pred_month <- mu_month + noise_mat_month
-
-pred_month <- pmin(pmax(pred_month, 0), 1) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro
-
-### computes variance, y-wise
-isere_month$poc_var_tot <- apply(pred_month, 2, var) # total variance per prediction, for prediction total uncertainty
-
-## computes prediction interval 
-pi_month <- t(
-  apply(pred_month, 2, quantile, probs = c(0.025, 0.975), na.rm = T)
-)
-
-colnames(pi_month) <- c("lower", "upper")
-
-boot_pred_month <- colMeans(pred_month, na.rm = T)
-
-## insert in isere_month
-
-isere_month <- isere_month %>% mutate(poc_boot_pred = boot_pred_month,
-                          poc_pred_lower = pi_month[,1],
-                          poc_pred_upper = pi_month[,2])
-
-# plot
-
-ggplot(isere_month, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-ggplot(isere_month, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "black")+
-  geom_line(aes(y = poc_pred_upper), col = "black")+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 0.5)+
-  labs(x = "MES, mg.L", y = "POC, %", col = "")+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  scale_x_continuous(trans = "log", breaks = c(1,10,100,1000))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, mg/L", y = "POC,prop", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-```
-```{r annual-flux-month-sd, cache.lazy=F}
-
-# create matrix of q
-q_month_mean <-  matrix(isere_month$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
-q_sd <- matrix(isere_month$q_m3.s_sd, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
-
-q_month_sd <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_sd))
-
-q_u = 0.1 # Cédric - avis d'expert NOT WORKING; has to be 10% of the Q measured, not ALWAYS 0.1!
-q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
-
-q_mat_month <- (q_month_mean + q_sd) * (1 + q_noise) # final MC of q, with sd variability + noise
-
-# compute flux
-
-flux_kg.s_mat_month <- pred_month*mes_mat_month*q_mat_month*1e-2*60*60*24*30 #pred_month * mes_mat : poc in mg/L; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 month. 
-
-index_years <- sapply(unique(isere_month$year), function(y){which(isere_month$year == y)}) # list of indices corresponding to each year
-
-annual_flux_ton.y_month <- sapply(index_years, function(idx){apply(flux_kg.s_mat_month[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
-
-annual_flux_month_ci <- apply(annual_flux_ton.y_month, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_month_mean <- colMeans(annual_flux_ton.y_month, na.rm = T) # mean annual flux per year. 1 vector
-
-annual_flux_month_sd <- apply(annual_flux_ton.y_month, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
- 
-
-annual_flux_month_df <- data.frame(year = unique(isere_month$year), 
-                        annual_flux_mean = annual_flux_month_mean, 
-                        annual_flux_variability = rep(NA, 19), # no physical sense in calculating "annual variability". Would be standard deviation of annual flux. But we prefer to show the prediction interval.
-                        annual_flux_ci_lower = annual_flux_month_ci[1,], 
-                        annual_flux_ci_upper = annual_flux_month_ci[3,])
-
-ggplot(annual_flux_month_df)+
-  geom_col(aes(x=year, y = annual_flux_month_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper), width = 0.2)+
-  theme_minimal()
-
-interannual_flux_ton.y_month <- rowMeans(annual_flux_ton.y_month, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_ci_month <- quantile(interannual_flux_ton.y_month, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean_month <- mean(interannual_flux_ton.y_month, na.rm = T) # mean interannual flux
-interannual_flux_variability_month <- sd(annual_flux_month_mean, na.rm = T) # standard deviation of interannual flux per year
-
-interannual_flux_month_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_month, 
-                                  annual_flux_variability = interannual_flux_variability_month,
-                        annual_flux_ci_lower = interannual_flux_ci_month[1], 
-                        annual_flux_ci_upper = interannual_flux_ci_month[3])
-
-total_flux_month_df <- rbind(annual_flux_month_df, interannual_flux_month_df)
-total_flux_month_df$group <- c(rep("annual", length(unique(isere_month$year))), "interannual")
-
-ggplot(total_flux_month_df)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux, from monthly mean values (kg/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
-```
-
-
-
-### Compare fluxes
-
-```{r compare-with-sd}
-
-compare_timesteps <- rbind(mutate(total_flux_df, "timestep" = "ref"), mutate(total_flux_day_df, "timestep" = "day"), mutate(total_flux_week_df, "timestep" = "week"), mutate(total_flux_month_df, "timestep" = "month"))
-
-pd <- position_dodge(width = 0.9)
-ggplot(compare_timesteps)+
-  geom_col(aes(x=year, y = annual_flux_mean, fill = timestep), position = pd)+
-  geom_errorbar(aes(x = year, ymin = annual_flux_ci_lower, ymax = annual_flux_ci_upper, col = timestep, group = timestep), width = 0.3, size = 0.8, position = pd)+
- # geom_errorbar(aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("ref" = "lightblue", "day" = "indianred", week = "darkolivegreen2", month = "burlywood2"))+
-  scale_color_manual(values = c("ref" = "darkblue", "day" = "darkred", week = "darkolivegreen", month = "burlywood4"), name = "")+
-   labs(x = "Year", y = "Flux, from dayly mean values (kg/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
-```
 
 
 
