@@ -780,9 +780,6 @@ abline(h = 0, col = "red")
 
 # Reference annual and interannual fluxes (time step: hour for 2006-2015, half hour for 2015-2024)
 
-## Annual flux based on gnls model + Monte Carlo
-
-
 ```{r annual-flux-reference, cache.lazy=F}
 # create matrix of q
 q_meas <- matrix(isere_for_gnls$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
@@ -812,15 +809,9 @@ annual_flux_df <- data.frame(year = unique(isere_for_gnls$year),
                         annual_flux_variability = annual_flux_sd, 
                         annual_flux_pi_lower = annual_flux_pi[1,], 
                         annual_flux_pi_upper = annual_flux_pi[3,])
-# Plot
-ggplot(annual_flux_df)+
-  geom_col(aes(x=year, y = annual_flux_mean), fill = "lightblue")+
-  geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
-  labs(title = "Mean annual flux with prediction interval", x = "", y = "Mean annual flux, ton")+
-  theme_minimal()
+
 ```
 
-## Interannual flux
 
 ```{r interannual-flux-reference}
 interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
@@ -845,6 +836,8 @@ ggplot()+
    labs(x = "Year", y = "Flux (kg/year)", fill = "")+
   theme_minimal()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
 
 # Time steps
