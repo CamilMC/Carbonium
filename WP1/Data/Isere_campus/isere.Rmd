@@ -11,7 +11,7 @@ date: "2025-06-30"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 ```{r libraries}
@@ -45,8 +45,7 @@ Les données dont on dispose pour la station de mesures d'Isère - campus sont:
 
 ## Charger les données POC
 
-```{r data}
-
+```{r prepare-data, eval = F}
 # Crues
 carbonisere <- read_xlsx("Bilan carbonisère.xlsx") 
 
@@ -82,16 +81,26 @@ isere$commondate <- as.Date(paste0("2000-", format(isere$Date,"%j")), "%Y-%j")
 
 isere$period <- as.numeric(-(isere$DateHeure - lead(isere$DateHeure))) # period in s
 
+write.csv(isere, "isere.csv") 
+```
+
+
+```{r load-data}
+isere <- read.csv("isere.csv")
+
+isere$DateHeure <- as.Date(isere$DateHeure)
+isere$commondate <- as.Date(isere$commondate)
+isere$mes_for_fit <- isere$cmes_g.L
+
 summary_isere <- merge(
 isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()),
 isere %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n()),
 by = "year", all = T) %>% 
   merge(isere %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_doc = n()), by = "year", all = T) %>%
   merge(isere %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>%
-  merge(isere %>% subset(!is.na(period) & !is.na(q_m3.s) & !is.na(cmes_g.L)) %>% group_by(year) %>% summarise(total_period_j_nona = round(sum(period)/(24*60*60))), by = "year", all = T)
+  merge(isere %>% subset(!is.na(period) & !is.na(q_m3.s) & !is.na(cmes_g.L)) %>% group_by(year) %>% summarise(total_period_j_nona = round(sum(period)/(24*60*60))), by = "year", all = T) %>%
+  merge(isere %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(mean_period_minute= mean(period/60, na.rm = T)), by = "year", all = T)
 
-isere$mes_for_fit <- isere$cmes_g.L
-  
 summary_isere %>% knitr::kable(caption = "Nombre d'observations de DOC, POC, CMES et débit par an") %>% kableExtra::kable_styling()
 
 # poc_isere: only rows with defined poc_percent to fit model MES~POC
@@ -236,6 +245,7 @@ ggplot(poc_isere, aes( x= mes_g.L)) +
 Visualisation des données de la campagne Carbonisère: DOC et POC mesurés sur les années 2006-2007-2009. 
 
 ```{r view-fluxes}
+carbonisere <- read_xlsx("Bilan carbonisère.xlsx") 
 
 ggplot(carbonisere)+
   geom_point(aes(x=as.Date(DateHeure), y = debit_m3.s), col = "cadetblue4")+
@@ -282,10 +292,7 @@ ggplot(carbonisere)+
 
 Objectif: construire la relation MES-POC pour pouvoir reconstruire la chronique de POC à partir de la chronique de MES. Cette relation prend la forme de $POC\% = a*MES^b + c$.
 
-```{r uncertainties}
-q_u <- 0.05 # vérifier chiffre Isère
-mes_u <- 0.05 # au pif
-```
+
 
 
 ## Test : should we fit with distinct events ?
@@ -401,22 +408,27 @@ aspt_value_sd <- poc_isere[order(poc_isere$cmes_g.L, decreasing = T),] %>% pull(
 
 ```
 
+We extend only for years with sampling frequency = 30 min (from 2015). We also exclude 2018 and 2024 that have large missing Q periods.
+
 ```{r constant-numbers}
   
 # prepare dataframe
 with(isere, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
 
-isere_pwl <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+isere_pwl <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit)) %>% filter(year %in% c(2015, 2016, 2017, 2019, 2020, 2021, 2022, 2023))
 isere_pwl$aspt <- aspt_value # from nls fitting
-  
   
 n_boot <- 1000
 n_obs <- nrow(poc_isere)
 nrow_isere <- nrow(isere_pwl)
 ```
 
+```{r uncertainties}
+q_u <- 0.05 # vérifier chiffre Isère
+mes_u <- 0.05 # au pif
+```
 
-### NLS
+### NLS OR GNLS?
 
 #### Fit NLS model 
 
@@ -515,72 +527,6 @@ ggplot(poc_isere_wboot_nls, aes(x=poc_percent))+
   theme_minimal()
 ```
 
-#### NLS extention to Isère
-
-```{r pred-isere-nls, cache.lazy = F}
-isere_for_nls <- isere_pwl # new df to store results
-nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
-
-# predict POC pour mes > 0
-isere_for_nls$poc_fitted <- predict(pocfit, newdata = isere_for_nls) 
-
-# MES matrix
-mes_mat_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
-mes_meas <- matrix(isere_for_nls$mes_for_fit, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
-mes_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_isere) # 
-mes_mat_nls <- mes_meas * (1 + mes_noise) # final value of q, with noise
-
-# Prediction matrix, no noise
-mu_nls <- f(mes_mat_nls, coefs_wboot_nls[,"a"], coefs_wboot_nls[,"b"], coefs_wboot_nls[,"aspt"])
-
-# Prediction matrix, with noise
-noise_mat_nls <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = sigma_nls), nrow = nrow_boot, ncol = nrow_isere)
-
-pred_nls <- mu_nls + noise_mat_nls
-
-# Prediction interval 
-pi <- t(apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T))
-colnames(pi) <- c("lower", "upper")
-
-# Mean bootstrap value
-boot_pred_nls <- colMeans(pred_nls, na.rm = T)
-
-# insert in isere_for_nls
-isere_for_nls <- isere_for_nls %>% mutate(poc_boot_pred = boot_pred_nls,
-                          poc_pred_lower = pi[,1],
-                          poc_pred_upper = pi[,2])
-
-# variances 
-isere_for_nls$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
-isere_for_nls$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
-
-
-# plot
-
-ggplot(isere_for_nls, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray60")+
-  geom_line(aes(y = poc_pred_upper), col = "gray60")+
-  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
-  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
-  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
-  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
-  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
-  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
-  theme(legend.position = "bottom")
-
-# Plot variance
-
-ggplot(isere_for_nls, aes(x = mes_for_fit))+
-  geom_line(aes(y = poc_var_mean, col = "model variance"))+
-  geom_line(aes(y = poc_var_tot, col = "total variance (includes noise)"))+
-  scale_color_manual(values = c("lightblue", "darkblue"))+
-  scale_x_continuous(trans = "log", breaks = c(0.01,0.1,1,10,50))+
-  labs(x = "MES, g/L", y = "variance")+
-  theme_minimal()
-
-```
 
 
 ### GNLS
@@ -684,15 +630,30 @@ ggplot(poc_isere_boot_gnls, aes(x=poc_percent))+
   theme_minimal()
 ```
 
+### Comparison NLS / GNLS 
 
-#### GNLS extension to Isere
+```{r comparaison-nls-gnls}
+
+par(mfrow = c(1, 2))
+
+# nls : les résidus montrent un pattern en éventail
+plot(fitted(pocfit), residuals(pocfit),
+     main = "Résidus nls (non pondérés)",
+     xlab = "Fitted", ylab = "Résidus")
+abline(h = 0, col = "red")
+
+# gnls : les résidus normalisés sont homoscédastiques
+plot(fitted(pocfitg), residuals(pocfitg, type = "normalized"),
+     main = "Résidus gnls (normalisés)",
+     xlab = "Fitted", ylab = "Résidus normalisés")
+abline(h = 0, col = "red")
+
+```
+
+### GNLS extension to Isere
 
 ```{r pred-isere-gnls, cache.lazy = F}
-
-# prepare df 
-with(isere, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 144 -> removed from df because model unstable with zero (when 0^(-b))
-
-isere_for_gnls <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+isere_for_gnls <- isere_pwl
 isere_for_gnls$aspt <- aspt_value
 
 nrow_boot <- nrow(coefs_boot) # number of bootstrap for the GNLS coefficients
@@ -700,8 +661,12 @@ nrow_boot <- nrow(coefs_boot) # number of bootstrap for the GNLS coefficients
 # predict POC pour mes > 0
 isere_for_gnls$poc_fitted <- predict(pocfitg, newdata = isere_for_gnls, na.action = na.pass) 
 
-# get mes_mat from earlier
-mes_mat_gnls <- mes_mat_nls
+# make mes_mat from earlier
+mes_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+mes_meas <- matrix(isere_for_gnls$mes_for_fit, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+mes_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_isere) # 
+mes_mat_gnls <- mes_meas * (1 + mes_noise) # final value of q, with noise
+
 
 # Prediction matrix, no noise
 mu_gnls <- f(mes_mat_gnls, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
@@ -758,47 +723,24 @@ ggplot(isere_for_gnls, aes(x = mes_for_fit))+
 ```
 
 
-### Comparison NLS / GNLS 
+# Reference annual and interannual fluxes (time step: half hour)
 
-```{r comparaison-nls-gnls}
-
-par(mfrow = c(1, 2))
-
-# nls : les résidus montrent un pattern en éventail
-plot(fitted(pocfit), residuals(pocfit),
-     main = "Résidus nls (non pondérés)",
-     xlab = "Fitted", ylab = "Résidus")
-abline(h = 0, col = "red")
-
-# gnls : les résidus normalisés sont homoscédastiques
-plot(fitted(pocfitg), residuals(pocfitg, type = "normalized"),
-     main = "Résidus gnls (normalisés)",
-     xlab = "Fitted", ylab = "Résidus normalisés")
-abline(h = 0, col = "red")
-
-```
-
-# Reference annual and interannual fluxes (time step: hour for 2006-2015, half hour for 2015-2024)
-
-```{r annual-flux-reference, cache.lazy=F}
+```{r annual-flux-reference, cache.lazy=F, cache = F}
 # create matrix of q
 q_meas <- matrix(isere_for_gnls$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
 q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
-
-# matrix of period (no uncertainty,tge same repeated nrow_boot times)
-isere_for_gnls$period <- as.numeric(-(isere_for_gnls$DateHeure - lead(isere_for_gnls$DateHeure))) # period in s, updated for remaining lines
-period_mat <- matrix(isere_for_gnls$period, nrow = nrow_boot, ncol = nrow_isere, byrow = T)
-
 # Instant flux matrix
-flux_kg.s_mat <- pred_gnls*mes_mat_gnls*1e-6*q_mat*1e-2*period_mat #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period. 
+flux_ton.s_mat <- pred_gnls*1e-2*mes_mat_gnls*1e-6*q_mat*1e3 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s --> flux en ton / s
+flux_ton_mat <- pred_gnls*1e-2*mes_mat_gnls*1e-6*q_mat*1e3*60*30 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. Period measured: 30 min. 
+
 
 # Get index for the columns corresponding to the same year
-index_years <- sapply(unique(isere_for_gnls$year), function(y){which(isere_for_gnls$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_for_gnls$year), function(y){which(isere_for_gnls$year == y)}) # list of indices corresponding to each year
 
 # Annual flux
-annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_kg.s_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y <- lapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
 annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
@@ -833,7 +775,7 @@ ggplot()+
   geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
   theme_minimal()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
@@ -843,7 +785,7 @@ knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_sty
 # Time steps
 
 ```{r common-data}
-isere_time <- isere %>% filter(mes_for_fit != 0 & !is.na(mes_for_fit))
+isere_time <- isere_pwl
 
 mes_u <- 0.05
 q_u <- 0.05
@@ -856,6 +798,152 @@ plan(multisession, workers = 6)
 
 
 Random CMES over timer period: mean Q, then GNLS. 
+
+## 1-Hour
+
+```{r pred-isere-gnls-hour, cache.lazy = F}
+# prepare df
+isere_group_hour <- isere_time %>% 
+  mutate(day = format(as.Date(DateHeure), "%Y-%m-%d"), 
+         year = year(DateHeure),
+         hour =  hour(DateHeure),
+         DateHeure = NULL) %>% group_by(hour,day,year) # group isere_time by hour
+nrow_hour <- n_groups(isere_group_hour)
+
+# get mean q
+q_hour <- isere_group_hour %>% select(c("hour", "q_m3.s")) %>% summarize_all(list("q_mean" = mean, "q_sd" = sd)) %>% ungroup() # mean of Q for each hour2
+
+
+# creates matrix for MES
+isere_mes_hour <- isere_group_hour %>% select(c("hour", "mes_for_fit")) %>% summarize("list_mes" = list(mes_for_fit)) %>% ungroup() # creates a list of mes for each hour2
+
+list_mes_hour <- isere_mes_hour$list_mes
+mes_hour_random <- future_replicate(nrow_boot, vapply(list_mes_hour, 
+                                                function(x) sample(x,1), numeric(1)),
+                              future.seed = T) %>% 
+                    t() # matrix of mes: one random sample per hour2, replicated 1000 times
+
+
+mes_hour_noise <- matrix(rnorm(nrow_boot*nrow_hour, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_hour) 
+mes_mat_hour <- mes_hour_random * (1 + mes_hour_noise) # final value of mes, with noise
+
+mes_mean <- colMeans(mes_mat_hour) # mean mes: that would be the mean of the 1000-times randomly choosen MES+noise. tiré vers le haut par les fortes valeurs, alors qu'il y a bcp de zéros
+mes_median <- apply(mes_mat_hour, 2, median)
+
+# Prediction matrix
+mu_hour <- f(mes_mat_hour, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+
+# Prediction matrix, with noise
+sigma_mat_hour <- sigma_gnls * abs(mu_hour)^theta
+
+noise_mat_hour <- matrix(rnorm(nrow_boot*nrow_hour, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_hour)
+noise_mat_hour <- noise_mat_hour*sigma_mat_hour
+
+pred_hour <- mu_hour + noise_mat_hour
+
+zero_mes_mat <- which(mes_hour_random == 0)
+pred_hour[zero_mes_mat] <- 0
+
+## computes prediction interval 
+pi_hour <- t(apply(pred_hour, 2, quantile, probs = c(0.025, 0.975), na.rm = T))
+
+colnames(pi_hour) <- c("lower", "upper")
+
+boot_pred_hour <- colMeans(pred_hour, na.rm = T)
+
+
+
+## insert in isere_hour
+isere_hour <- q_hour %>% mutate(
+                          mes_for_fit = mes_mean, # keep name for "fitting model"predict" function
+                          poc_boot_pred = boot_pred_hour,
+                          poc_pred_lower = pi_hour[,"lower"],
+                          poc_pred_upper = pi_hour[,"upper"],
+                          aspt = aspt_value)
+
+isere_hour$poc_fitted <- predict(pocfitg, isere_hour)
+
+# variance 
+isere_hour$poc_var_mean <- apply(mu_hour, 2, var) # variance of fit parameters + MES 
+isere_hour$poc_var_tot <- apply(pred_hour, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_hour, aes(x = mes_for_fit))+
+  #geom_line(aes(y = poc_pred_lower), col = "gray70")+
+  #geom_line(aes(y = poc_pred_upper), col = "gray70")+
+  geom_ribbon(aes(ymin = poc_pred_lower, ymax = poc_pred_upper), fill = "gray90", alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every hour", subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+```{r annual-flux-hour, cache.lazy= F}
+
+# creates matrix for Q
+
+q_hour_mean <-  matrix(q_hour$q_mean, nrow = nrow_boot, ncol = nrow_hour, byrow = T)
+q_noise <- matrix(rnorm(nrow_boot*nrow_hour, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_hour) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_hour <- q_hour_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCLUDED: will not always be available
+
+
+# compute flux
+flux_ton_mat_hour <- pred_hour*1e-2*mes_mat_hour*1e-6*q_mat_hour*1e3*60*60*1 #pred_hour * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour. 
+
+# Get index for columns by year
+index_years <- sapply(unique(isere_hour$year), function(y){which(isere_hour$year == y)}) # list of indices corresponding to each year
+
+# annual flux
+annual_flux_ton.y_hour <- lapply(index_years, function(idx){apply(flux_ton_mat_hour[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+annual_flux_hour_pi <- apply(annual_flux_ton.y_hour, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_hour_mean <- colMeans(annual_flux_ton.y_hour, na.rm = T) # mean annual flux per year. 1 vector
+
+annual_flux_hour_sd <- apply(annual_flux_ton.y_hour, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+ 
+
+annual_flux_hour_df <- data.frame(year = unique(isere_hour$year), 
+                        annual_flux_mean = annual_flux_hour_mean, 
+                        annual_flux_variability = annual_flux_hour_sd, 
+                        annual_flux_pi_lower = annual_flux_hour_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_hour_pi[3,])
+
+interannual_flux_ton.y_hour <- rowMeans(annual_flux_ton.y_hour, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi_hour <- quantile(interannual_flux_ton.y_hour, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean_hour <- mean(interannual_flux_ton.y_hour, na.rm = T) # mean interannual flux
+interannual_flux_variability_hour <- sd(annual_flux_hour_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_hour_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean_hour, 
+                                  annual_flux_variability = interannual_flux_variability_hour,
+                        annual_flux_pi_lower = interannual_flux_pi_hour[1], 
+                        annual_flux_pi_upper = interannual_flux_pi_hour[3])
+
+total_flux_hour_df <- rbind(annual_flux_hour_df, interannual_flux_hour_df)
+total_flux_hour_df$group <- c(rep("annual", length(unique(isere_hour$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_hour_df, 
+           aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_errorbar(data = total_flux_hour_df, 
+                aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"),
+                width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_hour_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, 
+                    ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux, from 2-hourly mean values (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
 
 ## 2-Hour
 
@@ -951,13 +1039,13 @@ q_mat_hour2 <- q_hour2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT 
 
 
 # compute flux
-flux_kg.s_mat_hour2 <- pred_hour2*mes_mat_hour2*1e-6*q_mat_hour2*1e-2*60*60*2 #pred_hour2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour2. 
+flux_ton_mat_hour2 <- pred_hour2*1e-2*mes_mat_hour2*1e-6*q_mat_hour2*1e3*60*60*2 #pred_hour2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour2. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_hour2$year), function(y){which(isere_hour2$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_hour2$year), function(y){which(isere_hour2$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_hour2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_hour2 <- lapply(index_years, function(idx){apply(flux_ton_mat_hour2[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_hour2_pi <- apply(annual_flux_ton.y_hour2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_hour2_mean <- colMeans(annual_flux_ton.y_hour2, na.rm = T) # mean annual flux per year. 1 vector
@@ -1097,13 +1185,13 @@ q_mat_hour4 <- q_hour4_mean * (1 + q_noise) # final MC of q, with noise. SD NOT 
 
 
 # compute flux
-flux_kg.s_mat_hour4 <- pred_hour4*mes_mat_hour4*1e-6*q_mat_hour4*1e-2*60*60*4 #pred_hour4 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour4. 
+flux_ton_mat_hour4 <- pred_hour4*1e-2*mes_mat_hour4*1e-6*q_mat_hour4*1e3*60*60*4 #pred_hour4 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour4. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_hour4$year), function(y){which(isere_hour4$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_hour4$year), function(y){which(isere_hour4$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_hour4 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour4[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_hour4 <- lapply(index_years, function(idx){apply(flux_ton_mat_hour4[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_hour4_pi <- apply(annual_flux_ton.y_hour4, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_hour4_mean <- colMeans(annual_flux_ton.y_hour4, na.rm = T) # mean annual flux per year. 1 vector
@@ -1243,13 +1331,13 @@ q_mat_hour8 <- q_hour8_mean * (1 + q_noise) # final MC of q, with noise. SD NOT 
 
 
 # compute flux
-flux_kg.s_mat_hour8 <- pred_hour8*mes_mat_hour8*1e-6*q_mat_hour8*1e-2*60*60*8 #pred_hour8 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour8. 
+flux_ton_mat_hour8 <- pred_hour8*1e-2*mes_mat_hour8*1e-6*q_mat_hour8*1e3*60*60*8 #pred_hour8 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 hour8. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_hour8$year), function(y){which(isere_hour8$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_hour8$year), function(y){which(isere_hour8$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_hour8 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_hour8[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_hour8 <- lapply(index_years, function(idx){apply(flux_ton_mat_hour8[,idx], 1, sum, na.rm = T)})%>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_hour8_pi <- apply(annual_flux_ton.y_hour8, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_hour8_mean <- colMeans(annual_flux_ton.y_hour8, na.rm = T) # mean annual flux per year. 1 vector
@@ -1379,13 +1467,13 @@ q_mat_day <- q_day_mean * (1 + q_noise) # final MC of q, with noise. SD NOT INCL
 
 
 # compute flux
-flux_kg.s_mat_day <- pred_day*mes_mat_day*1e-6*q_mat_day*1e-2*60*60*24 #pred_day * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day. 
+flux_ton_mat_day <- pred_day*1e-2*mes_mat_day*1e-6*q_mat_day*1e3*60*60*24 #pred_day * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_day$year), function(y){which(isere_day$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_day$year), function(y){which(isere_day$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_day <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_day <- lapply(index_years, function(idx){apply(flux_ton_mat_day[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_day_pi <- apply(annual_flux_ton.y_day, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_day_mean <- colMeans(annual_flux_ton.y_day, na.rm = T) # mean annual flux per year. 1 vector
@@ -1507,13 +1595,13 @@ q_mat_day2 <- q_day2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT IN
 
 
 # compute flux
-flux_kg.s_mat_day2 <- pred_day2*mes_mat_day2*1e-6*q_mat_day2*1e-2*60*60*24*2 #pred_day2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day2. 
+flux_ton_mat_day2 <- pred_day2*1e-2*mes_mat_day2*1e-6*q_mat_day2*1e3*60*60*24*2 #pred_day2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day2. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_day2$year), function(y){which(isere_day2$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_day2$year), function(y){which(isere_day2$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_day2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_day2 <- lapply(index_years, function(idx){apply(flux_ton_mat_day2[,idx], 1, sum, na.rm = T)})%>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_day2_pi <- apply(annual_flux_ton.y_day2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_day2_mean <- colMeans(annual_flux_ton.y_day2, na.rm = T) # mean annual flux per year. 1 vector
@@ -1641,13 +1729,13 @@ q_mat_day4 <- q_day4_mean * (1 + q_noise) # final MC of q, with noise. SD NOT IN
 
 
 # compute flux
-flux_kg.s_mat_day4 <- pred_day4*mes_mat_day4*1e-6*q_mat_day4*1e-2*60*60*24*4 #pred_day4 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day4. 
+flux_ton_mat_day4 <- pred_day4*1e-2*mes_mat_day4*1e-6*q_mat_day4*1e3*60*60*24*4 #pred_day4 * mes_mat : poc in g/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 day4. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_day4$year), function(y){which(isere_day4$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_day4$year), function(y){which(isere_day4$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_day4 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_day4[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_day4 <- lapply(index_years, function(idx){apply(flux_ton_mat_day4[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_day4_pi <- apply(annual_flux_ton.y_day4, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_day4_mean <- colMeans(annual_flux_ton.y_day4, na.rm = T) # mean annual flux per year. 1 vector
@@ -1771,13 +1859,13 @@ q_mat_week <- q_week_mean * (1 + q_noise) # final MC of q, with noise. SD NOT IN
 
 
 # compute flux
-flux_kg.s_mat_week <- pred_week*mes_mat_week*1e-6*q_mat_week*1e-2*60*60*24*7 #pred_week * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week. 
+flux_ton_mat_week <- pred_week*1e-2*mes_mat_week*1e-6*q_mat_week*1e3*60*60*24*7 #pred_week * mes_mat : poc in g/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_week$year), function(y){which(isere_week$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_week$year), function(y){which(isere_week$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_week <- sapply(index_years, function(idx){apply(flux_kg.s_mat_week[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_week <- lapply(index_years, function(idx){apply(flux_ton_mat_week[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_week_pi <- apply(annual_flux_ton.y_week, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_week_mean <- colMeans(annual_flux_ton.y_week, na.rm = T) # mean annual flux per year. 1 vector
@@ -1899,13 +1987,13 @@ q_mat_week2 <- q_week2_mean * (1 + q_noise) # final MC of q, with noise. SD NOT 
 
 
 # compute flux
-flux_kg.s_mat_week2 <- pred_week2*mes_mat_week2*1e-6*q_mat_week2*1e-2*60*60*24*14 #pred_week2 * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week2. 
+flux_ton_mat_week2 <- pred_week2*1e-2*mes_mat_week2*1e-6*q_mat_week2*1e3*60*60*24*14 #pred_week2 * mes_mat : poc in g/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 week2. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_week2$year), function(y){which(isere_week2$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_week2$year), function(y){which(isere_week2$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_week2 <- sapply(index_years, function(idx){apply(flux_kg.s_mat_week2[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_week2 <- lapply(index_years, function(idx){apply(flux_ton_mat_week2[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_week2_pi <- apply(annual_flux_ton.y_week2, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_week2_mean <- colMeans(annual_flux_ton.y_week2, na.rm = T) # mean annual flux per year. 1 vector
@@ -2027,13 +2115,13 @@ q_mat_month <- q_month_mean * (1 + q_noise) # final MC of q, with noise. SD NOT 
 
 
 # compute flux
-flux_kg.s_mat_month <- pred_month*mes_mat_month*1e-6*q_mat_month*1e-2*60*60*24*30 #pred_month * mes_mat : poc in mg/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 month. 
+flux_ton_mat_month <- pred_month*1e-2*mes_mat_month*1e-6*q_mat_month*1e3*60*60*24*30.5 #pred_month * mes_mat : poc in g/L converted to ton; q_mat converted from m3/s to L/s. Period : nb of seconds in 1 month. 
 
 # Get index for columns by year
-index_years <- sapply(unique(isere_month$year), function(y){which(isere_month$year == y)}) # list of indices corresponding to each year
+index_years <- lapply(unique(isere_month$year), function(y){which(isere_month$year == y)}) # list of indices corresponding to each year
 
 # annual flux
-annual_flux_ton.y_month <- sapply(index_years, function(idx){apply(flux_kg.s_mat_month[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.y_month <- lapply(index_years, function(idx){apply(flux_ton_mat_month[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 
 annual_flux_month_pi <- apply(annual_flux_ton.y_month, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_month_mean <- colMeans(annual_flux_ton.y_month, na.rm = T) # mean annual flux per year. 1 vector
@@ -2130,5 +2218,885 @@ error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling(
 
 
 
+
+
+
+
+# Dégradation de la mesure - % mesures and weighting
+
+Randomly selects 10, 20... 90% of the data (100 times), weigths them by year, and computes interannual flux. 
+
+
+```{r common-data-weighted}
+isere_w <- isere_for_gnls
+
+n_ise <- nrow(isere_w)
+
+mes_u <- 0.05
+q_u <- 0.05
+
+set.seed(503)
+
+unique_years <- unique(isere_w$year)
+nyears <- length(unique_years)
+
+n_rep <- 100
+```
+
+## Test without prediction intervals for 1 year (2020, close to interannual flux)
+
+```{r make-1000-datasets, cache = T}
+weighted_fluxes <- data.frame("0.1" = NA, "0.2" = NA, "0.3" = NA, "0.4" = NA, "0.5" = NA, "0.6" = NA, "0.7" = NA, "0.8" = NA, "0.9" = NA)
+
+isere_2020 <- filter(isere_w, year == 2020)
+
+for(i in 1:10000){
+iflux <- vector("numeric",10)
+for(n in 1:9){
+  set.seed(i)
+  df <- sample_frac(isere_2020, n/10)
+  weighted_fluxn <- sum(with(df, poc_boot_pred* q_m3.s * 1e3), na.rm = T)*1e-9 / with(df, sum(q_m3.s, na.rm = T)) * with(df, mean(q_m3.s, na.rm = T))  * 60 * 60 * 24 * 365
+  iflux[n] <- weighted_fluxn
+  #weighted_fluxes[i,paste("X",n,sep = "")] <<- weighted_fluxn
+}
+weighted_fluxes <- rbind(weighted_fluxes, iflux)
+}
+
+weighted_fluxes <- weighted_fluxes[-1,]
+
+```
+
+```{r annual-flux-ref}
+annual_flux_ref <- with(isere_2020, poc_boot_pred *1e-9 * q_m3.s * 1e3 * 30 * 60) %>% sum(na.rm = T) #DOC in mg/L, q converted from m3/s to L/s, so we get flux in mg/s, multiplied by the number of s in one period (in hour converted to second) then summed and converted to ton
+
+```
+
+
+```{r compare-with-ref-value}
+ggplot(weighted_fluxes)+geom_boxplot(aes(x = "0.1", y = X0.1))+
+  geom_boxplot(aes(x = "0.2", y = X0.2))+
+  geom_boxplot(aes(x = "0.3", y = X0.3))+
+  geom_boxplot(aes(x = "0.4", y = X0.4))+
+  geom_boxplot(aes(x = "0.5", y = X0.5))+
+  geom_boxplot(aes(x = "0.6", y = X0.6))+
+  geom_boxplot(aes(x = "0.7", y = X0.7))+
+  geom_boxplot(aes(x = "0.8", y = X0.8))+
+  geom_boxplot(aes(x = "0.9", y = X0.9))+
+  labs(x="Proportion of dataset", y = "Estimated annual flux, kg")+
+  geom_abline(slope = 0, intercept = annual_flux_ref, col = 
+  "pink")+
+  theme_minimal()
+```
+
+## 10 %
+
+```{r percent10}
+waf_10 <- list()
+
+for(i in 1:n_rep){
+  idx_10 <- sample(n_ise, n_ise/10)
+  ftsm_10 <- flux_ton.s_mat[,idx_10]
+  q_10 <- q_mat[, idx_10]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_10] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_10 <- lapply(index_years, function(idx){apply(ftsm_10[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_10 <- lapply(index_years, function(idx){apply(q_10[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_10 <- lapply(index_years, function(idx){apply(q_10[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_10 <- sum_instant_flux_ton.y_10 / sum_instant_q_10 * mean_instant_q_10 *60*60*24*365 
+  
+  waf_10[[i]] <- weighted_annual_flux_ton.y_10
+}
+
+```
+
+```{r 10-percent-mean}
+waf_10_mean <- c()
+waf_10_upr <- c()
+waf_10_lwr <- c()
+
+for(i in 1:nyears){
+  waf_10_mean[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_10_upr[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_10_lwr[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_10 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_10, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_10[i,] <- mci
+}
+
+
+wiaf_10_rowmean <- rowMeans(wiaf_10)
+wiaf_10_mean <- mean(wiaf_10_rowmean)
+wiaf_10_sd <- sd(wiaf_10_rowmean)
+wiaf_10_upr <- quantile(wiaf_10_rowmean) %>% quantile(0.975)
+wiaf_10_lwr <- quantile(wiaf_10_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-10, eval = T}
+# Merge in df
+weighted_total_flux_df_10 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_10_mean, wiaf_10_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_10_sd), 
+                        annual_flux_pi_lower = c(waf_10_lwr, wiaf_10_lwr), 
+                        annual_flux_pi_upper = c(waf_10_upr, wiaf_10_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_10, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_10, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_10, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+## 20 %
+
+```{r percent20}
+waf_20 <- list()
+
+for(i in 1:n_rep){
+  idx_20 <- sample(n_ise, n_ise*0.2)
+  ftsm_20 <- flux_ton.s_mat[,idx_20]
+  q_20 <- q_mat[, idx_20]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_20] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_20 <- lapply(index_years, function(idx){apply(ftsm_20[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_20 <- lapply(index_years, function(idx){apply(q_20[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_20 <- lapply(index_years, function(idx){apply(q_20[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_20 <- sum_instant_flux_ton.y_20 / sum_instant_q_20 * mean_instant_q_20 *60*60*24*365 # time step of observations is 10 min: flux by 10 min is converted in flux per second, then per year
+  
+  waf_20[[i]] <- weighted_annual_flux_ton.y_20
+}
+
+```
+
+```{r 20-percent-mean}
+waf_20_mean <- c()
+waf_20_upr <- c()
+waf_20_lwr <- c()
+
+for(i in 1:nyears){
+  waf_20_mean[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_20_upr[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_20_lwr[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_20 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_20, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_20[i,] <- mci
+}
+
+
+wiaf_20_rowmean <- rowMeans(wiaf_20)
+wiaf_20_mean <- mean(wiaf_20_rowmean)
+wiaf_20_sd <- sd(wiaf_20_rowmean)
+wiaf_20_upr <- quantile(wiaf_20_rowmean) %>% quantile(0.975)
+wiaf_20_lwr <- quantile(wiaf_20_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-20, eval = T}
+# Merge in df
+weighted_total_flux_df_20 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_20_mean, wiaf_20_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_20_sd), 
+                        annual_flux_pi_lower = c(waf_20_lwr, wiaf_20_lwr), 
+                        annual_flux_pi_upper = c(waf_20_upr, wiaf_20_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_20, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_20, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_20, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+## 30 %
+
+```{r percent30}
+set.seed(403)
+
+waf_30 <- list()
+
+for(i in 1:n_rep){
+  idx_30 <- sample(n_ise, n_ise*0.30)
+  ftsm_30 <- flux_ton.s_mat[,idx_30]
+  q_30 <- q_mat[, idx_30]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_30] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_30 <- lapply(index_years, function(idx){apply(ftsm_30[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_30 <- lapply(index_years, function(idx){apply(q_30[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_30 <- lapply(index_years, function(idx){apply(q_30[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_30 <- sum_instant_flux_ton.y_30 / sum_instant_q_30 * mean_instant_q_30 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_30[[i]] <- weighted_annual_flux_ton.y_30
+}
+
+```
+
+```{r 30-percent-mean}
+waf_30_mean <- c()
+waf_30_upr <- c()
+waf_30_lwr <- c()
+
+for(i in 1:nyears){
+  waf_30_mean[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_30_upr[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_30_lwr[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_30 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_30, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_30[i,] <- mci
+}
+
+
+wiaf_30_rowmean <- rowMeans(wiaf_30)
+wiaf_30_mean <- mean(wiaf_30_rowmean)
+wiaf_30_sd <- sd(wiaf_30_rowmean)
+wiaf_30_upr <- quantile(wiaf_30_rowmean) %>% quantile(0.975)
+wiaf_30_lwr <- quantile(wiaf_30_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-30, eval = T}
+# Merge in df
+weighted_total_flux_df_30 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_30_mean, wiaf_30_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_30_sd), 
+                        annual_flux_pi_lower = c(waf_30_lwr, wiaf_30_lwr), 
+                        annual_flux_pi_upper = c(waf_30_upr, wiaf_30_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_30, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_30, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_30, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+
+
+
+
+## 40 %
+
+```{r percent40}
+set.seed(403)
+
+waf_40 <- list()
+
+for(i in 1:n_rep){
+  idx_40 <- sample(n_ise, n_ise*0.40)
+  ftsm_40 <- flux_ton.s_mat[,idx_40]
+  q_40 <- q_mat[, idx_40]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_40] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_40 <- lapply(index_years, function(idx){apply(ftsm_40[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_40 <- lapply(index_years, function(idx){apply(q_40[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_40 <- lapply(index_years, function(idx){apply(q_40[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_40 <- sum_instant_flux_ton.y_40 / sum_instant_q_40 * mean_instant_q_40 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_40[[i]] <- weighted_annual_flux_ton.y_40
+}
+
+```
+
+```{r 40-percent-mean}
+waf_40_mean <- c()
+waf_40_upr <- c()
+waf_40_lwr <- c()
+
+for(i in 1:nyears){
+  waf_40_mean[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_40_upr[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_40_lwr[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_40 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_40, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_40[i,] <- mci
+}
+
+
+wiaf_40_rowmean <- rowMeans(wiaf_40)
+wiaf_40_mean <- mean(wiaf_40_rowmean)
+wiaf_40_sd <- sd(wiaf_40_rowmean)
+wiaf_40_upr <- quantile(wiaf_40_rowmean) %>% quantile(0.975)
+wiaf_40_lwr <- quantile(wiaf_40_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-40, eval = T}
+# Merge in df
+weighted_total_flux_df_40 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_40_mean, wiaf_40_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_40_sd), 
+                        annual_flux_pi_lower = c(waf_40_lwr, wiaf_40_lwr), 
+                        annual_flux_pi_upper = c(waf_40_upr, wiaf_40_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_40, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_40, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_40, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+## 50 %
+
+```{r percent50}
+set.seed(403)
+
+waf_50 <- list()
+
+for(i in 1:n_rep){
+  idx_50 <- sample(n_ise, n_ise*0.50)
+  ftsm_50 <- flux_ton.s_mat[,idx_50]
+  q_50 <- q_mat[, idx_50]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_50] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_50 <- lapply(index_years, function(idx){apply(ftsm_50[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_50 <- lapply(index_years, function(idx){apply(q_50[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_50 <- lapply(index_years, function(idx){apply(q_50[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_50 <- sum_instant_flux_ton.y_50 / sum_instant_q_50 * mean_instant_q_50 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_50[[i]] <- weighted_annual_flux_ton.y_50
+}
+
+```
+
+```{r 50-percent-mean}
+waf_50_mean <- c()
+waf_50_upr <- c()
+waf_50_lwr <- c()
+
+for(i in 1:nyears){
+  waf_50_mean[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_50_upr[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_50_lwr[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_50 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_50, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_50[i,] <- mci
+}
+
+
+wiaf_50_rowmean <- rowMeans(wiaf_50)
+wiaf_50_mean <- mean(wiaf_50_rowmean)
+wiaf_50_sd <- sd(wiaf_50_rowmean)
+wiaf_50_upr <- quantile(wiaf_50_rowmean) %>% quantile(0.975)
+wiaf_50_lwr <- quantile(wiaf_50_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-50, eval = T}
+# Merge in df
+weighted_total_flux_df_50 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_50_mean, wiaf_50_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_50_sd), 
+                        annual_flux_pi_lower = c(waf_50_lwr, wiaf_50_lwr), 
+                        annual_flux_pi_upper = c(waf_50_upr, wiaf_50_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_50, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_50, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_50, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+## 60 %
+
+```{r percent60}
+set.seed(403)
+
+waf_60 <- list()
+
+for(i in 1:n_rep){
+  idx_60 <- sample(n_ise, n_ise*0.60)
+  ftsm_60 <- flux_ton.s_mat[,idx_60]
+  q_60 <- q_mat[, idx_60]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_60] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_60 <- lapply(index_years, function(idx){apply(ftsm_60[,idx], 1, sum, na.rm = T)})%>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_60 <- lapply(index_years, function(idx){apply(q_60[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_60 <- lapply(index_years, function(idx){apply(q_60[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_60 <- sum_instant_flux_ton.y_60 / sum_instant_q_60 * mean_instant_q_60 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_60[[i]] <- weighted_annual_flux_ton.y_60
+}
+
+```
+
+```{r 60-percent-mean}
+waf_60_mean <- c()
+waf_60_upr <- c()
+waf_60_lwr <- c()
+
+for(i in 1:nyears){
+  waf_60_mean[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_60_upr[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_60_lwr[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_60 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_60, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_60[i,] <- mci
+}
+
+
+wiaf_60_rowmean <- rowMeans(wiaf_60)
+wiaf_60_mean <- mean(wiaf_60_rowmean)
+wiaf_60_sd <- sd(wiaf_60_rowmean)
+wiaf_60_upr <- quantile(wiaf_60_rowmean) %>% quantile(0.975)
+wiaf_60_lwr <- quantile(wiaf_60_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-60, eval = T}
+# Merge in df
+weighted_total_flux_df_60 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_60_mean, wiaf_60_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_60_sd), 
+                        annual_flux_pi_lower = c(waf_60_lwr, wiaf_60_lwr), 
+                        annual_flux_pi_upper = c(waf_60_upr, wiaf_60_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_60, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_60, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_60, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+## 70 %
+
+```{r percent70}
+set.seed(403)
+
+waf_70 <- list()
+
+for(i in 1:n_rep){
+  idx_70 <- sample(n_ise, n_ise*0.70)
+  ftsm_70 <- flux_ton.s_mat[,idx_70]
+  q_70 <- q_mat[, idx_70]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_70] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_70 <- lapply(index_years, function(idx){apply(ftsm_70[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_70 <- lapply(index_years, function(idx){apply(q_70[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_70 <- lapply(index_years, function(idx){apply(q_70[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_70 <- sum_instant_flux_ton.y_70 / sum_instant_q_70 * mean_instant_q_70 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_70[[i]] <- weighted_annual_flux_ton.y_70
+}
+
+```
+
+```{r 70-percent-mean}
+waf_70_mean <- c()
+waf_70_upr <- c()
+waf_70_lwr <- c()
+
+for(i in 1:nyears){
+  waf_70_mean[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_70_upr[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_70_lwr[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_70 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_70, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_70[i,] <- mci
+}
+
+
+wiaf_70_rowmean <- rowMeans(wiaf_70)
+wiaf_70_mean <- mean(wiaf_70_rowmean)
+wiaf_70_sd <- sd(wiaf_70_rowmean)
+wiaf_70_upr <- quantile(wiaf_70_rowmean) %>% quantile(0.975)
+wiaf_70_lwr <- quantile(wiaf_70_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-70, eval = T}
+# Merge in df
+weighted_total_flux_df_70 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_70_mean, wiaf_70_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_70_sd), 
+                        annual_flux_pi_lower = c(waf_70_lwr, wiaf_70_lwr), 
+                        annual_flux_pi_upper = c(waf_70_upr, wiaf_70_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_70, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_70, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_70, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+
+
+
+## 80 %
+
+```{r percent80}
+set.seed(403)
+n_rep <- 100
+
+waf_80 <- list()
+
+for(i in 1:n_rep){
+  idx_80 <- sample(n_ise, n_ise*0.80)
+  ftsm_80 <- flux_ton.s_mat[,idx_80]
+  q_80 <- q_mat[, idx_80]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_80] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_80 <- lapply(index_years, function(idx){apply(ftsm_80[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_80 <- lapply(index_years, function(idx){apply(q_80[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_80 <- lapply(index_years, function(idx){apply(q_80[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_80 <- sum_instant_flux_ton.y_80 / sum_instant_q_80 * mean_instant_q_80 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_80[[i]] <- weighted_annual_flux_ton.y_80
+}
+
+```
+
+```{r 80-percent-mean}
+waf_80_mean <- c()
+waf_80_upr <- c()
+waf_80_lwr <- c()
+
+for(i in 1:nyears){
+  waf_80_mean[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_80_upr[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_80_lwr[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_80 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_80, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_80[i,] <- mci
+}
+
+wiaf_80_rowmean <- rowMeans(wiaf_80)
+wiaf_80_mean <- mean(wiaf_80_rowmean)
+wiaf_80_sd <- sd(wiaf_80_rowmean)
+wiaf_80_upr <- quantile(wiaf_80_rowmean) %>% quantile(0.975)
+wiaf_80_lwr <- quantile(wiaf_80_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-80, eval = T}
+# Merge in df
+weighted_total_flux_df_80 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_80_mean, wiaf_80_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_80_sd), 
+                        annual_flux_pi_lower = c(waf_80_lwr, wiaf_80_lwr), 
+                        annual_flux_pi_upper = c(waf_80_upr, wiaf_80_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_80, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_80, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_80, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+
+
+
+## 90 %
+
+```{r percent90}
+waf_90 <- list()
+
+for(i in 1:n_rep){
+  idx_90 <- sample(n_ise, n_ise*0.90)
+  ftsm_90 <- flux_ton.s_mat[,idx_90]
+  q_90 <- q_mat[, idx_90]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_90] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_90 <- lapply(index_years, function(idx){apply(ftsm_90[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_90 <- lapply(index_years, function(idx){apply(q_90[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_90 <- lapply(index_years, function(idx){apply(q_90[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_90 <- sum_instant_flux_ton.y_90 / sum_instant_q_90 * mean_instant_q_90 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_90[[i]] <- weighted_annual_flux_ton.y_90
+}
+
+```
+
+```{r 90-percent-mean}
+waf_90_mean <- c()
+waf_90_upr <- c()
+waf_90_lwr <- c()
+
+for(i in 1:nyears){
+  waf_90_mean[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% mean()
+  waf_90_upr[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+  waf_90_lwr[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+  }
+
+wiaf_90 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
+for(i in 1:1000){
+  mci <- lapply(waf_90, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
+  wiaf_90[i,] <- mci
+}
+
+
+wiaf_90_rowmean <- rowMeans(wiaf_90)
+wiaf_90_mean <- mean(wiaf_90_rowmean)
+wiaf_90_sd <- sd(wiaf_90_rowmean)
+wiaf_90_upr <- quantile(wiaf_90_rowmean) %>% quantile(0.975)
+wiaf_90_lwr <- quantile(wiaf_90_rowmean) %>% quantile(0.025)
+```
+
+
+```{r visualisation-wiaf-90, eval = T}
+# Merge in df
+weighted_total_flux_df_90 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_90_mean, wiaf_90_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_90_sd), 
+                        annual_flux_pi_lower = c(waf_90_lwr, wiaf_90_lwr), 
+                        annual_flux_pi_upper = c(waf_90_upr, wiaf_90_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_90, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_90, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_90, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+## Compare weighted fluxes
+
+```{r compare-weighted-fluxes}
+error_10 <- (wiaf_10_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_10_pi <- quantile(error_10, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_10_mean <- mean(error_10)
+
+error_20 <- (wiaf_20_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_20_pi <- quantile(error_20, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_20_mean <- mean(error_20)
+
+error_30 <- (wiaf_30_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_30_pi <- quantile(error_30, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_30_mean <- mean(error_30)
+
+error_40 <- (wiaf_40_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_40_pi <- quantile(error_40, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_40_mean <- mean(error_40)
+
+error_50 <- (wiaf_50_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_50_pi <- quantile(error_50, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_50_mean <- mean(error_50)
+
+error_60 <- (wiaf_60_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_60_pi <- quantile(error_60, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_60_mean <- mean(error_60)
+
+error_70 <- (wiaf_70_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_70_pi <- quantile(error_70, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_70_mean <- mean(error_70)
+
+error_80 <- (wiaf_80_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_80_pi <- quantile(error_80, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_80_mean <- mean(error_80)
+
+error_90 <- (wiaf_90_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_90_pi <- quantile(error_90, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_90_mean <- mean(error_90)
+
+
+weighted_error <- data.frame(percent_data = factor(c("10","20","30","40","50","60","70","80","90"),
+                                          levels = c("10","20","30","40","50","60","70","80","90")),
+                    error = c(error_10_mean, error_20_mean, error_30_mean, error_40_mean, error_50_mean, error_60_mean, error_70_mean, error_80_mean, error_90_mean),
+                    pi_upr = c(error_10_pi[3], error_20_pi[3], error_30_pi[3], error_40_pi[3], error_50_pi[3], error_60_pi[3], error_70_pi[3], error_80_pi[3], error_90_pi[3]),
+                    pi_lwr = c(error_10_pi[1], error_20_pi[1], error_30_pi[1], error_40_pi[1], error_50_pi[1], error_60_pi[1], error_70_pi[1], error_80_pi[1], error_90_pi[1]))
+
+ggplot(data= weighted_error, aes(x = percent_data))+
+  geom_point(aes(y = error))+
+  geom_errorbar(aes(ymin=pi_lwr, ymax=pi_upr))+
+  theme_minimal()
+
+weighted_error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+```
+
+
+# Exit
+
+```{r exit-knitr}
+knitr::knit_exit()
+```
+
+
+# Archives
+
+#### NLS extention to Isère
+
+```{r pred-isere-nls, cache.lazy = F}
+isere_for_nls <- isere_pwl # new df to store results
+nrow_boot <- nrow(coefs_wboot_nls) # number of bootstrap for the NLS coefficients
+
+# predict POC pour mes > 0
+isere_for_nls$poc_fitted <- predict(pocfit, newdata = isere_for_nls) 
+
+# MES matrix
+mes_mat_nls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere)
+mes_meas <- matrix(isere_for_nls$mes_for_fit, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+mes_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_isere) # 
+mes_mat_nls <- mes_meas * (1 + mes_noise) # final value of q, with noise
+
+# Prediction matrix, no noise
+mu_nls <- f(mes_mat_nls, coefs_wboot_nls[,"a"], coefs_wboot_nls[,"b"], coefs_wboot_nls[,"aspt"])
+
+# Prediction matrix, with noise
+noise_mat_nls <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = sigma_nls), nrow = nrow_boot, ncol = nrow_isere)
+
+pred_nls <- mu_nls + noise_mat_nls
+
+# Prediction interval 
+pi <- t(apply(pred_nls, 2, quantile, probs = c(0.025, 0.975), na.rm = T))
+colnames(pi) <- c("lower", "upper")
+
+# Mean bootstrap value
+boot_pred_nls <- colMeans(pred_nls, na.rm = T)
+
+# insert in isere_for_nls
+isere_for_nls <- isere_for_nls %>% mutate(poc_boot_pred = boot_pred_nls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# variances 
+isere_for_nls$poc_var_mean <- apply(mu_nls, 2, var) # variance of fit parameters + MES 
+isere_for_nls$poc_var_tot <- apply(pred_nls, 2, var) # total variance per prediction, for prediction total uncertainty
+
+
+# plot
+
+ggplot(isere_for_nls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray60")+
+  geom_line(aes(y = poc_pred_upper), col = "gray60")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+# Plot variance
+
+ggplot(isere_for_nls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_var_mean, col = "model variance"))+
+  geom_line(aes(y = poc_var_tot, col = "total variance (includes noise)"))+
+  scale_color_manual(values = c("lightblue", "darkblue"))+
+  scale_x_continuous(trans = "log", breaks = c(0.01,0.1,1,10,50))+
+  labs(x = "MES, g/L", y = "variance")+
+  theme_minimal()
+
+```
 
 

@@ -1,0 +1,304 @@
+---
+title: "Avenelles - test méthode"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+date: "2025-06-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+library(ggplot2)
+library(ggpubr)
+
+library(dplyr)
+library(readxl)
+library(lubridate)
+
+library(nlme)
+```
+
+# Get data
+
+https://bdoh.inrae.fr/SITE-ATELIER-ARDIERES-MORCILLE/ 
+
+https://onlinelibrary.wiley.com/doi/10.1002/hyp.14384
+
+
+```{r load-data-from-excel, message = F}
+
+avenelles <- readxl::read_xlsx(path = "Data_Avenelles_DOC_DIC_Debit.xlsx", sheet = "Data_Avenelles_DOC_DIC_Debit", col_types = c("date","numeric", "text","numeric","text","numeric","text","text","numeric")) %>%  mutate(Site = NULL, bv_km2 = NULL) %>% unique()
+
+```
+
+```{r merge}
+
+#avenelles$q_L.s <- imputeTS::na_interpolation(avenelles$q_L.s) # fill empty Q
+
+avenelles$year <- year(avenelles$DateHeure)
+avenelles$week <- week(avenelles$DateHeure)
+avenelles$month <- month(avenelles$DateHeure)
+
+avenelles$commondate <- as.Date(paste0("2000-", format(avenelles$DateHeure,"%j")), "%Y-%j")
+avenelles$Date <- format(avenelles$DateHeure, "%Y-%m-%d") %>% as.Date()
+
+avenelles$period <- with(avenelles, as.numeric(-(DateHeure - lead(DateHeure)))) # period is calculated in second, we get it in days
+avenelles$periodj <- round(avenelles$period / 60 / 60 / 24, 0)
+  
+strange_periods_dates <- avenelles %>% subset(periodj > 3) %>% pull(Date) 
+
+n <- 200
+
+```
+
+```{r summary-data}
+```{r view-data}
+summary_avenelles <- merge(
+avenelles %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_doc = n()),
+avenelles %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise(nb_q = n()), by = "year", all = T) %>% 
+  merge(avenelles %>% subset(!is.na(period) & !is.na(q_m3.s) & !is.na(doc_mg.L)) %>% group_by(year) %>% summarise(total_period_j_nona = round(sum(period)/24)), by = "year", all = T)
+
+knitr::kable(summary_avenelles) %>% kableExtra::kable_styling()
+```
+```
+
+
+# View data
+
+```{r plot-by-year-doc, fig.dim = c(10,15)}
+
+ggplot(subset(avenelles, year %in% c(2005:2022)), aes(x = commondate))+
+  geom_point(aes(y = q_L.s, col = "Débit, m3/s"), alpha = 0.5)+
+  geom_point(aes(y = doc_mg.L*n, col = "DOC, mg.L"), alpha = 0.5)+
+   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_y_continuous(name = "Débit", sec.axis = sec_axis(~./n, name = "DOC"))+
+  scale_color_manual(values = c("palegreen4","lightblue"), name = "")+
+  facet_grid(rows = vars(year), scales = "free_y")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+avenelles %>% filter(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_obs = n(), nb_unique_date = length(unique(Date))) %>% kable()
+```
+
+```{r most-complete-years-function}
+compare_docfluxes <- function(data, frac){ #results = c(sum doc kg/year, sum doc kg/s, weighted doc kg/y, nb obs, relative difference between weighted and sum for the year)
+    results <<- c()
+    df <- sample_frac(data, frac)
+    df$doc_flux_mg <- with(df, doc_mg.L * q_L.s * period) # Period is in second.
+    results[1] <<- sum(df$doc_flux_mg, na.rm = T)*1e-6 #sum of all periods amounts. 
+    results[2] <<- sum(with(df, doc_mg.L* q_L.s ), na.rm = T)*1e-6 #sum of daily amounts.
+    results[3] <<- sum(with(df, doc_mg.L* q_L.s), na.rm = T)*1e-6 / with(df, sum(q_L.s, na.rm = T)) * with(df, mean(q_L.s, na.rm = T))  * 24 * 60 * 60 * 365
+    results[4] <<- dim(df)[1]
+    results[5] <<- results[3]/results[1]
+    results[6] <<- sum(df$period, na.rm = T) / (24*60*60) # sum of period in days
+    return(results)
+    
+}
+
+compare_docfluxes_interpol <- function(data, frac){ #results = c(sum doc kg/year, sum doc kg/s, weighted doc kg/y, nb obs, relative difference between weighted and sum for the year)
+    results <<- c()
+    df <- sample_frac(data, frac)
+    df$doc_flux_interpol <- with(df, doc_interpol * q_L.s * 24*60*60) # Period is in second.
+    results[1] <<- sum(df$doc_flux_interpol, na.rm = T)*1e-6 #sum of all periods amounts. 
+    results[2] <<- sum(with(df, doc_interpol* q_L.s ), na.rm = T)*1e-6 #sum of daily amounts.
+    results[3] <<- sum(with(df, doc_interpol* q_L.s), na.rm = T)*1e-6 / with(df, sum(q_L.s, na.rm = T)) * with(df, mean(q_L.s, na.rm = T))  * 24 * 60 * 60 * 365
+    results[4] <<- dim(df)[1]
+    results[5] <<- results[3]/results[1]
+    results[6] <<- sum(df$period, na.rm = T) / (24*60*60) # sum of period in days
+    return(results)
+    
+}
+
+```
+
+# Year 2015
+
+## Comparaison sum and weighted
+
+```{r comparison-2015}
+avenelles_2015 <- subset(avenelles, year == 2015)
+avenelles_2015 <- avenelles_2015 %>% tidyr::complete(Date = seq(min(Date), max(Date), by = "1 day"))
+
+doc_2015 <-  data.frame(compare_docfluxes(avenelles_2015, 1), 
+                       compare_docfluxes(avenelles_2015, 0.1), 
+                       compare_docfluxes(avenelles_2015, 0.25), 
+                       compare_docfluxes(avenelles_2015, 0.5), 
+                       compare_docfluxes(avenelles_2015, 0.75), 
+                       compare_docfluxes(avenelles_2015, 0.9))
+
+doc_2015 <- rbind(doc_2015, c(doc_2015[3,1]/doc_2015[1,1],
+                              doc_2015[3,2]/doc_2015[1,1],
+                              doc_2015[3,3]/doc_2015[1,1],
+                              doc_2015[3,4]/doc_2015[1,1],
+                              doc_2015[3,5]/doc_2015[1,1],
+                              doc_2015[3,6]/doc_2015[1,1]))
+
+rownames(doc_2015) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
+
+knitr::kable(doc_2015, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
+             caption = "DOC fluxes 2015") %>% 
+  kableExtra::kable_styling()
+
+```
+
+## complete year
+
+Does not work because no discharge values in the extended dataset
+
+```{r interpolation-na} 
+avenelles_2015$doc_interpol <- imputeTS::na_interpolation(avenelles_2015$doc_mg.L, maxgap = 2*24*60*60) # débit toutes les 5 min, gap de 1 jour
+
+doc_2015 <-  data.frame(compare_docfluxes_interpol(avenelles_2015, 1), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.1), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.25), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.5), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.75), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.9))
+
+doc_2015 <- rbind(doc_2015, c(doc_2015[3,1]/doc_2015[1,1],
+                              doc_2015[3,2]/doc_2015[1,1],
+                              doc_2015[3,3]/doc_2015[1,1],
+                              doc_2015[3,4]/doc_2015[1,1],
+                              doc_2015[3,5]/doc_2015[1,1],
+                              doc_2015[3,6]/doc_2015[1,1]))
+
+rownames(doc_2015) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
+
+knitr::kable(doc_2015, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
+             caption = "DOC fluxes 2015 interpol") %>% 
+  kableExtra::kable_styling()
+
+
+avenelles_2015$doc_flux_mg <- with(avenelles_2015, doc_mg.L * q_L.s * period)
+avenelles_2015$doc_flux_interpol <- with(avenelles_2015, doc_interpol * q_L.s * period)
+
+ggplot(avenelles_2015)+geom_point(aes(x = Date, y = cumsum(tidyr::replace_na(doc_flux_mg,0)), col = "measured"), size = 2)+
+  geom_point(data = avenelles_2015, aes(x = Date, y = cumsum(tidyr::replace_na(doc_flux_interpol,0)), col = "interpol"), size = 1)+
+  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+ggplot(avenelles_2015, aes(x=Date))+geom_point(aes(y=doc_mg.L, col = "measured"), size = 2)+
+  geom_point(aes(y=doc_interpol, col = "predict"), size = 1)+
+  theme_minimal()
+
+```
+
+
+
+## Frequency
+
+```{r frequency-2015}
+avenelles_2015_day <- avenelles_2015 %>% group_by(Date) %>% summarize_all(mean, na.rm = T)
+avenelles_2015_week <- avenelles_2015 %>% group_by(week) %>% summarize_all(mean, na.rm = T)
+avenelles_2015_month <- avenelles_2015 %>% group_by(month) %>% summarize_all(mean, na.rm = T)
+
+nb_days_doc_2015 <- avenelles_2015 %>% filter(!is.na(doc_mg.L)) %>% pull(Date) %>% unique() %>% length()
+
+
+# DOC 
+
+avenelles_2015_day$doc_flux_mg <- with(avenelles_2015_day, doc_mg.L * q_L.s * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. 
+sum_doc_flux_avenelles_2015_day <- sum(avenelles_2015_day$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2015_week$doc_flux_mg <- with(avenelles_2015_week, doc_mg.L * q_L.s * 7 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2015_week <- sum(avenelles_2015_week$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2015_month$doc_flux_mg <- with(avenelles_2015_month, doc_mg.L * q_L.s * 30.42 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2015_month <- sum(avenelles_2015_month$doc_flux_mg, na.rm = T)*1e-6
+
+ggplot()+geom_point(data = avenelles_2015_day, aes(x = Date, y = cumsum(doc_flux_mg), col = "per day"), size = 1)+
+  geom_point(data = avenelles_2015_week, aes(x = Date, y = cumsum(doc_flux_mg), col = "per week"), size = 2)+
+  geom_point(data = avenelles_2015_month, aes(x = Date, y = cumsum(doc_flux_mg), col = "per month"), size = 3)+
+  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+knitr::kable(data.frame(
+  "nb of days sampled doc" = nb_days_doc_2015,
+  "doc flux" = c(sum_doc_flux_avenelles_2015_day, sum_doc_flux_avenelles_2015_week, sum_doc_flux_avenelles_2015_month),
+  "% of daily doc value" = c(sum_doc_flux_avenelles_2015_day/sum_doc_flux_avenelles_2015_day*100, sum_doc_flux_avenelles_2015_week/sum_doc_flux_avenelles_2015_day*100, sum_doc_flux_avenelles_2015_month/sum_doc_flux_avenelles_2015_day*100),
+  row.names = c("day","week","month")),
+  digits = 2
+) %>% kable_paper
+```
+
+
+
+# Year 2017
+
+## Comparaison sum and weighted
+
+```{r comparison-2017}
+avenelles_2017 <- subset(avenelles, year == 2017)
+
+doc_2017 <-  data.frame(compare_docfluxes(avenelles_2017, 1), 
+                       compare_docfluxes(avenelles_2017, 0.1), 
+                       compare_docfluxes(avenelles_2017, 0.25), 
+                       compare_docfluxes(avenelles_2017, 0.5), 
+                       compare_docfluxes(avenelles_2017, 0.75), 
+                       compare_docfluxes(avenelles_2017, 0.9))
+
+doc_2017 <- rbind(doc_2017, c(doc_2017[3,1]/doc_2017[1,1],
+                              doc_2017[3,2]/doc_2017[1,1],
+                              doc_2017[3,3]/doc_2017[1,1],
+                              doc_2017[3,4]/doc_2017[1,1],
+                              doc_2017[3,5]/doc_2017[1,1],
+                              doc_2017[3,6]/doc_2017[1,1]))
+
+rownames(doc_2017) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
+
+knitr::kable(doc_2017, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
+             caption = "DOC fluxes 2017") %>% 
+  kableExtra::kable_styling()
+
+```
+
+## Frequency
+
+```{r frequency-2017}
+avenelles_2017_day <- avenelles_2017 %>% group_by(Date) %>% summarize_all(mean, na.rm = T)
+avenelles_2017_week <- avenelles_2017 %>% group_by(week) %>% summarize_all(mean, na.rm = T)
+avenelles_2017_month <- avenelles_2017 %>% group_by(month) %>% summarize_all(mean, na.rm = T)
+
+nb_days_doc_2017 <- avenelles_2017 %>% filter(!is.na(doc_mg.L)) %>% pull(Date) %>% unique() %>% length()
+
+
+# DOC 
+
+avenelles_2017_day$doc_flux_mg <- with(avenelles_2017_day, doc_mg.L * q_L.s * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. 
+sum_doc_flux_avenelles_2017_day <- sum(avenelles_2017_day$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2017_week$doc_flux_mg <- with(avenelles_2017_week, doc_mg.L * q_L.s * 7 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2017_week <- sum(avenelles_2017_week$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2017_month$doc_flux_mg <- with(avenelles_2017_month, doc_mg.L * q_L.s * 30.42 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2017_month <- sum(avenelles_2017_month$doc_flux_mg, na.rm = T)*1e-6
+
+ggplot()+geom_point(data = avenelles_2017_day, aes(x = Date, y = cumsum(doc_flux_mg), col = "per day"), size = 1)+
+  geom_point(data = avenelles_2017_week, aes(x = Date, y = cumsum(doc_flux_mg), col = "per week"), size = 2)+
+  geom_point(data = avenelles_2017_month, aes(x = Date, y = cumsum(doc_flux_mg), col = "per month"), size = 3)+
+  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+knitr::kable(data.frame(
+  "nb of days sampled doc" = nb_days_doc_2017,
+  "doc flux" = c(sum_doc_flux_avenelles_2017_day, sum_doc_flux_avenelles_2017_week, sum_doc_flux_avenelles_2017_month),
+  "% of daily doc value" = c(sum_doc_flux_avenelles_2017_day/sum_doc_flux_avenelles_2017_day*100, sum_doc_flux_avenelles_2017_week/sum_doc_flux_avenelles_2017_day*100, sum_doc_flux_avenelles_2017_month/sum_doc_flux_avenelles_2017_day*100),
+  row.names = c("day","week","month")),
+  digits = 2
+) %>% kable_paper
+```
