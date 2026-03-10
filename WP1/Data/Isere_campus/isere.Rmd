@@ -11,7 +11,7 @@ date: "2025-06-30"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = F)
+                      cache = T)
 ```
 
 ```{r libraries}
@@ -45,10 +45,9 @@ Les données dont on dispose pour la station de mesures d'Isère - campus sont:
 
 ## Charger les données POC
 
-```{r prepare-data, eval = F}
+```{r prepare-data, eval = T}
 # Crues
 carbonisere <- read_xlsx("Bilan carbonisère.xlsx") 
-
 
 crues_2022 <- read_xlsx(path = "Crues_Isère_2022.xlsx", sheet = "test_match") 
 crues_2022$mes_mg.L <- NA
@@ -81,16 +80,15 @@ isere$commondate <- as.Date(paste0("2000-", format(isere$Date,"%j")), "%Y-%j")
 
 isere$period <- as.numeric(-(isere$DateHeure - lead(isere$DateHeure))) # period in s
 
-write.csv(isere, "isere.csv") 
+isere$mes_for_fit <- isere$cmes_g.L
+
+bv <- 5570
+
 ```
 
 
-```{r load-data}
-isere <- read.csv("isere.csv")
+```{r summary-data}
 
-isere$DateHeure <- as.Date(isere$DateHeure)
-isere$commondate <- as.Date(isere$commondate)
-isere$mes_for_fit <- isere$cmes_g.L
 
 summary_isere <- merge(
 isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()),
@@ -245,7 +243,6 @@ ggplot(poc_isere, aes( x= mes_g.L)) +
 Visualisation des données de la campagne Carbonisère: DOC et POC mesurés sur les années 2006-2007-2009. 
 
 ```{r view-fluxes}
-carbonisere <- read_xlsx("Bilan carbonisère.xlsx") 
 
 ggplot(carbonisere)+
   geom_point(aes(x=as.Date(DateHeure), y = debit_m3.s), col = "cadetblue4")+
@@ -341,7 +338,7 @@ for(i in name_crues){
   scale_color_manual(values = c("darkblue","lightblue"))+
   geom_abline(slope = 0, intercept = dfi$aspt[1], col = "darkred")+
   annotate(geom = "label", label = formula_fiti, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
   
  print(g)
@@ -387,7 +384,7 @@ for(i in name_crues){
   scale_color_manual(values = c("darkblue","lightblue"))+
   geom_abline(slope = 0, intercept = dfi$aspt[1], col = "darkred")+
   annotate(geom = "label", label = formula_fiti, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
   
  print(g)
@@ -464,7 +461,7 @@ f <- function(x, a, b, aspt){
 ```
 
 
-#### Confidence interval with wild bootstrap
+Confidence interval with wild bootstrap
 
 ```{r nls-wild-bootstrap}
 coefs_wboot_nls <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
@@ -496,7 +493,7 @@ coefs_wboot_nls <- cbind(coefs_wboot_nls, "aspt" = rnorm(length(coefs_wboot_nls)
 ggplot(as.data.frame(coefs_wboot_nls))+
   geom_point(aes(x = a, y = b))+
   labs(title = "a and b coefficients with wild bootstrap", subtitle = paste(length(coefs_wboot_nls)/2, "iterations", sep = " "))+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "none")
 
 
@@ -516,7 +513,7 @@ ggplot(poc_isere_wboot_nls)+
   annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   scale_color_manual(values = c("darkblue", "lightblue"))+
   labs(x = "MES, g/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
+  theme_minimal(base_size = 15)
 
 ggplot(poc_isere_wboot_nls, aes(x=poc_percent))+
   geom_point(aes(y=poc_fitted), col = "darkblue")+ 
@@ -524,12 +521,12 @@ ggplot(poc_isere_wboot_nls, aes(x=poc_percent))+
   geom_abline(slope = 1, intercept = 0, col = "darkred")+
   annotate(geom = "label", label = formula_pocfit, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
+  theme_minimal(base_size = 15)
 ```
 
 
 
-### GNLS
+#### GNLS
 
 #### Fit GNLS model 
 
@@ -596,7 +593,7 @@ coefs_boot <- na.omit(coefs_boot)
 apply(coefs_boot, 2, quantile, probs = c(0.025, 0.975)) %>% knitr::kable() #ic coef
 ggplot(as.data.frame(coefs_boot))+
   geom_point(aes(x = a, y = b))+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "none")
 
 # adds uncertainty around aspt
@@ -619,7 +616,7 @@ ggplot(poc_isere_boot_gnls)+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   scale_color_manual(values = c("darkblue", "lightblue"))+
   labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
+  theme_minimal(base_size = 15)
 
 ggplot(poc_isere_boot_gnls, aes(x=poc_percent))+
   geom_point(aes(y=poc_fitted), col = "darkblue")+ 
@@ -627,7 +624,7 @@ ggplot(poc_isere_boot_gnls, aes(x=poc_percent))+
   geom_abline(slope = 1, intercept = 0, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
-  theme_minimal()
+  theme_minimal(base_size = 15)
 ```
 
 ### Comparison NLS / GNLS 
@@ -708,7 +705,7 @@ ggplot(isere_for_gnls, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 # plot variance
@@ -718,14 +715,17 @@ ggplot(isere_for_gnls, aes(x = mes_for_fit))+
   scale_color_manual(values = c("lightblue", "darkblue"))+
   scale_x_continuous(trans = "log", breaks = c(0.01,0.1,1,10,50))+
   labs(x = "MES, g/L", y = "variance")+
-  theme_minimal()
+  theme_minimal(base_size = 15)
     
 ```
 
 
 # Reference annual and interannual fluxes (time step: half hour)
 
-```{r annual-flux-reference, cache.lazy=F, cache = F}
+
+## Total flux
+
+```{r annual-flux-reference, cache.lazy=F}
 # create matrix of q
 q_meas <- matrix(isere_for_gnls$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
 q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
@@ -776,11 +776,67 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
+
+
+## Specific flux
+
+```{r annual-sflux-reference, cache.lazy=F}
+# Instant flux matrix
+sflux_ton.s_mat <- pred_gnls*1e-2*mes_mat_gnls*1e-6*q_mat*1e3/bv #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s --> flux en ton / s
+sflux_ton_mat <- pred_gnls*1e-2*mes_mat_gnls*1e-6*q_mat*1e3*60*30/bv #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. Period measured: 30 min. 
+
+
+# Get index for the columns corresponding to the same year
+index_years <- lapply(unique(isere_for_gnls$year), function(y){which(isere_for_gnls$year == y)}) # list of indices corresponding to each year
+
+# Annual flux
+annual_sflux_ton.y <- lapply(index_years, function(idx){apply(sflux_ton_mat[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_sflux_pi <- apply(annual_sflux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_sflux_mean <- colMeans(annual_sflux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_sflux_sd <- apply(annual_sflux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+
+# Merge in df
+annual_sflux_df <- data.frame(year = unique(isere_for_gnls$year), 
+                        annual_flux_mean = annual_sflux_mean, 
+                        annual_flux_variability = annual_sflux_sd, 
+                        annual_flux_pi_lower = annual_sflux_pi[1,], 
+                        annual_flux_pi_upper = annual_sflux_pi[3,])
+
+```
+
+
+```{r interannual-sflux-reference}
+interannual_sflux_ton.y <- rowMeans(annual_sflux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_sflux_pi <- quantile(interannual_sflux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_sflux_mean <- mean(interannual_sflux_ton.y, na.rm = T) # mean interannual flux
+interannual_sflux_variability <- sd(annual_sflux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_sflux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_sflux_mean, 
+                                  annual_flux_variability = interannual_sflux_variability,
+                        annual_flux_pi_lower = interannual_sflux_pi[1], 
+                        annual_flux_pi_upper = interannual_sflux_pi[3])
+
+total_sflux_df <- rbind(annual_sflux_df, interannual_sflux_df)
+total_sflux_df$group <- c(rep("annual", length(unique(isere_for_gnls$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (tons/km2/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
 
 # Time steps
 
@@ -881,7 +937,7 @@ ggplot(isere_hour, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every hour", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -941,7 +997,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from 2-hourly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -1024,7 +1080,7 @@ ggplot(isere_hour2, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd hour", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -1085,7 +1141,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from 2-hourly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -1169,7 +1225,7 @@ ggplot(isere_hour4, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 4 hour", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 
@@ -1231,7 +1287,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from 4-hourly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -1244,8 +1300,9 @@ ggplot()+
 isere_group_hour8 <- isere_time %>% 
   mutate(day = format(DateHeure, "%Y-%m-%d"), 
          year = year(DateHeure),
-         hour8 =  floor(hour(DateHeure) / 8) * 8, # creates a 2-hours interval
-         DateHeure = NULL) %>% group_by(hour8,day,year) # group isere_time by hour
+         hour = hour(DateHeure),
+         hour8 =  floor(hour(DateHeure) / 8) * 8 ) %>% # creates a 8-hours interval
+          group_by(hour8,day,year) # group isere_time by hour
 nrow_hour8 <- n_groups(isere_group_hour8)
 
 # get mean q
@@ -1316,7 +1373,7 @@ ggplot(isere_hour8, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 8 hour", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -1378,8 +1435,10 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from 4-hourly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_hour8_df, digits = 2) %>% kableExtra::kable_styling()
 ```
 
 
@@ -1452,7 +1511,7 @@ ggplot(isere_day, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every day", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -1507,7 +1566,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from dayly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -1580,7 +1639,7 @@ ggplot(isere_day2, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd day", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -1619,7 +1678,7 @@ ggplot(annual_flux_day2_df)+
   geom_col(aes(x=year, y = annual_flux_day2_mean), fill = "lightblue")+
   geom_errorbar(aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper), width = 0.2)+
   labs(title = "Mean annual flux with prediction interval", subtitle = "Sampling grequency: day2", x = "", y = "Mean annual flux, ton")+
-  theme_minimal()
+  theme_minimal(base_size = 15)
 
 interannual_flux_ton.y_day2 <- rowMeans(annual_flux_ton.y_day2, na.rm = T) # mean interannual flux per iteration of the bootstrap
 interannual_flux_pi_day2 <- quantile(interannual_flux_ton.y_day2, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
@@ -1641,7 +1700,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from bi-dayly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -1714,7 +1773,7 @@ ggplot(isere_day4, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 4 day", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -1770,7 +1829,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from bi-dayly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -1844,7 +1903,7 @@ ggplot(isere_week, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every week", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -1899,7 +1958,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from weekly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -1972,7 +2031,7 @@ ggplot(isere_week2, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every 2nd week", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -2027,7 +2086,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from week2ly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -2100,7 +2159,7 @@ ggplot(isere_month, aes(x = mes_for_fit))+
   geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
   annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
   labs(x = "MES, g/L", y = "POC %", colour = "", shape = "", title = "POC predicted from MES, random sampling every month", subtitle = "Prediction interval in grey")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(legend.position = "bottom")
 
 ```
@@ -2155,7 +2214,7 @@ ggplot()+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
    labs(x = "Year", y = "Flux, from monthly mean values (ton/year)", fill = "")+
-  theme_minimal()+
+  theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
@@ -2165,6 +2224,11 @@ ggplot()+
 
 ```{r interannual-error-in-percent}
 # relative error by Monte-Carlo world
+
+error_hour <- (interannual_flux_ton.y_hour - interannual_flux_ton.y)/interannual_flux_ton.y * 100
+error_hour_pi <- quantile(error_hour, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
+error_hour_mean <- mean(error_hour)
+
 error_hour2 <- (interannual_flux_ton.y_hour2 - interannual_flux_ton.y)/interannual_flux_ton.y * 100
 error_hour2_pi <- quantile(error_hour2, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 error_hour2_mean <- mean(error_hour2)
@@ -2201,15 +2265,15 @@ error_month <- (interannual_flux_ton.y_month - interannual_flux_ton.y)/interannu
 error_month_pi <- quantile(error_month, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
 error_month_mean <- mean(error_month)
 
-error <- data.frame(time_step = factor(c("2hours","4hours","8hours","day","2days","4days","week","2weeks","month"), levels = c("2hours","4hours","8hours","day","2days","4days","week","2weeks","month")),
-                    error = c(error_hour2_mean, error_hour4_mean, error_hour8_mean, error_day_mean, error_day2_mean, error_day4_mean, error_week_mean, error_week2_mean, error_month_mean),
-                    pi_upr = c(error_hour2_pi[3], error_hour4_pi[3], error_hour8_pi[3], error_day_pi[3], error_day2_pi[3], error_day4_pi[3], error_week_pi[3], error_week2_pi[3], error_month_pi[3]),
-                    pi_lwr = c(error_hour2_pi[1], error_hour4_pi[1], error_hour8_pi[1], error_day_pi[1], error_day2_pi[1], error_day4_pi[1], error_week_pi[1], error_week2_pi[1], error_month_pi[1])) 
+error <- data.frame(time_step = factor(c("1 hour","2hours","4hours","8hours","day","2days","4days","week","2weeks","month"), levels = c("2hours","4hours","8hours","day","2days","4days","week","2weeks","month")),
+                    error = c(error_hour_mean, error_hour2_mean, error_hour4_mean, error_hour8_mean, error_day_mean, error_day2_mean, error_day4_mean, error_week_mean, error_week2_mean, error_month_mean),
+                    pi_upr = c(error_hour_pi[3], error_hour2_pi[3], error_hour4_pi[3], error_hour8_pi[3], error_day_pi[3], error_day2_pi[3], error_day4_pi[3], error_week_pi[3], error_week2_pi[3], error_month_pi[3]),
+                    pi_lwr = c(error_hour_pi[1], error_hour2_pi[1], error_hour4_pi[1], error_hour8_pi[1], error_day_pi[1], error_day2_pi[1], error_day4_pi[1], error_week_pi[1], error_week2_pi[1], error_month_pi[1])) 
 
 ggplot(data=error, aes(x = time_step))+
   geom_point(aes(y = error))+
   geom_errorbar(aes(ymin=pi_lwr, ymax=pi_upr))+
-  theme_minimal()
+  theme_minimal(base_size = 15)
 
 error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
@@ -2220,819 +2284,440 @@ error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling(
 
 
 
+# Missing data 2020
 
+```{r common-data-weighted-2020}
+isere_2020 <- isere_pwl %>% filter(year == 2020)
 
-# Dégradation de la mesure - % mesures and weighting
-
-Randomly selects 10, 20... 90% of the data (100 times), weigths them by year, and computes interannual flux. 
-
-
-```{r common-data-weighted}
-isere_w <- isere_for_gnls
-
-n_ise <- nrow(isere_w)
+n_ise_2020 <- nrow(isere_2020)
 
 mes_u <- 0.05
 q_u <- 0.05
 
 set.seed(503)
 
-unique_years <- unique(isere_w$year)
+unique_years <- unique(isere_2020$year)
 nyears <- length(unique_years)
 
 n_rep <- 100
-```
 
-## Test without prediction intervals for 1 year (2020, close to interannual flux)
+index_2020 <- which(isere_pwl$year == 2020) # list of indices corresponding to each year
+flux_ton.s_mat_2020 <- flux_ton.s_mat[,index_2020]
+flux_ton_mat_2020 <- flux_ton_mat[,index_2020]
+q_mat_2020  <- q_mat[,index_2020]
+mean_q_2020 <- apply(q_mat, 1, mean, na.rm = T)
 
-```{r make-1000-datasets, cache = T}
-weighted_fluxes <- data.frame("0.1" = NA, "0.2" = NA, "0.3" = NA, "0.4" = NA, "0.5" = NA, "0.6" = NA, "0.7" = NA, "0.8" = NA, "0.9" = NA)
 
-isere_2020 <- filter(isere_w, year == 2020)
-
-for(i in 1:10000){
-iflux <- vector("numeric",10)
-for(n in 1:9){
-  set.seed(i)
-  df <- sample_frac(isere_2020, n/10)
-  weighted_fluxn <- sum(with(df, poc_boot_pred* q_m3.s * 1e3), na.rm = T)*1e-9 / with(df, sum(q_m3.s, na.rm = T)) * with(df, mean(q_m3.s, na.rm = T))  * 60 * 60 * 24 * 365
-  iflux[n] <- weighted_fluxn
-  #weighted_fluxes[i,paste("X",n,sep = "")] <<- weighted_fluxn
-}
-weighted_fluxes <- rbind(weighted_fluxes, iflux)
-}
-
-weighted_fluxes <- weighted_fluxes[-1,]
 
 ```
 
-```{r annual-flux-ref}
-annual_flux_ref <- with(isere_2020, poc_boot_pred *1e-9 * q_m3.s * 1e3 * 30 * 60) %>% sum(na.rm = T) #DOC in mg/L, q converted from m3/s to L/s, so we get flux in mg/s, multiplied by the number of s in one period (in hour converted to second) then summed and converted to ton
+## 10% missing
 
-```
+```{r percent10-2020}
 
-
-```{r compare-with-ref-value}
-ggplot(weighted_fluxes)+geom_boxplot(aes(x = "0.1", y = X0.1))+
-  geom_boxplot(aes(x = "0.2", y = X0.2))+
-  geom_boxplot(aes(x = "0.3", y = X0.3))+
-  geom_boxplot(aes(x = "0.4", y = X0.4))+
-  geom_boxplot(aes(x = "0.5", y = X0.5))+
-  geom_boxplot(aes(x = "0.6", y = X0.6))+
-  geom_boxplot(aes(x = "0.7", y = X0.7))+
-  geom_boxplot(aes(x = "0.8", y = X0.8))+
-  geom_boxplot(aes(x = "0.9", y = X0.9))+
-  labs(x="Proportion of dataset", y = "Estimated annual flux, kg")+
-  geom_abline(slope = 0, intercept = annual_flux_ref, col = 
-  "pink")+
-  theme_minimal()
-```
-
-## 10 %
-
-```{r percent10}
-waf_10 <- list()
+waf_10_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_10 <- sample(n_ise, n_ise/10)
-  ftsm_10 <- flux_ton.s_mat[,idx_10]
-  q_10 <- q_mat[, idx_10]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_10] == y)}) # list of indices corresponding to each year
+  block_size <- floor(n_ise_2020*0.10)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+  ftsm_10_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_10_2020 <- q_mat_2020[, -idx_block]
 
   # Annual flux
-  sum_instant_flux_ton.y_10 <- lapply(index_years, function(idx){apply(ftsm_10[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_10 <- lapply(index_years, function(idx){apply(q_10[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_10 <- lapply(index_years, function(idx){apply(q_10[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
-
-  weighted_annual_flux_ton.y_10 <- sum_instant_flux_ton.y_10 / sum_instant_q_10 * mean_instant_q_10 *60*60*24*365 
+  sum_instant_flux_ton.y_10 <- apply(ftsm_10_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows 
+  sum_instant_q_10 <- apply(q_10_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_10 <- apply(q_10_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines
   
-  waf_10[[i]] <- weighted_annual_flux_ton.y_10
+  weighted_annual_flux_ton.y_10 <- sum_instant_flux_ton.y_10 / sum_instant_q_10 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_10_2020[[i]] <- weighted_annual_flux_ton.y_10 # stored in the big list
 }
 
-```
-
-```{r 10-percent-mean}
-waf_10_mean <- c()
-waf_10_upr <- c()
-waf_10_lwr <- c()
-
-for(i in 1:nyears){
-  waf_10_mean[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_10_upr[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_10_lwr[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_10 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_10, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_10[i,] <- mci
-}
-
-
-wiaf_10_rowmean <- rowMeans(wiaf_10)
-wiaf_10_mean <- mean(wiaf_10_rowmean)
-wiaf_10_sd <- sd(wiaf_10_rowmean)
-wiaf_10_upr <- quantile(wiaf_10_rowmean) %>% quantile(0.975)
-wiaf_10_lwr <- quantile(wiaf_10_rowmean) %>% quantile(0.025)
-```
-
-
-```{r visualisation-wiaf-10, eval = T}
-# Merge in df
-weighted_total_flux_df_10 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_10_mean, wiaf_10_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_10_sd), 
-                        annual_flux_pi_lower = c(waf_10_lwr, wiaf_10_lwr), 
-                        annual_flux_pi_upper = c(waf_10_upr, wiaf_10_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_10, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_10, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_10, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+waf_10_mcmean <- lapply(waf_10_2020, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_10_upr_2020 <- lapply(waf_10_2020, quantile, 0.975) %>% unlist()
+waf_10_lwr_2020 <- lapply(waf_10_2020, quantile, 0.025) %>% unlist()
 
 ```
 
-## 20 %
 
-```{r percent20}
-waf_20 <- list()
+## 20% missing
+
+```{r percent20-2020}
+
+
+waf_20_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_20 <- sample(n_ise, n_ise*0.2)
-  ftsm_20 <- flux_ton.s_mat[,idx_20]
-  q_20 <- q_mat[, idx_20]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_20] == y)}) # list of indices corresponding to each year
+   block_size <- floor(n_ise_2020*0.20)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+  ftsm_20_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_20_2020 <- q_mat_2020[, -idx_block]
 
   # Annual flux
-  sum_instant_flux_ton.y_20 <- lapply(index_years, function(idx){apply(ftsm_20[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_20 <- lapply(index_years, function(idx){apply(q_20[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_20 <- lapply(index_years, function(idx){apply(q_20[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
-
-  weighted_annual_flux_ton.y_20 <- sum_instant_flux_ton.y_20 / sum_instant_q_20 * mean_instant_q_20 *60*60*24*365 # time step of observations is 10 min: flux by 10 min is converted in flux per second, then per year
+  sum_instant_flux_ton.y_20 <- apply(ftsm_20_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_20 <- apply(q_20_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_20 <- apply(q_20_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
   
-  waf_20[[i]] <- weighted_annual_flux_ton.y_20
+  weighted_annual_flux_ton.y_20 <- sum_instant_flux_ton.y_20 / sum_instant_q_20 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_20_2020[[i]] <- weighted_annual_flux_ton.y_20 # stored in the big list
 }
 
-```
+waf_20_mcmean <- lapply(waf_20_2020, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_20_upr_2020 <- lapply(waf_20_2020, quantile, 0.975) %>% unlist()
+waf_20_lwr_2020 <- lapply(waf_20_2020, quantile, 0.025) %>% unlist()
 
-```{r 20-percent-mean}
-waf_20_mean <- c()
-waf_20_upr <- c()
-waf_20_lwr <- c()
-
-for(i in 1:nyears){
-  waf_20_mean[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_20_upr[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_20_lwr[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_20 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_20, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_20[i,] <- mci
-}
-
-
-wiaf_20_rowmean <- rowMeans(wiaf_20)
-wiaf_20_mean <- mean(wiaf_20_rowmean)
-wiaf_20_sd <- sd(wiaf_20_rowmean)
-wiaf_20_upr <- quantile(wiaf_20_rowmean) %>% quantile(0.975)
-wiaf_20_lwr <- quantile(wiaf_20_rowmean) %>% quantile(0.025)
-```
-
-
-```{r visualisation-wiaf-20, eval = T}
-# Merge in df
-weighted_total_flux_df_20 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_20_mean, wiaf_20_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_20_sd), 
-                        annual_flux_pi_lower = c(waf_20_lwr, wiaf_20_lwr), 
-                        annual_flux_pi_upper = c(waf_20_upr, wiaf_20_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_20, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_20, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_20, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ```
 
+## 30% missing
 
-## 30 %
+```{r percent30-2020}
 
-```{r percent30}
-set.seed(403)
 
-waf_30 <- list()
+waf_30_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_30 <- sample(n_ise, n_ise*0.30)
-  ftsm_30 <- flux_ton.s_mat[,idx_30]
-  q_30 <- q_mat[, idx_30]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_30] == y)}) # list of indices corresponding to each year
+ block_size <- floor(n_ise_2020*0.30)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+  ftsm_30_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_30_2020 <- q_mat_2020[, -idx_block]
 
   # Annual flux
-  sum_instant_flux_ton.y_30 <- lapply(index_years, function(idx){apply(ftsm_30[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_30 <- lapply(index_years, function(idx){apply(q_30[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_30 <- lapply(index_years, function(idx){apply(q_30[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
-
-  weighted_annual_flux_ton.y_30 <- sum_instant_flux_ton.y_30 / sum_instant_q_30 * mean_instant_q_30 *60*60*24*365 # time step of observations is 10 min
+  sum_instant_flux_ton.y_30 <- apply(ftsm_30_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_30 <- apply(q_30_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_30 <- apply(q_30_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
   
-  waf_30[[i]] <- weighted_annual_flux_ton.y_30
+  weighted_annual_flux_ton.y_30 <- sum_instant_flux_ton.y_30 / sum_instant_q_30 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_30_2020[[i]] <- weighted_annual_flux_ton.y_30 # stored in the big list
 }
 
-```
+waf_30_mcmean <- lapply(waf_30_2020, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_30_upr_2020 <- lapply(waf_30_2020, quantile, 0.975) %>% unlist()
+waf_30_lwr_2020 <- lapply(waf_30_2020, quantile, 0.025) %>% unlist()
 
-```{r 30-percent-mean}
-waf_30_mean <- c()
-waf_30_upr <- c()
-waf_30_lwr <- c()
-
-for(i in 1:nyears){
-  waf_30_mean[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_30_upr[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_30_lwr[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_30 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_30, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_30[i,] <- mci
-}
-
-
-wiaf_30_rowmean <- rowMeans(wiaf_30)
-wiaf_30_mean <- mean(wiaf_30_rowmean)
-wiaf_30_sd <- sd(wiaf_30_rowmean)
-wiaf_30_upr <- quantile(wiaf_30_rowmean) %>% quantile(0.975)
-wiaf_30_lwr <- quantile(wiaf_30_rowmean) %>% quantile(0.025)
-```
-
-
-```{r visualisation-wiaf-30, eval = T}
-# Merge in df
-weighted_total_flux_df_30 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_30_mean, wiaf_30_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_30_sd), 
-                        annual_flux_pi_lower = c(waf_30_lwr, wiaf_30_lwr), 
-                        annual_flux_pi_upper = c(waf_30_upr, wiaf_30_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_30, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_30, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_30, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ```
 
+## 40% missing
+
+```{r percent40-2020}
 
 
-
-
-
-
-## 40 %
-
-```{r percent40}
-set.seed(403)
-
-waf_40 <- list()
+waf_40_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_40 <- sample(n_ise, n_ise*0.40)
-  ftsm_40 <- flux_ton.s_mat[,idx_40]
-  q_40 <- q_mat[, idx_40]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_40] == y)}) # list of indices corresponding to each year
+ block_size <- floor(n_ise_2020*0.40)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+  ftsm_40_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_40_2020 <- q_mat_2020[, -idx_block]
 
   # Annual flux
-  sum_instant_flux_ton.y_40 <- lapply(index_years, function(idx){apply(ftsm_40[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_40 <- lapply(index_years, function(idx){apply(q_40[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_40 <- lapply(index_years, function(idx){apply(q_40[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
-
-  weighted_annual_flux_ton.y_40 <- sum_instant_flux_ton.y_40 / sum_instant_q_40 * mean_instant_q_40 *60*60*24*365 # time step of observations is 10 min
+  sum_instant_flux_ton.y_40 <- apply(ftsm_40_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_40 <- apply(q_40_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_40 <- apply(q_40_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
   
-  waf_40[[i]] <- weighted_annual_flux_ton.y_40
+  weighted_annual_flux_ton.y_40 <- sum_instant_flux_ton.y_40 / sum_instant_q_40 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_40_2020[[i]] <- weighted_annual_flux_ton.y_40 # stored in the big list
 }
 
-```
-
-```{r 40-percent-mean}
-waf_40_mean <- c()
-waf_40_upr <- c()
-waf_40_lwr <- c()
-
-for(i in 1:nyears){
-  waf_40_mean[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_40_upr[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_40_lwr[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_40 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_40, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_40[i,] <- mci
-}
+waf_40_mcmean <- lapply(waf_40_2020, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_40_upr_2020 <- lapply(waf_40_2020, quantile, 0.975) %>% unlist()
+waf_40_lwr_2020 <- lapply(waf_40_2020, quantile, 0.025) %>% unlist()
 
 
-wiaf_40_rowmean <- rowMeans(wiaf_40)
-wiaf_40_mean <- mean(wiaf_40_rowmean)
-wiaf_40_sd <- sd(wiaf_40_rowmean)
-wiaf_40_upr <- quantile(wiaf_40_rowmean) %>% quantile(0.975)
-wiaf_40_lwr <- quantile(wiaf_40_rowmean) %>% quantile(0.025)
 ```
 
 
-```{r visualisation-wiaf-40, eval = T}
-# Merge in df
-weighted_total_flux_df_40 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_40_mean, wiaf_40_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_40_sd), 
-                        annual_flux_pi_lower = c(waf_40_lwr, wiaf_40_lwr), 
-                        annual_flux_pi_upper = c(waf_40_upr, wiaf_40_upr),
-                        group = c(rep("annual",nyears),"interannual"))
+## 50% missing
 
-ggplot()+
-  geom_col(data = weighted_total_flux_df_40, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_40, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_40, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```{r percent50-2020}
 
-```
 
-## 50 %
-
-```{r percent50}
-set.seed(403)
-
-waf_50 <- list()
+waf_50_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_50 <- sample(n_ise, n_ise*0.50)
-  ftsm_50 <- flux_ton.s_mat[,idx_50]
-  q_50 <- q_mat[, idx_50]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_50] == y)}) # list of indices corresponding to each year
-
-  # Annual flux
-  sum_instant_flux_ton.y_50 <- lapply(index_years, function(idx){apply(ftsm_50[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_50 <- lapply(index_years, function(idx){apply(q_50[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_50 <- lapply(index_years, function(idx){apply(q_50[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
-
-  weighted_annual_flux_ton.y_50 <- sum_instant_flux_ton.y_50 / sum_instant_q_50 * mean_instant_q_50 *60*60*24*365 # time step of observations is 10 min
+ block_size <- floor(n_ise_2020*0.50)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
   
-  waf_50[[i]] <- weighted_annual_flux_ton.y_50
+  ftsm_50_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_50_2020 <- q_mat_2020[, -idx_block]
+  
+  # Annual flux
+  sum_instant_flux_ton.y_50 <- apply(ftsm_50_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_50 <- apply(q_50_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_50 <- apply(q_50_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_50 <- sum_instant_flux_ton.y_50 / sum_instant_q_50 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_50_2020[[i]] <- weighted_annual_flux_ton.y_50 # stored in the big list
 }
 
-```
+waf_50_mcmean <- lapply(waf_50_2020, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_50_upr_2020 <- lapply(waf_50_2020, quantile, 0.975) %>% unlist()
+waf_50_lwr_2020 <- lapply(waf_50_2020, quantile, 0.025) %>% unlist()
 
-```{r 50-percent-mean}
-waf_50_mean <- c()
-waf_50_upr <- c()
-waf_50_lwr <- c()
-
-for(i in 1:nyears){
-  waf_50_mean[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_50_upr[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_50_lwr[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_50 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_50, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_50[i,] <- mci
-}
-
-
-wiaf_50_rowmean <- rowMeans(wiaf_50)
-wiaf_50_mean <- mean(wiaf_50_rowmean)
-wiaf_50_sd <- sd(wiaf_50_rowmean)
-wiaf_50_upr <- quantile(wiaf_50_rowmean) %>% quantile(0.975)
-wiaf_50_lwr <- quantile(wiaf_50_rowmean) %>% quantile(0.025)
-```
-
-
-```{r visualisation-wiaf-50, eval = T}
-# Merge in df
-weighted_total_flux_df_50 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_50_mean, wiaf_50_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_50_sd), 
-                        annual_flux_pi_lower = c(waf_50_lwr, wiaf_50_lwr), 
-                        annual_flux_pi_upper = c(waf_50_upr, wiaf_50_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_50, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_50, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_50, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ```
 
-## 60 %
+## 60% missing
 
-```{r percent60}
-set.seed(403)
+```{r percent60-2020}
 
-waf_60 <- list()
+
+waf_60_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_60 <- sample(n_ise, n_ise*0.60)
-  ftsm_60 <- flux_ton.s_mat[,idx_60]
-  q_60 <- q_mat[, idx_60]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_60] == y)}) # list of indices corresponding to each year
-
-  # Annual flux
-  sum_instant_flux_ton.y_60 <- lapply(index_years, function(idx){apply(ftsm_60[,idx], 1, sum, na.rm = T)})%>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_60 <- lapply(index_years, function(idx){apply(q_60[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_60 <- lapply(index_years, function(idx){apply(q_60[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
-
-  weighted_annual_flux_ton.y_60 <- sum_instant_flux_ton.y_60 / sum_instant_q_60 * mean_instant_q_60 *60*60*24*365 # time step of observations is 10 min
+  block_size <- floor(n_ise_2020*0.60)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
   
-  waf_60[[i]] <- weighted_annual_flux_ton.y_60
+  ftsm_60_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_60_2020 <- q_mat_2020[, -idx_block]
+  
+  # Annual flux
+  sum_instant_flux_ton.y_60 <- apply(ftsm_60_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_60 <- apply(q_60_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_60 <- apply(q_60_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_60 <- sum_instant_flux_ton.y_60 / sum_instant_q_60 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_60_2020[[i]] <- weighted_annual_flux_ton.y_60 # stored in the big list
 }
 
-```
+waf_60_mcmean <- lapply(waf_60_2020, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_60_upr_2020 <- lapply(waf_60_2020, quantile, 0.975) %>% unlist()
+waf_60_lwr_2020 <- lapply(waf_60_2020, quantile, 0.025) %>% unlist()
 
-```{r 60-percent-mean}
-waf_60_mean <- c()
-waf_60_upr <- c()
-waf_60_lwr <- c()
-
-for(i in 1:nyears){
-  waf_60_mean[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_60_upr[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_60_lwr[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_60 <-  matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_60, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_60[i,] <- mci
-}
-
-
-wiaf_60_rowmean <- rowMeans(wiaf_60)
-wiaf_60_mean <- mean(wiaf_60_rowmean)
-wiaf_60_sd <- sd(wiaf_60_rowmean)
-wiaf_60_upr <- quantile(wiaf_60_rowmean) %>% quantile(0.975)
-wiaf_60_lwr <- quantile(wiaf_60_rowmean) %>% quantile(0.025)
-```
-
-
-```{r visualisation-wiaf-60, eval = T}
-# Merge in df
-weighted_total_flux_df_60 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_60_mean, wiaf_60_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_60_sd), 
-                        annual_flux_pi_lower = c(waf_60_lwr, wiaf_60_lwr), 
-                        annual_flux_pi_upper = c(waf_60_upr, wiaf_60_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_60, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_60, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_60, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ```
 
+## 70% missing
+
+```{r percent70-2020}
 
 
-## 70 %
-
-```{r percent70}
-set.seed(403)
-
-waf_70 <- list()
+waf_70_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_70 <- sample(n_ise, n_ise*0.70)
-  ftsm_70 <- flux_ton.s_mat[,idx_70]
-  q_70 <- q_mat[, idx_70]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_70] == y)}) # list of indices corresponding to each year
-
-  # Annual flux
-  sum_instant_flux_ton.y_70 <- lapply(index_years, function(idx){apply(ftsm_70[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_70 <- lapply(index_years, function(idx){apply(q_70[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_70 <- lapply(index_years, function(idx){apply(q_70[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
-
-  weighted_annual_flux_ton.y_70 <- sum_instant_flux_ton.y_70 / sum_instant_q_70 * mean_instant_q_70 *60*60*24*365 # time step of observations is 10 min
+  block_size <- floor(n_ise_2020*0.70)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
   
-  waf_70[[i]] <- weighted_annual_flux_ton.y_70
+  ftsm_70_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_70_2020 <- q_mat_2020[, -idx_block]
+  
+  # Annual flux
+  sum_instant_flux_ton.y_70 <- apply(ftsm_70_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_70 <- apply(q_70_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_70 <- apply(q_70_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_70 <- sum_instant_flux_ton.y_70 / sum_instant_q_70 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_70_2020[[i]] <- weighted_annual_flux_ton.y_70 # stored in the big list
 }
 
-```
+waf_70_mcmean <- lapply(waf_70_2020, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_70_upr_2020 <- lapply(waf_70_2020, quantile, 0.975) %>% unlist()
+waf_70_lwr_2020 <- lapply(waf_70_2020, quantile, 0.025) %>% unlist()
 
-```{r 70-percent-mean}
-waf_70_mean <- c()
-waf_70_upr <- c()
-waf_70_lwr <- c()
-
-for(i in 1:nyears){
-  waf_70_mean[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_70_upr[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_70_lwr[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_70 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_70, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_70[i,] <- mci
-}
-
-
-wiaf_70_rowmean <- rowMeans(wiaf_70)
-wiaf_70_mean <- mean(wiaf_70_rowmean)
-wiaf_70_sd <- sd(wiaf_70_rowmean)
-wiaf_70_upr <- quantile(wiaf_70_rowmean) %>% quantile(0.975)
-wiaf_70_lwr <- quantile(wiaf_70_rowmean) %>% quantile(0.025)
-```
-
-
-```{r visualisation-wiaf-70, eval = T}
-# Merge in df
-weighted_total_flux_df_70 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_70_mean, wiaf_70_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_70_sd), 
-                        annual_flux_pi_lower = c(waf_70_lwr, wiaf_70_lwr), 
-                        annual_flux_pi_upper = c(waf_70_upr, wiaf_70_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_70, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_70, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_70, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ```
 
+## 80% missing
+
+```{r percent80-2020}
 
 
-
-
-
-## 80 %
-
-```{r percent80}
-set.seed(403)
-n_rep <- 100
-
-waf_80 <- list()
+waf_80_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_80 <- sample(n_ise, n_ise*0.80)
-  ftsm_80 <- flux_ton.s_mat[,idx_80]
-  q_80 <- q_mat[, idx_80]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_80] == y)}) # list of indices corresponding to each year
+ block_size <- floor(n_ise_2020*0.80)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+  ftsm_80_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_80_2020 <- q_mat_2020[, -idx_block]
 
   # Annual flux
-  sum_instant_flux_ton.y_80 <- lapply(index_years, function(idx){apply(ftsm_80[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_80 <- lapply(index_years, function(idx){apply(q_80[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_80 <- lapply(index_years, function(idx){apply(q_80[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
-
-  weighted_annual_flux_ton.y_80 <- sum_instant_flux_ton.y_80 / sum_instant_q_80 * mean_instant_q_80 *60*60*24*365 # time step of observations is 10 min
+  sum_instant_flux_ton.y_80 <- apply(ftsm_80_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_80 <- apply(q_80_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_80 <- apply(q_80_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
   
-  waf_80[[i]] <- weighted_annual_flux_ton.y_80
+  weighted_annual_flux_ton.y_80 <- sum_instant_flux_ton.y_80 / sum_instant_q_80 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_80_2020[[i]] <- weighted_annual_flux_ton.y_80 # stored in the big list
 }
 
-```
+waf_80_mcmean <- lapply(waf_80_2020, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_80_upr_2020 <- lapply(waf_80_2020, quantile, 0.975) %>% unlist()
+waf_80_lwr_2020 <- lapply(waf_80_2020, quantile, 0.025) %>% unlist()
 
-```{r 80-percent-mean}
-waf_80_mean <- c()
-waf_80_upr <- c()
-waf_80_lwr <- c()
-
-for(i in 1:nyears){
-  waf_80_mean[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_80_upr[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_80_lwr[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
-
-wiaf_80 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_80, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_80[i,] <- mci
-}
-
-wiaf_80_rowmean <- rowMeans(wiaf_80)
-wiaf_80_mean <- mean(wiaf_80_rowmean)
-wiaf_80_sd <- sd(wiaf_80_rowmean)
-wiaf_80_upr <- quantile(wiaf_80_rowmean) %>% quantile(0.975)
-wiaf_80_lwr <- quantile(wiaf_80_rowmean) %>% quantile(0.025)
-```
-
-
-```{r visualisation-wiaf-80, eval = T}
-# Merge in df
-weighted_total_flux_df_80 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_80_mean, wiaf_80_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_80_sd), 
-                        annual_flux_pi_lower = c(waf_80_lwr, wiaf_80_lwr), 
-                        annual_flux_pi_upper = c(waf_80_upr, wiaf_80_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_80, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_80, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_80, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ```
 
+## 90% missing
+
+```{r percent90-2020}
 
 
-
-
-
-## 90 %
-
-```{r percent90}
-waf_90 <- list()
+waf_90_2020 <- list()
 
 for(i in 1:n_rep){
-  idx_90 <- sample(n_ise, n_ise*0.90)
-  ftsm_90 <- flux_ton.s_mat[,idx_90]
-  q_90 <- q_mat[, idx_90]
-
-  # Get index for the columns corresponding to the same year
-  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_90] == y)}) # list of indices corresponding to each year
+ block_size <- floor(n_ise_2020*0.90)
+  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+  ftsm_90_2020 <- flux_ton.s_mat_2020[,-idx_block]
+  q_90_2020 <- q_mat_2020[, -idx_block]
 
   # Annual flux
-  sum_instant_flux_ton.y_90 <- lapply(index_years, function(idx){apply(ftsm_90[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
-  sum_instant_q_90 <- lapply(index_years, function(idx){apply(q_90[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
-  mean_instant_q_90 <- lapply(index_years, function(idx){apply(q_90[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
-
-  weighted_annual_flux_ton.y_90 <- sum_instant_flux_ton.y_90 / sum_instant_q_90 * mean_instant_q_90 *60*60*24*365 # time step of observations is 10 min
+  sum_instant_flux_ton.y_90 <- apply(ftsm_90_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_90 <- apply(q_90_2020, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_90 <- apply(q_90_2020, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
   
-  waf_90[[i]] <- weighted_annual_flux_ton.y_90
+  weighted_annual_flux_ton.y_90 <- sum_instant_flux_ton.y_90 / sum_instant_q_90 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_90_2020[[i]] <- weighted_annual_flux_ton.y_90 # stored in the big list
 }
+
+waf_90_mcmean <- lapply(waf_90_2020, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_90_upr_2020 <- lapply(waf_90_2020, quantile, 0.975) %>% unlist() # quantile superieur pour chaque resampling
+waf_90_lwr_2020 <- lapply(waf_90_2020, quantile, 0.025) %>% unlist() # quantile inférieur pour chaque resampling
+
 
 ```
 
-```{r 90-percent-mean}
-waf_90_mean <- c()
-waf_90_upr <- c()
-waf_90_lwr <- c()
+## No missing data
 
-for(i in 1:nyears){
-  waf_90_mean[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% mean()
-  waf_90_upr[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
-  waf_90_lwr[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
-  }
+```{r percent100-2020}
+# REF
+flux_ref_2020 <- apply(flux_ton_mat_2020, 1, sum, na.rm = T)
+flux_ref_2020_mean <- mean(flux_ref_2020)
+flux_ref_2020_lwr <- quantile(flux_ref_2020, 0.025)
+flux_ref_2020_upr <- quantile(flux_ref_2020, 0.975)
 
-wiaf_90 <- matrix(NA_real_, nrow = 1000, ncol = n_rep*nyears)
-for(i in 1:1000){
-  mci <- lapply(waf_90, function(x) x[i, ]) %>% unlist # flux interannual pour monde MC i, pour les 6 ans
-  wiaf_90[i,] <- mci
-}
+mean_q_2020 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2020<- apply(q_mat, 1, mean, na.rm = T)
 
+# weighted
+sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_100 <- apply(q_mat_2020, 1, sum, na.rm = T) # same for Q
 
-wiaf_90_rowmean <- rowMeans(wiaf_90)
-wiaf_90_mean <- mean(wiaf_90_rowmean)
-wiaf_90_sd <- sd(wiaf_90_rowmean)
-wiaf_90_upr <- quantile(wiaf_90_rowmean) %>% quantile(0.975)
-wiaf_90_lwr <- quantile(wiaf_90_rowmean) %>% quantile(0.025)
-```
+weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
 
+waf_100_mcmean <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+waf_100_upr_2020 <- quantile(weighted_annual_flux_ton.y_100, 0.975) 
+waf_100_lwr_2020 <- quantile(weighted_annual_flux_ton.y_100, 0.025) 
 
-```{r visualisation-wiaf-90, eval = T}
-# Merge in df
-weighted_total_flux_df_90 <- data.frame(year = c(unique_years, "interannual"), 
-                        annual_flux_mean = c(waf_90_mean, wiaf_90_mean), 
-                        annual_flux_variability = c(rep(NA, nyears), wiaf_90_sd), 
-                        annual_flux_pi_lower = c(waf_90_lwr, wiaf_90_lwr), 
-                        annual_flux_pi_upper = c(waf_90_upr, wiaf_90_upr),
-                        group = c(rep("annual",nyears),"interannual"))
-
-ggplot()+
-  geom_col(data = weighted_total_flux_df_90, aes(x=year, y = annual_flux_mean, fill = group))+
-    geom_errorbar(data = weighted_total_flux_df_90, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
-  geom_errorbar(data = filter(weighted_total_flux_df_90, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
-  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
-  theme_minimal()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ```
 
 ## Compare weighted fluxes
 
-```{r compare-weighted-fluxes}
-error_10 <- (wiaf_10_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_10_pi <- quantile(error_10, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_10_mean <- mean(error_10)
+The "error" represents the range in which resampled interannual mean fall. Max value = 97.5% quantile of the 100 resampled means; minimum value = 2.5% quantile of the 100 resampled means; median value = median value of the 100 resampled means. 
 
-error_20 <- (wiaf_20_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_20_pi <- quantile(error_20, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_20_mean <- mean(error_20)
+```{r weighted-fluxes-compared-to-ref}
 
-error_30 <- (wiaf_30_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_30_pi <- quantile(error_30, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_30_mean <- mean(error_30)
+mwf2020 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,0,"Ref"),
+  mean_wflux = c(mean(waf_10_mcmean), mean(waf_20_mcmean), mean(waf_30_mcmean), mean(waf_40_mcmean), mean(waf_50_mcmean), mean(waf_60_mcmean), mean(waf_70_mcmean), mean(waf_80_mcmean), mean(waf_90_mcmean), mean(waf_100_mcmean), mean(flux_ref_2020)),
+  mean_upr = c(mean(waf_10_upr_2020),mean(waf_20_upr_2020),mean(waf_30_upr_2020),mean(waf_40_upr_2020),mean(waf_50_upr_2020),mean(waf_60_upr_2020),mean(waf_70_upr_2020),mean(waf_80_upr_2020),mean(waf_90_upr_2020), waf_100_upr_2020, flux_ref_2020_upr),
+  mean_lwr = c(mean(waf_10_lwr_2020),mean(waf_20_lwr_2020),mean(waf_30_lwr_2020),mean(waf_40_lwr_2020),mean(waf_50_lwr_2020),mean(waf_60_lwr_2020),mean(waf_70_lwr_2020),mean(waf_80_lwr_2020),mean(waf_90_lwr_2020), waf_100_lwr_2020, flux_ref_2020_lwr),
+  max_mean = c(max(waf_10_mcmean), max(waf_20_mcmean), max(waf_30_mcmean), max(waf_40_mcmean), max(waf_50_mcmean), max(waf_60_mcmean), max(waf_70_mcmean), max(waf_80_mcmean), max(waf_90_mcmean), max(waf_100_mcmean), max(flux_ref_2020)),
+  min_mean = c(min(waf_10_mcmean), min(waf_20_mcmean), min(waf_30_mcmean), min(waf_40_mcmean), min(waf_50_mcmean), min(waf_60_mcmean), min(waf_70_mcmean), min(waf_80_mcmean), min(waf_90_mcmean), min(waf_100_mcmean), min(flux_ref_2020)))
 
-error_40 <- (wiaf_40_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_40_pi <- quantile(error_40, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_40_mean <- mean(error_40)
+mwf2020$percent_missing_data <- factor(mwf2020$percent_missing_data, levels = c("Ref",0,10,20,30,40,50,60,70,80,90))
+  
+ggplot(data = mwf2020, aes(x = percent_missing_data))+
+  geom_point(aes(y = mean_wflux))+
+ geom_errorbar(aes(ymin = mean_lwr, ymax = mean_upr, col = "Prediction interval range"))+
+  labs(title = "Range of prediction intervals and mean resampled resampled fluxes")+
+  theme_minimal(base_size = 15)
 
-error_50 <- (wiaf_50_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_50_pi <- quantile(error_50, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_50_mean <- mean(error_50)
-
-error_60 <- (wiaf_60_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_60_pi <- quantile(error_60, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_60_mean <- mean(error_60)
-
-error_70 <- (wiaf_70_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_70_pi <- quantile(error_70, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_70_mean <- mean(error_70)
-
-error_80 <- (wiaf_80_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_80_pi <- quantile(error_80, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_80_mean <- mean(error_80)
-
-error_90 <- (wiaf_90_rowmean - interannual_flux_ton.y)/interannual_flux_ton.y * 100
-error_90_pi <- quantile(error_90, probs = c(0.025, 0.5, 0.975), na.rm = T) # confidence interval for annual fluxes, per year. 3 lignes, 19 columns
-error_90_mean <- mean(error_90)
+ggplot(data = mwf2020, aes(x = percent_missing_data))+
+  geom_point(aes(y = mean_wflux))+
+  geom_errorbar(aes(ymin = min_mean, ymax = max_mean, col = "Prediction interval range"))+
+  labs(title = "Mean, max and min average of resampled fluxes")+
+  theme_minimal(base_size = 15)
 
 
-weighted_error <- data.frame(percent_data = factor(c("10","20","30","40","50","60","70","80","90"),
-                                          levels = c("10","20","30","40","50","60","70","80","90")),
-                    error = c(error_10_mean, error_20_mean, error_30_mean, error_40_mean, error_50_mean, error_60_mean, error_70_mean, error_80_mean, error_90_mean),
-                    pi_upr = c(error_10_pi[3], error_20_pi[3], error_30_pi[3], error_40_pi[3], error_50_pi[3], error_60_pi[3], error_70_pi[3], error_80_pi[3], error_90_pi[3]),
-                    pi_lwr = c(error_10_pi[1], error_20_pi[1], error_30_pi[1], error_40_pi[1], error_50_pi[1], error_60_pi[1], error_70_pi[1], error_80_pi[1], error_90_pi[1]))
+mwf2020 %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
+  
+error_mwf2020 <- mwf2020
+ref_2020 <- matrix(rep(as.numeric(mwf2020[11,2:6]),11), ncol = 5, nrow = 11, byrow = T)
+error_mwf2020[,2:6] <- (mwf2020[,2:6]-ref_2020)/ref_2020*100
 
-ggplot(data= weighted_error, aes(x = percent_data))+
-  geom_point(aes(y = error))+
-  geom_errorbar(aes(ymin=pi_lwr, ymax=pi_upr))+
-  theme_minimal()
+error_mwf2020 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,0,"Ref"),
+  mean_wflux = c(mean((waf_10_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((waf_20_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((waf_30_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((waf_40_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((waf_50_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((waf_60_mcmean-flux_ref_2020)/flux_ref_2020*100),
+                 mean((waf_70_mcmean-flux_ref_2020)/flux_ref_2020*100),
+                 mean((waf_80_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((waf_90_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((waf_100_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+                 mean((flux_ref_2020-flux_ref_2020)/flux_ref_2020*100)),
+  max_mean = c(max((waf_10_mcmean-flux_ref_2020)/flux_ref_2020*100),
+               max((waf_20_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_30_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_40_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_50_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_60_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_70_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_80_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_90_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((waf_100_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               max((flux_ref_2020-flux_ref_2020)/flux_ref_2020*100)),
+  min_mean = c(min((waf_10_mcmean-flux_ref_2020)/flux_ref_2020*100),
+               min((waf_20_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_30_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_40_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_50_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_60_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_70_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_80_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_90_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((waf_100_mcmean-flux_ref_2020)/flux_ref_2020*100), 
+               min((flux_ref_2020-flux_ref_2020)/flux_ref_2020*100)))
 
-weighted_error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
+error_mwf2020$percent_missing_data <- factor(error_mwf2020$percent_missing_data, levels = c("Ref",0,10,20,30,40,50,60,70,80,90))
 
+
+ggplot(data = error_mwf2020, aes(x = percent_missing_data))+
+  geom_point(aes(y = mean_wflux))+
+  geom_errorbar(aes(ymin = min_mean, ymax = max_mean, col = "Prediction interval range"))+
+  labs(title = "Mean, max and min error of resampled fluxes", y = "Error in %")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+error_mwf2020 %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
+
 
 
 # Exit
 
-```{r exit-knitr}
+```{r exit-knitr, cache = F}
 knitr::knit_exit()
 ```
 
 
 # Archives
 
-#### NLS extention to Isère
+## NLS extention to Isère
 
 ```{r pred-isere-nls, cache.lazy = F}
 isere_for_nls <- isere_pwl # new df to store results
@@ -3097,6 +2782,964 @@ ggplot(isere_for_nls, aes(x = mes_for_fit))+
   labs(x = "MES, g/L", y = "variance")+
   theme_minimal()
 
+```
+
+## Dégradation de la mesure - % mesures and weighting
+
+Randomly selects 10, 20... 90% of the data (100 times), weigths them by year, and computes interannual flux. 
+
+
+```{r common-data-weighted}
+isere_w <- isere_for_gnls
+
+n_ise <- nrow(isere_w)
+
+mes_u <- 0.05
+q_u <- 0.05
+
+set.seed(503)
+
+unique_years <- unique(isere_w$year)
+nyears <- length(unique_years)
+
+n_rep <- 100
+```
+
+## Test without prediction intervals for 1 year (2020, close to interannual flux)
+
+```{r make-1000-datasets, cache = T}
+weighted_fluxes <- data.frame("0.1" = NA, "0.2" = NA, "0.3" = NA, "0.4" = NA, "0.5" = NA, "0.6" = NA, "0.7" = NA, "0.8" = NA, "0.9" = NA)
+
+isere_2020 <- filter(isere_w, year == 2020)
+
+for(i in 1:10000){
+iflux <- vector("numeric",10)
+for(n in 1:9){
+  set.seed(i)
+  df <- sample_frac(isere_2020, n/10)
+  weighted_fluxn <- sum(with(df, poc_boot_pred* q_m3.s * 1e3), na.rm = T)*1e-9 / with(df, sum(q_m3.s, na.rm = T)) * with(df, mean(q_m3.s, na.rm = T))  * 60 * 60 * 24 * 365
+  iflux[n] <- weighted_fluxn
+  #weighted_fluxes[i,paste("X",n,sep = "")] <<- weighted_fluxn
+}
+weighted_fluxes <- rbind(weighted_fluxes, iflux)
+}
+
+weighted_fluxes <- weighted_fluxes[-1,]
+
+```
+
+```{r annual-flux-ref}
+annual_flux_ref <- with(isere_2020, poc_boot_pred *1e-9 * q_m3.s * 1e3 * 30 * 60) %>% sum(na.rm = T) #DOC in mg/L, q converted from m3/s to L/s, so we get flux in mg/s, multiplied by the number of s in one period (in hour converted to second) then summed and converted to ton
+
+```
+
+
+```{r compare-with-ref-value}
+ggplot(weighted_fluxes)+geom_boxplot(aes(x = "0.1", y = X0.1))+
+  geom_boxplot(aes(x = "0.2", y = X0.2))+
+  geom_boxplot(aes(x = "0.3", y = X0.3))+
+  geom_boxplot(aes(x = "0.4", y = X0.4))+
+  geom_boxplot(aes(x = "0.5", y = X0.5))+
+  geom_boxplot(aes(x = "0.6", y = X0.6))+
+  geom_boxplot(aes(x = "0.7", y = X0.7))+
+  geom_boxplot(aes(x = "0.8", y = X0.8))+
+  geom_boxplot(aes(x = "0.9", y = X0.9))+
+  labs(x="Proportion of dataset", y = "Estimated annual flux, kg")+
+  geom_abline(slope = 0, intercept = annual_flux_ref, col = 
+  "pink")+
+  theme_minimal(base_size = 15)
+```
+
+## 10 %
+
+```{r percent10}
+waf_10 <- list()
+
+for(i in 1:n_rep){
+  idx_10 <- sample(n_ise, n_ise/10)
+  ftsm_10 <- flux_ton.s_mat[,idx_10]
+  q_10 <- q_mat[, idx_10]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_10] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_10 <- lapply(index_years, function(idx){apply(ftsm_10[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_10 <- lapply(index_years, function(idx){apply(q_10[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_10 <- lapply(index_years, function(idx){apply(q_10[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_10 <- sum_instant_flux_ton.y_10 / sum_instant_q_10 * mean_instant_q_10 *60*60*24*365 
+  
+  waf_10[[i]] <- weighted_annual_flux_ton.y_10
+}
+
+```
+
+```{r 10-percent-mean}
+# waf_10_mean <- c()
+# waf_10_upr <- c()
+# waf_10_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_10_mean[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_10_upr[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_10_lwr[i] <- lapply(waf_10, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+wiaf_10 <- lapply(waf_10, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_10_mean <- lapply(wiaf_10, mean) %>% unlist()
+wiaf_10_sd <- lapply(wiaf_10, sd) %>% unlist()
+wiaf_10_upr <- lapply(wiaf_10, quantile, 0.975) %>% unlist()
+wiaf_10_lwr <- lapply(wiaf_10, quantile, 0.025) %>% unlist()
+
+
+```
+
+
+```{r visualisation-wiaf-10, eval = F}
+# Merge in df
+weighted_total_flux_df_10 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_10_mean, wiaf_10_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_10_sd), 
+                        annual_flux_pi_lower = c(waf_10_lwr, wiaf_10_lwr), 
+                        annual_flux_pi_upper = c(waf_10_upr, wiaf_10_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_10, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_10, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_10, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+## 20 %
+
+```{r percent20}
+waf_20 <- list()
+
+for(i in 1:n_rep){
+  idx_20 <- sample(n_ise, n_ise*0.2)
+  ftsm_20 <- flux_ton.s_mat[,idx_20]
+  q_20 <- q_mat[, idx_20]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_20] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_20 <- lapply(index_years, function(idx){apply(ftsm_20[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_20 <- lapply(index_years, function(idx){apply(q_20[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_20 <- lapply(index_years, function(idx){apply(q_20[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_20 <- sum_instant_flux_ton.y_20 / sum_instant_q_20 * mean_instant_q_20 *60*60*24*365 # time step of observations is 10 min: flux by 10 min is converted in flux per second, then per year
+  
+  waf_20[[i]] <- weighted_annual_flux_ton.y_20
+}
+
+```
+
+```{r 20-percent-mean}
+# waf_20_mean <- c()
+# waf_20_upr <- c()
+# waf_20_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_20_mean[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_20_upr[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_20_lwr[i] <- lapply(waf_20, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+wiaf_20 <- lapply(waf_20, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_20_mean <- lapply(wiaf_20, mean) %>% unlist()
+wiaf_20_sd <- lapply(wiaf_20, sd) %>% unlist()
+wiaf_20_upr <- lapply(wiaf_20, quantile, 0.975) %>% unlist()
+wiaf_20_lwr <- lapply(wiaf_20, quantile, 0.025) %>% unlist()
+
+```
+
+
+```{r visualisation-wiaf-20, eval = F}
+# Merge in df
+weighted_total_flux_df_20 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_20_mean, wiaf_20_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_20_sd), 
+                        annual_flux_pi_lower = c(waf_20_lwr, wiaf_20_lwr), 
+                        annual_flux_pi_upper = c(waf_20_upr, wiaf_20_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_20, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_20, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_20, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+## 30 %
+
+```{r percent30}
+set.seed(403)
+
+waf_30 <- list()
+
+for(i in 1:n_rep){
+  idx_30 <- sample(n_ise, n_ise*0.30)
+  ftsm_30 <- flux_ton.s_mat[,idx_30]
+  q_30 <- q_mat[, idx_30]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_30] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_30 <- lapply(index_years, function(idx){apply(ftsm_30[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_30 <- lapply(index_years, function(idx){apply(q_30[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_30 <- lapply(index_years, function(idx){apply(q_30[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_30 <- sum_instant_flux_ton.y_30 / sum_instant_q_30 * mean_instant_q_30 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_30[[i]] <- weighted_annual_flux_ton.y_30
+}
+
+```
+
+```{r 30-percent-mean}
+# waf_30_mean <- c()
+# waf_30_upr <- c()
+# waf_30_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_30_mean[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_30_upr[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_30_lwr[i] <- lapply(waf_30, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+
+wiaf_30 <- lapply(waf_30, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_30_mean <- lapply(wiaf_30, mean) %>% unlist()
+wiaf_30_sd <- lapply(wiaf_30, sd) %>% unlist()
+wiaf_30_upr <- lapply(wiaf_30, quantile, 0.975) %>% unlist()
+wiaf_30_lwr <- lapply(wiaf_30, quantile, 0.025) %>% unlist()
+
+```
+
+
+```{r visualisation-wiaf-30, eval = F}
+# Merge in df
+weighted_total_flux_df_30 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_30_mean, wiaf_30_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_30_sd), 
+                        annual_flux_pi_lower = c(waf_30_lwr, wiaf_30_lwr), 
+                        annual_flux_pi_upper = c(waf_30_upr, wiaf_30_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_30, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_30, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_30, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+
+
+
+
+## 40 %
+
+```{r percent40}
+set.seed(403)
+
+waf_40 <- list()
+
+for(i in 1:n_rep){
+  idx_40 <- sample(n_ise, n_ise*0.40)
+  ftsm_40 <- flux_ton.s_mat[,idx_40]
+  q_40 <- q_mat[, idx_40]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_40] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_40 <- lapply(index_years, function(idx){apply(ftsm_40[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_40 <- lapply(index_years, function(idx){apply(q_40[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_40 <- lapply(index_years, function(idx){apply(q_40[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_40 <- sum_instant_flux_ton.y_40 / sum_instant_q_40 * mean_instant_q_40 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_40[[i]] <- weighted_annual_flux_ton.y_40
+}
+
+```
+
+```{r 40-percent-mean}
+# waf_40_mean <- c()
+# waf_40_upr <- c()
+# waf_40_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_40_mean[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_40_upr[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_40_lwr[i] <- lapply(waf_40, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+wiaf_40 <- lapply(waf_40, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_40_mean <- lapply(wiaf_40, mean) %>% unlist()
+wiaf_40_sd <- lapply(wiaf_40, sd) %>% unlist()
+wiaf_40_upr <- lapply(wiaf_40, quantile, 0.975) %>% unlist()
+wiaf_40_lwr <- lapply(wiaf_40, quantile, 0.025) %>% unlist()
+```
+
+
+```{r visualisation-wiaf-40, eval = F}
+# Merge in df
+weighted_total_flux_df_40 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_40_mean, wiaf_40_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_40_sd), 
+                        annual_flux_pi_lower = c(waf_40_lwr, wiaf_40_lwr), 
+                        annual_flux_pi_upper = c(waf_40_upr, wiaf_40_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_40, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_40, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_40, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+## 50 %
+
+```{r percent50}
+set.seed(403)
+
+waf_50 <- list()
+
+for(i in 1:n_rep){
+  idx_50 <- sample(n_ise, n_ise*0.50)
+  ftsm_50 <- flux_ton.s_mat[,idx_50]
+  q_50 <- q_mat[, idx_50]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_50] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_50 <- lapply(index_years, function(idx){apply(ftsm_50[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_50 <- lapply(index_years, function(idx){apply(q_50[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_50 <- lapply(index_years, function(idx){apply(q_50[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_50 <- sum_instant_flux_ton.y_50 / sum_instant_q_50 * mean_instant_q_50 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_50[[i]] <- weighted_annual_flux_ton.y_50
+}
+
+```
+
+```{r 50-percent-mean}
+# waf_50_mean <- c()
+# waf_50_upr <- c()
+# waf_50_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_50_mean[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_50_upr[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_50_lwr[i] <- lapply(waf_50, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+wiaf_50 <- lapply(waf_50, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_50_mean <- lapply(wiaf_50, mean) %>% unlist()
+wiaf_50_sd <- lapply(wiaf_50, sd) %>% unlist()
+wiaf_50_upr <- lapply(wiaf_50, quantile, 0.975) %>% unlist()
+wiaf_50_lwr <- lapply(wiaf_50, quantile, 0.025) %>% unlist()
+```
+
+
+```{r visualisation-wiaf-50, eval = F}
+# Merge in df
+weighted_total_flux_df_50 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_50_mean, wiaf_50_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_50_sd), 
+                        annual_flux_pi_lower = c(waf_50_lwr, wiaf_50_lwr), 
+                        annual_flux_pi_upper = c(waf_50_upr, wiaf_50_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_50, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_50, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_50, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+## 60 %
+
+```{r percent60}
+set.seed(403)
+
+waf_60 <- list()
+
+for(i in 1:n_rep){
+  idx_60 <- sample(n_ise, n_ise*0.60)
+  ftsm_60 <- flux_ton.s_mat[,idx_60]
+  q_60 <- q_mat[, idx_60]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_60] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_60 <- lapply(index_years, function(idx){apply(ftsm_60[,idx], 1, sum, na.rm = T)})%>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_60 <- lapply(index_years, function(idx){apply(q_60[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_60 <- lapply(index_years, function(idx){apply(q_60[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .)# mean discharge per year
+
+  weighted_annual_flux_ton.y_60 <- sum_instant_flux_ton.y_60 / sum_instant_q_60 * mean_instant_q_60 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_60[[i]] <- weighted_annual_flux_ton.y_60
+}
+
+```
+
+```{r 60-percent-mean}
+# waf_60_mean <- c()
+# waf_60_upr <- c()
+# waf_60_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_60_mean[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_60_upr[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_60_lwr[i] <- lapply(waf_60, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+wiaf_60 <- lapply(waf_60, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_60_mean <- lapply(wiaf_60, mean) %>% unlist()
+wiaf_60_sd <- lapply(wiaf_60, sd) %>% unlist()
+wiaf_60_upr <- lapply(wiaf_60, quantile, 0.975) %>% unlist()
+wiaf_60_lwr <- lapply(wiaf_60, quantile, 0.025) %>% unlist()
+```
+
+
+```{r visualisation-wiaf-60, eval = F}
+# Merge in df
+weighted_total_flux_df_60 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_60_mean, wiaf_60_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_60_sd), 
+                        annual_flux_pi_lower = c(waf_60_lwr, wiaf_60_lwr), 
+                        annual_flux_pi_upper = c(waf_60_upr, wiaf_60_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_60, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_60, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_60, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+## 70 %
+
+```{r percent70}
+set.seed(403)
+
+waf_70 <- list()
+
+for(i in 1:n_rep){
+  idx_70 <- sample(n_ise, n_ise*0.70)
+  ftsm_70 <- flux_ton.s_mat[,idx_70]
+  q_70 <- q_mat[, idx_70]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_70] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_70 <- lapply(index_years, function(idx){apply(ftsm_70[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .)# sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_70 <- lapply(index_years, function(idx){apply(q_70[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_70 <- lapply(index_years, function(idx){apply(q_70[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_70 <- sum_instant_flux_ton.y_70 / sum_instant_q_70 * mean_instant_q_70 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_70[[i]] <- weighted_annual_flux_ton.y_70
+}
+
+```
+
+```{r 70-percent-mean}
+# waf_70_mean <- c()
+# waf_70_upr <- c()
+# waf_70_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_70_mean[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_70_upr[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_70_lwr[i] <- lapply(waf_70, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+wiaf_70 <- lapply(waf_70, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_70_mean <- lapply(wiaf_70, mean) %>% unlist()
+wiaf_70_sd <- lapply(wiaf_70, sd) %>% unlist()
+wiaf_70_upr <- lapply(wiaf_70, quantile, 0.975) %>% unlist()
+wiaf_70_lwr <- lapply(wiaf_70, quantile, 0.025) %>% unlist()
+```
+
+
+```{r visualisation-wiaf-70, eval = F}
+# Merge in df
+weighted_total_flux_df_70 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_70_mean, wiaf_70_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_70_sd), 
+                        annual_flux_pi_lower = c(waf_70_lwr, wiaf_70_lwr), 
+                        annual_flux_pi_upper = c(waf_70_upr, wiaf_70_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_70, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_70, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_70, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+
+
+
+## 80 %
+
+```{r percent80}
+set.seed(403)
+n_rep <- 100
+
+waf_80 <- list()
+
+for(i in 1:n_rep){
+  idx_80 <- sample(n_ise, n_ise*0.80)
+  ftsm_80 <- flux_ton.s_mat[,idx_80]
+  q_80 <- q_mat[, idx_80]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_80] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_80 <- lapply(index_years, function(idx){apply(ftsm_80[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_80 <- lapply(index_years, function(idx){apply(q_80[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_80 <- lapply(index_years, function(idx){apply(q_80[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_80 <- sum_instant_flux_ton.y_80 / sum_instant_q_80 * mean_instant_q_80 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_80[[i]] <- weighted_annual_flux_ton.y_80
+}
+
+```
+
+```{r 80-percent-mean}
+# waf_80_mean <- c()
+# waf_80_upr <- c()
+# waf_80_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_80_mean[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_80_upr[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_80_lwr[i] <- lapply(waf_80, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+# 
+
+wiaf_80 <- lapply(waf_80, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_80_mean <- lapply(wiaf_80, mean) %>% unlist()
+wiaf_80_sd <- lapply(wiaf_80, sd) %>% unlist()
+wiaf_80_upr <- lapply(wiaf_80, quantile, 0.975) %>% unlist()
+wiaf_80_lwr <- lapply(wiaf_80, quantile, 0.025) %>% unlist()
+```
+
+
+```{r visualisation-wiaf-80, eval = F}
+# Merge in df
+weighted_total_flux_df_80 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_80_mean, wiaf_80_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_80_sd), 
+                        annual_flux_pi_lower = c(waf_80_lwr, wiaf_80_lwr), 
+                        annual_flux_pi_upper = c(waf_80_upr, wiaf_80_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_80, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_80, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_80, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+
+
+
+
+## 90 %
+
+```{r percent90}
+waf_90 <- list()
+
+for(i in 1:n_rep){
+  idx_90 <- sample(n_ise, n_ise*0.90)
+  ftsm_90 <- flux_ton.s_mat[,idx_90]
+  q_90 <- q_mat[, idx_90]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_90] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_90 <- lapply(index_years, function(idx){apply(ftsm_90[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_90 <- lapply(index_years, function(idx){apply(q_90[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_90 <- lapply(index_years, function(idx){apply(q_90[,idx], 1, mean, na.rm = T)}) %>% do.call("cbind", .) # mean discharge per year
+
+  weighted_annual_flux_ton.y_90 <- sum_instant_flux_ton.y_90 / sum_instant_q_90 * mean_instant_q_90 *60*60*24*365 # time step of observations is 10 min
+  
+  waf_90[[i]] <- weighted_annual_flux_ton.y_90
+}
+
+```
+
+```{r 90-percent-mean}
+# waf_90_mean <- c()
+# waf_90_upr <- c()
+# waf_90_lwr <- c()
+# 
+# for(i in 1:nyears){
+#   waf_90_mean[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% mean()
+#   waf_90_upr[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% quantile(0.975)
+#   waf_90_lwr[i] <- lapply(waf_90, function(x) x[,i]) %>% unlist() %>% quantile(0.025)
+#   }
+
+wiaf_90 <- lapply(waf_90, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_90_mean <- lapply(wiaf_90, mean) %>% unlist()
+wiaf_90_sd <- lapply(wiaf_90, sd) %>% unlist()
+wiaf_90_upr <- lapply(wiaf_90, quantile, 0.975) %>% unlist()
+wiaf_90_lwr <- lapply(wiaf_90, quantile, 0.025) %>% unlist()
+```
+
+
+```{r visualisation-wiaf-90, eval = F}
+# Merge in df
+weighted_total_flux_df_90 <- data.frame(year = c(unique_years, "interannual"), 
+                        annual_flux_mean = c(waf_90_mean, wiaf_90_mean), 
+                        annual_flux_variability = c(rep(NA, nyears), wiaf_90_sd), 
+                        annual_flux_pi_lower = c(waf_90_lwr, wiaf_90_lwr), 
+                        annual_flux_pi_upper = c(waf_90_upr, wiaf_90_upr),
+                        group = c(rep("annual",nyears),"interannual"))
+
+ggplot()+
+  geom_col(data = weighted_total_flux_df_90, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = weighted_total_flux_df_90, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
+  geom_errorbar(data = filter(weighted_total_flux_df_90, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+```
+
+
+## 100%
+
+```{r percent100}
+waf_100 <- list()
+
+for(i in 1:n_rep){
+  idx_100 <- sample(n_ise, n_ise, replace = T)
+  ftsm_100 <- flux_ton.s_mat[,idx_100]
+  q_100 <- q_mat[, idx_100]
+
+  # Get index for the columns corresponding to the same year
+  index_years <- lapply(unique_years, function(y){which(isere_w$year[idx_100] == y)}) # list of indices corresponding to each year
+
+  # Annual flux
+  sum_instant_flux_ton.y_100 <- lapply(index_years, FUN = function(idx){apply(ftsm_100[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind",.) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and  (1 column per year)
+  sum_instant_q_100 <- sapply(index_years, function(idx){apply(q_100[,idx], 1, sum, na.rm = T)}) # sum of discharge per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 1 columns per year
+  mean_instant_q_100 <- sapply(index_years, function(idx){apply(q_100[,idx], 1, mean, na.rm = T)}) # mean discharge per year
+  
+  weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_instant_q_100 * 60 * 60 * 24 *365 # period is a number of hours, converted to day
+  
+  waf_100[[i]] <- weighted_annual_flux_ton.y_100
+}
+
+```
+
+```{r 100-percent-mean}
+wiaf_100 <- lapply(waf_100, rowMeans) # 100 moyennes interannuelles resampled, avec 1000 simulations montecarlo 
+
+wiaf_100_mean <- lapply(wiaf_100, mean) %>% unlist()
+wiaf_100_sd <- lapply(wiaf_100, sd) %>% unlist()
+wiaf_100_upr <- lapply(wiaf_100, quantile, 0.975) %>% unlist()
+wiaf_100_lwr <- lapply(wiaf_100, quantile, 0.025) %>% unlist()
+
+```
+
+## Compare weighted fluxes
+
+```{r load-cache, eval = F}
+knitr::load_cache(label = "10-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "20-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "30-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "40-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "50-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "60-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "70-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "80-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "90-percent-mean", path = "isere_cache/html/")
+knitr::load_cache(label = "interannual-flux-reference", path = "isere_cache/html/")
+
+```
+
+
+
+
+## Compare weighted fluxes
+
+The "error" represents the range in which resampled interannual mean fall. Max value = 97.5% quantile of the 100 resampled means; minimum value = 2.5% quantile of the 100 resampled means; median value = median value of the 100 resampled means. 
+
+```{r compare-weighted-fluxes}
+error_10_mean <- mean((wiaf_10_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_10_median <- median((wiaf_10_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_10_mean_min <- min((wiaf_10_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_10_mean_max <- max((wiaf_10_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_10_upr <- max((wiaf_10_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_10_lwr <- min((wiaf_10_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_20_mean <- mean((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_median <- median((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_mean_min <- min((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_mean_max <- max((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_upr <- max((wiaf_20_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_20_lwr <- min((wiaf_20_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+
+error_30_mean <- mean((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_median <- median((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_mean_min <- min((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_mean_max <- max((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_upr <- max((wiaf_30_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_30_lwr <- min((wiaf_30_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_40_mean <- mean((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_median <- median((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_mean_min <- min((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_mean_max <- max((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_upr <- max((wiaf_40_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_40_lwr <- min((wiaf_40_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_50_mean <- mean((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_median <- median((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_mean_min <- min((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_mean_max <- max((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_upr <- max((wiaf_50_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_50_lwr <- min((wiaf_50_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_60_mean <- mean((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_median <- median((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_mean_min <- min((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_mean_max <- max((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_upr <- max((wiaf_60_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100) 
+error_60_lwr <- min((wiaf_60_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_70_mean <- mean((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_median <- median((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_mean_min <- min((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_mean_max <- max((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_upr <- max((wiaf_70_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_70_lwr <- min((wiaf_70_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_80_mean <- mean((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_median <- median((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_mean_min <- min((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_mean_max <- max((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_upr <- max((wiaf_80_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_80_lwr <- min((wiaf_80_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_90_mean <- mean((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_median <- median((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_mean_min <- min((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_mean_max <- max((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_upr <- max((wiaf_90_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_90_lwr <- min((wiaf_90_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_100_mean <- mean((wiaf_100_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_100_median <- median((wiaf_100_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_100_mean_min <- min((wiaf_100_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_100_mean_max <- max((wiaf_100_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_100_upr <- max((wiaf_100_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_100_lwr <- min((wiaf_100_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+
+
+weighted_error <- data.frame(percent_data = factor(c("10","20","30","40","50","60","70","80","90","100"),
+                                          levels = c("10","20","30","40","50","60","70","80","90","100")),
+                    error_mean = c(error_10_mean, error_20_mean, error_30_mean, error_40_mean, error_50_mean, error_60_mean, error_70_mean, error_80_mean, error_90_mean, error_100_mean),
+                    error_median = c(error_10_median, error_20_median, error_30_median, error_40_median, error_50_median, error_60_median, error_70_median, error_80_median, error_90_median, error_100_median),
+                    error_mean_min = c(error_10_mean_min, error_20_mean_min, error_30_mean_min, error_40_mean_min, error_50_mean_min, error_60_mean_min, error_70_mean_min, error_80_mean_min, error_90_mean_min, error_100_mean_min),
+                    error_mean_max = c(error_10_mean_max, error_20_mean_max, error_30_mean_max, error_40_mean_max, error_50_mean_max, error_60_mean_max, error_70_mean_max, error_80_mean_max, error_90_mean_max, error_100_mean_max),
+                    pi_upr = c(error_10_upr, error_20_upr, error_30_upr, error_40_upr, error_50_upr, error_60_upr, error_70_upr, error_80_upr, error_90_upr, error_100_upr),
+                    pi_lwr = c(error_10_lwr, error_20_lwr, error_30_lwr, error_40_lwr, error_50_lwr, error_60_lwr, error_70_lwr, error_80_lwr, error_90_lwr, error_100_lwr)) %>%
+  mutate(pi_range = pi_upr - pi_lwr)
+
+ggplot(data= weighted_error, aes(x = percent_data))+
+  geom_point(aes(y = error_mean))+
+  geom_errorbar(aes(ymin = error_mean_min, ymax = error_mean_max, col = "mean range"))+
+  labs(title = "Mean of resampled error and its standard deviation")+
+  theme_minimal(base_size = 15)
+
+ggplot(data= weighted_error, aes(x = percent_data))+
+  geom_point(aes(y = error_median))+
+ geom_errorbar(aes(ymin = pi_lwr, ymax = pi_upr, col = "Prediction interval range"))+
+  labs(title = "Range of prediction intervals, median of resampled errors")+
+  theme_minimal(base_size = 15)
+
+ggplot(data= weighted_error, aes(x = percent_data))+
+  geom_point(aes(y = error_mean))+
+ geom_errorbar(aes(ymin = pi_lwr, ymax = pi_upr, col = "Prediction interval range"))+
+  labs(title = "Range of prediction intervals, mean of resampled errors")+
+  theme_minimal(base_size = 15)
+
+
+weighted_error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
+```{r compare-weighted-fluxes-test, eval = F}
+error_10_mean <- (mean(wiaf_10_mean) - mean(interannual_flux_ton.y))/mean(interannual_flux_ton.y) * 100
+error_20_mean <- mean((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_median <- median((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_mean_min <- min((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_mean_max <- max((wiaf_20_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_20_upr <- max((wiaf_20_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_20_lwr <- min((wiaf_20_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+
+error_30_mean <- mean((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_median <- median((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_mean_min <- min((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_mean_max <- max((wiaf_30_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_30_upr <- max((wiaf_30_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_30_lwr <- min((wiaf_30_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_40_mean <- mean((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_median <- median((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_mean_min <- min((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_mean_max <- max((wiaf_40_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_40_upr <- max((wiaf_40_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_40_lwr <- min((wiaf_40_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_50_mean <- mean((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_median <- median((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_mean_min <- min((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_mean_max <- max((wiaf_50_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_50_upr <- max((wiaf_50_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_50_lwr <- min((wiaf_50_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_60_mean <- mean((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_median <- median((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_mean_min <- min((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_mean_max <- max((wiaf_60_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_60_upr <- max((wiaf_60_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100) 
+error_60_lwr <- min((wiaf_60_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_70_mean <- mean((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_median <- median((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_mean_min <- min((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_mean_max <- max((wiaf_70_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_70_upr <- max((wiaf_70_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_70_lwr <- min((wiaf_70_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_80_mean <- mean((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_median <- median((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_mean_min <- min((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_mean_max <- max((wiaf_80_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_80_upr <- max((wiaf_80_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_80_lwr <- min((wiaf_80_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_90_mean <- mean((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_median <- median((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_mean_min <- min((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_mean_max <- max((wiaf_90_mean - interannual_flux_ton.y)/interannual_flux_ton.y * 100)
+error_90_upr <- max((wiaf_90_upr - interannual_flux_pi[3])/interannual_flux_pi[3] * 100)
+error_90_lwr <- min((wiaf_90_lwr - interannual_flux_pi[1])/interannual_flux_pi[1] * 100)
+
+error_100_mean <- (mean(wiaf_100_mean) - mean(interannual_flux_ton.y))/interannual_flux_ton.y * 100
+
+
+
+weighted_error <- data.frame(percent_data = factor(c("10","20","30","40","50","60","70","80","90","100"),
+                                          levels = c("10","20","30","40","50","60","70","80","90","100")),
+                    error_mean = c(error_10_mean, error_20_mean, error_30_mean, error_40_mean, error_50_mean, error_60_mean, error_70_mean, error_80_mean, error_90_mean, error_100_mean),
+                    error_median = c(error_10_median, error_20_median, error_30_median, error_40_median, error_50_median, error_60_median, error_70_median, error_80_median, error_90_median, error_100_median),
+                    error_mean_min = c(error_10_mean_min, error_20_mean_min, error_30_mean_min, error_40_mean_min, error_50_mean_min, error_60_mean_min, error_70_mean_min, error_80_mean_min, error_90_mean_min, error_100_mean_min),
+                    error_mean_max = c(error_10_mean_max, error_20_mean_max, error_30_mean_max, error_40_mean_max, error_50_mean_max, error_60_mean_max, error_70_mean_max, error_80_mean_max, error_90_mean_max, error_100_mean_max),
+                    pi_upr = c(error_10_upr, error_20_upr, error_30_upr, error_40_upr, error_50_upr, error_60_upr, error_70_upr, error_80_upr, error_90_upr, error_100_upr),
+                    pi_lwr = c(error_10_lwr, error_20_lwr, error_30_lwr, error_40_lwr, error_50_lwr, error_60_lwr, error_70_lwr, error_80_lwr, error_90_lwr, error_100_lwr)) %>%
+  mutate(pi_range = pi_upr - pi_lwr)
+
+ggplot(data= weighted_error, aes(x = percent_data))+
+  geom_point(aes(y = error_mean))+
+  geom_errorbar(aes(ymin = error_mean_min, ymax = error_mean_max, col = "mean range"))+
+  labs(title = "Mean of resampled error and its standard deviation")+
+  theme_minimal(base_size = 15)
+
+ggplot(data= weighted_error, aes(x = percent_data))+
+  geom_point(aes(y = error_median))+
+ geom_errorbar(aes(ymin = pi_lwr, ymax = pi_upr, col = "Prediction interval range"))+
+  labs(title = "Range of prediction intervals, median of resampled errors")+
+  theme_minimal(base_size = 15)
+
+ggplot(data= weighted_error, aes(x = percent_data))+
+  geom_point(aes(y = error_mean))+
+ geom_errorbar(aes(ymin = pi_lwr, ymax = pi_upr, col = "Prediction interval range"))+
+  labs(title = "Range of prediction intervals, mean of resampled errors")+
+  theme_minimal(base_size = 15)
+
+
+weighted_error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
 
 
