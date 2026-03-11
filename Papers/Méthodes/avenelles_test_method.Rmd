@@ -72,6 +72,9 @@ avenelles %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise(nb_q = n())
 
 knitr::kable(summary_avenelles) %>% kableExtra::kable_styling()
 
+cat("mean Q", mean(avenelles$q_L.s, na.rm = T))
+cat("range OC (0-25-50-75-100)", quantile(with(avenelles, doc_mg.L), na.rm = T))
+
 
 avenelles %>% filter(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_obs = n(), nb_unique_date = length(unique(Date))) %>% kable() %>% kable_styling()
 ```
@@ -123,7 +126,7 @@ lm(doc_mg.L~q_L.s, data = doc_avenelles) %>% summary()
 
 # Annual and interannual flux 
 
-Années choisies: années avec des observations plus de 1 jour sur 2. 2014, 2015, 2017
+Années choisies: années avec des observations plus de 1 jour sur 2 (nobs > 365/2)
 
 On considère que l'erreur sur DOC vient de la mesure par analyse TOC.
 
@@ -681,7 +684,812 @@ error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling(
 Bond d'erreur entre 2 days et 4 days: peut-être parce que dans le prélèvement initial, on est plus proche de tous les 2 jours que de tous les jours ? 
 
 
-# Missing data
+# Missing data 2015
+
+```{r common-data-weighted-2015}
+avenelles_2015 <- avenelles_flux %>% filter(year == 2015)
+
+n_ave_2015 <- nrow(avenelles_2015)
+
+mes_u <- 0.05
+q_u <- 0.05
+
+set.seed(503)
+
+unique_years <- unique(avenelles_2015$year)
+nyears <- length(unique_years)
+
+n_rep <- 100
+
+index_2015 <- which(avenelles_flux$year == 2015) # list of indices corresponding to each year
+flux_ton.s_mat_2015 <- flux_ton.s_mat[,index_2015]
+flux_ton_mat_2015 <- flux_ton_mat[,index_2015]
+q_mat_2015  <- q_mat[,index_2015]
+mean_q_2015 <- apply(q_mat, 1, mean, na.rm = T)
+
+# Completude?
+cat("nb obs 2015:", dim(flux_ton_mat_2015)[2])
+cat("Period in s in Avenelles = ", sum(avenelles_2015$period), "; nb of s in 1 year = ", 365*24*60*60)
+
+```
+
+## 10% missing
+
+```{r percent10-2015}
+
+waf_10_2015 <- list()
+
+for(i in 1:n_rep){
+  block_size <- floor(n_ave_2015*0.10)
+  start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+  # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_10_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_10_2015 <- q_mat_2015[, -idx_block]
+
+  # Annual flux
+  sum_instant_flux_ton.y_10 <- apply(ftsm_10_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows 
+  sum_instant_q_10 <- apply(q_10_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_10 <- apply(q_10_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines
+  
+  weighted_annual_flux_ton.y_10 <- sum_instant_flux_ton.y_10 / sum_instant_q_10 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_10_2015[[i]] <- weighted_annual_flux_ton.y_10 # stored in the big list
+}
+
+waf_10_mcmean <- lapply(waf_10_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_10_upr_2015 <- lapply(waf_10_2015, quantile, 0.975) %>% unlist()
+waf_10_lwr_2015 <- lapply(waf_10_2015, quantile, 0.025) %>% unlist()
+
+```
+
+
+## 20% missing
+
+```{r percent20-2015}
+
+
+waf_20_2015 <- list()
+
+for(i in 1:n_rep){
+   block_size <- floor(n_ave_2015*0.20)
+   start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_20_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_20_2015 <- q_mat_2015[, -idx_block]
+
+  # Annual flux
+  sum_instant_flux_ton.y_20 <- apply(ftsm_20_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_20 <- apply(q_20_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_20 <- apply(q_20_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_20 <- sum_instant_flux_ton.y_20 / sum_instant_q_20 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_20_2015[[i]] <- weighted_annual_flux_ton.y_20 # stored in the big list
+}
+
+waf_20_mcmean <- lapply(waf_20_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_20_upr_2015 <- lapply(waf_20_2015, quantile, 0.975) %>% unlist()
+waf_20_lwr_2015 <- lapply(waf_20_2015, quantile, 0.025) %>% unlist()
+
+
+```
+
+## 30% missing
+
+```{r percent30-2015}
+
+
+waf_30_2015 <- list()
+
+for(i in 1:n_rep){
+ block_size <- floor(n_ave_2015*0.30)
+ start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_30_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_30_2015 <- q_mat_2015[, -idx_block]
+
+  # Annual flux
+  sum_instant_flux_ton.y_30 <- apply(ftsm_30_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_30 <- apply(q_30_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_30 <- apply(q_30_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_30 <- sum_instant_flux_ton.y_30 / sum_instant_q_30 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_30_2015[[i]] <- weighted_annual_flux_ton.y_30 # stored in the big list
+}
+
+waf_30_mcmean <- lapply(waf_30_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_30_upr_2015 <- lapply(waf_30_2015, quantile, 0.975) %>% unlist()
+waf_30_lwr_2015 <- lapply(waf_30_2015, quantile, 0.025) %>% unlist()
+
+
+```
+
+## 40% missing
+
+```{r percent40-2015}
+
+
+waf_40_2015 <- list()
+
+for(i in 1:n_rep){
+ block_size <- floor(n_ave_2015*0.40)
+ start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_40_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_40_2015 <- q_mat_2015[, -idx_block]
+
+  # Annual flux
+  sum_instant_flux_ton.y_40 <- apply(ftsm_40_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_40 <- apply(q_40_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_40 <- apply(q_40_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_40 <- sum_instant_flux_ton.y_40 / sum_instant_q_40 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_40_2015[[i]] <- weighted_annual_flux_ton.y_40 # stored in the big list
+}
+
+waf_40_mcmean <- lapply(waf_40_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_40_upr_2015 <- lapply(waf_40_2015, quantile, 0.975) %>% unlist()
+waf_40_lwr_2015 <- lapply(waf_40_2015, quantile, 0.025) %>% unlist()
+
+
+```
+
+
+## 50% missing
+
+```{r percent50-2015}
+
+
+waf_50_2015 <- list()
+
+for(i in 1:n_rep){
+ block_size <- floor(n_ave_2015*0.50)
+ start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_50_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_50_2015 <- q_mat_2015[, -idx_block]
+  
+  # Annual flux
+  sum_instant_flux_ton.y_50 <- apply(ftsm_50_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_50 <- apply(q_50_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_50 <- apply(q_50_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_50 <- sum_instant_flux_ton.y_50 / sum_instant_q_50 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_50_2015[[i]] <- weighted_annual_flux_ton.y_50 # stored in the big list
+}
+
+waf_50_mcmean <- lapply(waf_50_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_50_upr_2015 <- lapply(waf_50_2015, quantile, 0.975) %>% unlist()
+waf_50_lwr_2015 <- lapply(waf_50_2015, quantile, 0.025) %>% unlist()
+
+
+```
+
+## 60% missing
+
+from here we select a block instead of removing it
+
+```{r percent60-2015}
+
+
+waf_60_2015 <- list()
+
+for(i in 1:n_rep){
+  block_size <- floor(n_ave_2015*0.60)
+   start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_60_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_60_2015 <- q_mat_2015[, -idx_block]
+  
+  # Annual flux
+  sum_instant_flux_ton.y_60 <- apply(ftsm_60_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_60 <- apply(q_60_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_60 <- apply(q_60_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_60 <- sum_instant_flux_ton.y_60 / sum_instant_q_60 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_60_2015[[i]] <- weighted_annual_flux_ton.y_60 # stored in the big list
+}
+
+waf_60_mcmean <- lapply(waf_60_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_60_upr_2015 <- lapply(waf_60_2015, quantile, 0.975) %>% unlist()
+waf_60_lwr_2015 <- lapply(waf_60_2015, quantile, 0.025) %>% unlist()
+
+
+```
+
+## 70% missing
+
+```{r percent70-2015}
+
+
+waf_70_2015 <- list()
+
+for(i in 1:n_rep){
+  block_size <- floor(n_ave_2015*0.70)
+   start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_70_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_70_2015 <- q_mat_2015[, -idx_block]
+  
+  # Annual flux
+  sum_instant_flux_ton.y_70 <- apply(ftsm_70_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_70 <- apply(q_70_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_70 <- apply(q_70_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_70 <- sum_instant_flux_ton.y_70 / sum_instant_q_70 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_70_2015[[i]] <- weighted_annual_flux_ton.y_70 # stored in the big list
+}
+
+waf_70_mcmean <- lapply(waf_70_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
+waf_70_upr_2015 <- lapply(waf_70_2015, quantile, 0.975) %>% unlist()
+waf_70_lwr_2015 <- lapply(waf_70_2015, quantile, 0.025) %>% unlist()
+
+
+```
+
+## 80% missing
+
+```{r percent80-2015}
+
+
+waf_80_2015 <- list()
+
+for(i in 1:n_rep){
+ block_size <- floor(n_ave_2015*0.80)
+   start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  # 
+  ftsm_80_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_80_2015 <- q_mat_2015[, -idx_block]
+
+  # Annual flux
+  sum_instant_flux_ton.y_80 <- apply(ftsm_80_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_80 <- apply(q_80_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_80 <- apply(q_80_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_80 <- sum_instant_flux_ton.y_80 / sum_instant_q_80 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_80_2015[[i]] <- weighted_annual_flux_ton.y_80 # stored in the big list
+}
+
+waf_80_mcmean <- lapply(waf_80_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_80_upr_2015 <- lapply(waf_80_2015, quantile, 0.975) %>% unlist()
+waf_80_lwr_2015 <- lapply(waf_80_2015, quantile, 0.025) %>% unlist()
+
+
+```
+
+## 90% missing
+
+```{r percent90-2015}
+
+
+waf_90_2015 <- list()
+
+for(i in 1:n_rep){
+ block_size <- floor(n_ave_2015*0.90)
+ start_idx <- sample(1:n_ave_2015, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ave_2015){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ave_2015
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  
+  ftsm_90_2015 <- flux_ton.s_mat_2015[,-idx_block]
+  q_90_2015 <- q_mat_2015[, -idx_block]
+
+  # Annual flux
+  sum_instant_flux_ton.y_90 <- apply(ftsm_90_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+  sum_instant_q_90 <- apply(q_90_2015, 1, sum, na.rm = T) # same for Q
+  mean_instant_q_90 <- apply(q_90_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
+  
+  weighted_annual_flux_ton.y_90 <- sum_instant_flux_ton.y_90 / sum_instant_q_90 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+  
+  waf_90_2015[[i]] <- weighted_annual_flux_ton.y_90 # stored in the big list
+}
+
+waf_90_mcmean <- lapply(waf_90_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
+waf_90_upr_2015 <- lapply(waf_90_2015, quantile, 0.975) %>% unlist() # quantile superieur pour chaque resampling
+waf_90_lwr_2015 <- lapply(waf_90_2015, quantile, 0.025) %>% unlist() # quantile inférieur pour chaque resampling
+
+
+```
+
+## No missing data
+
+```{r percent100-2015}
+# REF
+flux_ref_2015 <- apply(flux_ton_mat_2015, 1, sum, na.rm = T)
+flux_ref_2015_mean <- mean(flux_ref_2015)
+flux_ref_2015_lwr <- quantile(flux_ref_2015, 0.025)
+flux_ref_2015_upr <- quantile(flux_ref_2015, 0.975)
+
+mean_q_2015 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2015<- apply(q_mat, 1, mean, na.rm = T)
+
+# weighted
+sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_100 <- apply(q_mat_2015, 1, sum, na.rm = T) # same for Q
+
+weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+
+waf_100_mcmean <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+waf_100_upr_2015 <- quantile(weighted_annual_flux_ton.y_100, 0.975) 
+waf_100_lwr_2015 <- quantile(weighted_annual_flux_ton.y_100, 0.025) 
+
+
+```
+
+## Compare weighted fluxes
+
+The "error" represents the range in which resampled interannual mean fall. Max value = 97.5% quantile of the 100 resampled means; minimum value = 2.5% quantile of the 100 resampled means; median value = median value of the 100 resampled means. 
+
+```{r weighted-fluxes-compared-to-ref}
+
+error_mwf2015 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,0,"Ref"),
+  mean_wflux = c(mean((waf_10_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((waf_20_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((waf_30_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((waf_40_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((waf_50_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((waf_60_mcmean-flux_ref_2015)/flux_ref_2015*100),
+                 mean((waf_70_mcmean-flux_ref_2015)/flux_ref_2015*100),
+                 mean((waf_80_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((waf_90_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((waf_100_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+                 mean((flux_ref_2015-flux_ref_2015)/flux_ref_2015*100)),
+  max_mean = c(max((waf_10_mcmean-flux_ref_2015)/flux_ref_2015*100),
+               max((waf_20_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_30_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_40_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_50_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_60_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_70_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_80_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_90_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((waf_100_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               max((flux_ref_2015-flux_ref_2015)/flux_ref_2015*100)),
+  min_mean = c(min((waf_10_mcmean-flux_ref_2015)/flux_ref_2015*100),
+               min((waf_20_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_30_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_40_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_50_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_60_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_70_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_80_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_90_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((waf_100_mcmean-flux_ref_2015)/flux_ref_2015*100), 
+               min((flux_ref_2015-flux_ref_2015)/flux_ref_2015*100)))
+
+error_mwf2015$percent_missing_data <- factor(error_mwf2015$percent_missing_data, levels = c("Ref",0,10,20,30,40,50,60,70,80,90))
+
+ggplot(data = error_mwf2015, aes(x = percent_missing_data))+
+  geom_point(aes(y = mean_wflux))+
+  geom_errorbar(aes(ymin = min_mean, ymax = max_mean, col = "Prediction interval range"))+
+  labs(title = "Mean, max and min error of resampled fluxes", y = "Error in %")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+error_mwf2015 %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+# boxplot
+error_boxplot <- data.frame("M10" = (waf_10_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M20" = (waf_20_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M30" = (waf_30_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M40" = (waf_40_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M50" = (waf_50_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M60" = (waf_60_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M70" = (waf_70_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M80" = (waf_80_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M90" = (waf_90_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "M0" = (waf_100_mcmean-flux_ref_2015)/flux_ref_2015*100,
+                            "Ref" = (flux_ref_2015-flux_ref_2015)/flux_ref_2015*100
+                            )
+
+error_boxplot_long <- tidyr::pivot_longer(data = error_boxplot, cols = 1:11, names_to = "percent_missing", values_to = "error_percent")
+error_boxplot_long$percent_missing <- factor(error_boxplot_long$percent_missing, levels = c("Ref","M0","M10","M20","M30","M40","M50","M60","M70","M80","M90"))
+error_boxplot_long$Site <- "Avenelles"
+error_boxplot_long$OC <- "DOC"
+
+write.csv(error_boxplot_long, "error_boxplot_long_avenelles.csv")
+
+ggplot(error_boxplot_long)+
+  geom_boxplot(aes(y=error_percent, x=percent_missing))+
+  theme_minimal()
+```
+
+
+
+
+# Exit
+
+```{r exit, cache = F}
+
+knitr::knit_exit()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Archives
+
+```{r most-complete-years-function}
+compare_docfluxes <- function(data, frac){ #results = c(sum doc kg/year, sum doc kg/s, weighted doc kg/y, nb obs, relative difference between weighted and sum for the year)
+    results <<- c()
+    df <- sample_frac(data, frac)
+    df$doc_flux_mg <- with(df, doc_mg.L * q_L.s * period) # Period is in second.
+    results[1] <<- sum(df$doc_flux_mg, na.rm = T)*1e-6 #sum of all periods amounts. 
+    results[2] <<- sum(with(df, doc_mg.L* q_L.s ), na.rm = T)*1e-6 #sum of daily amounts.
+    results[3] <<- sum(with(df, doc_mg.L* q_L.s), na.rm = T)*1e-6 / with(df, sum(q_L.s, na.rm = T)) * with(df, mean(q_L.s, na.rm = T))  * 24 * 60 * 60 * 365
+    results[4] <<- dim(df)[1]
+    results[5] <<- results[3]/results[1]
+    results[6] <<- sum(df$period, na.rm = T) / (24*60*60) # sum of period in days
+    return(results)
+    
+}
+
+compare_docfluxes_interpol <- function(data, frac){ #results = c(sum doc kg/year, sum doc kg/s, weighted doc kg/y, nb obs, relative difference between weighted and sum for the year)
+    results <<- c()
+    df <- sample_frac(data, frac)
+    df$doc_flux_interpol <- with(df, doc_interpol * q_L.s * 24*60*60) # Period is in second.
+    results[1] <<- sum(df$doc_flux_interpol, na.rm = T)*1e-6 #sum of all periods amounts. 
+    results[2] <<- sum(with(df, doc_interpol* q_L.s ), na.rm = T)*1e-6 #sum of daily amounts.
+    results[3] <<- sum(with(df, doc_interpol* q_L.s), na.rm = T)*1e-6 / with(df, sum(q_L.s, na.rm = T)) * with(df, mean(q_L.s, na.rm = T))  * 24 * 60 * 60 * 365
+    results[4] <<- dim(df)[1]
+    results[5] <<- results[3]/results[1]
+    results[6] <<- sum(df$period, na.rm = T) / (24*60*60) # sum of period in days
+    return(results)
+    
+}
+
+```
+## Year 2015
+
+### Comparaison sum and weighted
+
+```{r comparison-2015}
+avenelles_2015 <- subset(avenelles, year == 2015)
+avenelles_2015 <- avenelles_2015 %>% tidyr::complete(Date = seq(min(Date), max(Date), by = "1 day"))
+
+doc_2015 <-  data.frame(compare_docfluxes(avenelles_2015, 1), 
+                       compare_docfluxes(avenelles_2015, 0.1), 
+                       compare_docfluxes(avenelles_2015, 0.25), 
+                       compare_docfluxes(avenelles_2015, 0.5), 
+                       compare_docfluxes(avenelles_2015, 0.75), 
+                       compare_docfluxes(avenelles_2015, 0.9))
+
+doc_2015 <- rbind(doc_2015, c(doc_2015[3,1]/doc_2015[1,1],
+                              doc_2015[3,2]/doc_2015[1,1],
+                              doc_2015[3,3]/doc_2015[1,1],
+                              doc_2015[3,4]/doc_2015[1,1],
+                              doc_2015[3,5]/doc_2015[1,1],
+                              doc_2015[3,6]/doc_2015[1,1]))
+
+rownames(doc_2015) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
+
+knitr::kable(doc_2015, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
+             caption = "DOC fluxes 2015") %>% 
+  kableExtra::kable_styling()
+
+```
+
+### complete year
+
+Does not work because no discharge values in the extended dataset
+
+```{r interpolation-na} 
+avenelles_2015$doc_interpol <- imputeTS::na_interpolation(avenelles_2015$doc_mg.L, maxgap = 2*24*60*60) # débit toutes les 5 min, gap de 1 jour
+
+doc_2015 <-  data.frame(compare_docfluxes_interpol(avenelles_2015, 1), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.1), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.25), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.5), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.75), 
+                       compare_docfluxes_interpol(avenelles_2015, 0.9))
+
+doc_2015 <- rbind(doc_2015, c(doc_2015[3,1]/doc_2015[1,1],
+                              doc_2015[3,2]/doc_2015[1,1],
+                              doc_2015[3,3]/doc_2015[1,1],
+                              doc_2015[3,4]/doc_2015[1,1],
+                              doc_2015[3,5]/doc_2015[1,1],
+                              doc_2015[3,6]/doc_2015[1,1]))
+
+rownames(doc_2015) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
+
+knitr::kable(doc_2015, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
+             caption = "DOC fluxes 2015 interpol") %>% 
+  kableExtra::kable_styling()
+
+
+avenelles_2015$doc_flux_mg <- with(avenelles_2015, doc_mg.L * q_L.s * period)
+avenelles_2015$doc_flux_interpol <- with(avenelles_2015, doc_interpol * q_L.s * period)
+
+ggplot(avenelles_2015)+geom_point(aes(x = Date, y = cumsum(tidyr::replace_na(doc_flux_mg,0)), col = "measured"), size = 2)+
+  geom_point(data = avenelles_2015, aes(x = Date, y = cumsum(tidyr::replace_na(doc_flux_interpol,0)), col = "interpol"), size = 1)+
+  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+ggplot(avenelles_2015, aes(x=Date))+geom_point(aes(y=doc_mg.L, col = "measured"), size = 2)+
+  geom_point(aes(y=doc_interpol, col = "predict"), size = 1)+
+  theme_minimal(base_size = 15)
+
+```
+
+
+
+### Frequency
+
+```{r frequency-2015}
+avenelles_2015_day <- avenelles_2015 %>% group_by(Date) %>% summarize_all(mean, na.rm = T)
+avenelles_2015_week <- avenelles_2015 %>% group_by(week) %>% summarize_all(mean, na.rm = T)
+avenelles_2015_month <- avenelles_2015 %>% group_by(month) %>% summarize_all(mean, na.rm = T)
+
+nb_days_doc_2015 <- avenelles_2015 %>% filter(!is.na(doc_mg.L)) %>% pull(Date) %>% unique() %>% length()
+
+
+# DOC 
+
+avenelles_2015_day$doc_flux_mg <- with(avenelles_2015_day, doc_mg.L * q_L.s * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. 
+sum_doc_flux_avenelles_2015_day <- sum(avenelles_2015_day$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2015_week$doc_flux_mg <- with(avenelles_2015_week, doc_mg.L * q_L.s * 7 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2015_week <- sum(avenelles_2015_week$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2015_month$doc_flux_mg <- with(avenelles_2015_month, doc_mg.L * q_L.s * 30.42 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2015_month <- sum(avenelles_2015_month$doc_flux_mg, na.rm = T)*1e-6
+
+ggplot()+geom_point(data = avenelles_2015_day, aes(x = Date, y = cumsum(doc_flux_mg), col = "per day"), size = 1)+
+  geom_point(data = avenelles_2015_week, aes(x = Date, y = cumsum(doc_flux_mg), col = "per week"), size = 2)+
+  geom_point(data = avenelles_2015_month, aes(x = Date, y = cumsum(doc_flux_mg), col = "per month"), size = 3)+
+  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+
+knitr::kable(data.frame(
+  "nb of days sampled doc" = nb_days_doc_2015,
+  "doc flux" = c(sum_doc_flux_avenelles_2015_day, sum_doc_flux_avenelles_2015_week, sum_doc_flux_avenelles_2015_month),
+  "% of daily doc value" = c(sum_doc_flux_avenelles_2015_day/sum_doc_flux_avenelles_2015_day*100, sum_doc_flux_avenelles_2015_week/sum_doc_flux_avenelles_2015_day*100, sum_doc_flux_avenelles_2015_month/sum_doc_flux_avenelles_2015_day*100),
+  row.names = c("day","week","month")),
+  digits = 2
+) %>% kable_paper
+```
+
+
+
+## Year 2017
+
+### Comparaison sum and weighted
+
+```{r comparison-2017}
+avenelles_2017 <- subset(avenelles, year == 2017)
+
+doc_2017 <-  data.frame(compare_docfluxes(avenelles_2017, 1), 
+                       compare_docfluxes(avenelles_2017, 0.1), 
+                       compare_docfluxes(avenelles_2017, 0.25), 
+                       compare_docfluxes(avenelles_2017, 0.5), 
+                       compare_docfluxes(avenelles_2017, 0.75), 
+                       compare_docfluxes(avenelles_2017, 0.9))
+
+doc_2017 <- rbind(doc_2017, c(doc_2017[3,1]/doc_2017[1,1],
+                              doc_2017[3,2]/doc_2017[1,1],
+                              doc_2017[3,3]/doc_2017[1,1],
+                              doc_2017[3,4]/doc_2017[1,1],
+                              doc_2017[3,5]/doc_2017[1,1],
+                              doc_2017[3,6]/doc_2017[1,1]))
+
+rownames(doc_2017) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
+
+knitr::kable(doc_2017, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
+             caption = "DOC fluxes 2017") %>% 
+  kableExtra::kable_styling()
+
+```
+
+### Frequency
+
+```{r frequency-2017}
+avenelles_2017_day <- avenelles_2017 %>% group_by(Date) %>% summarize_all(mean, na.rm = T)
+avenelles_2017_week <- avenelles_2017 %>% group_by(week) %>% summarize_all(mean, na.rm = T)
+avenelles_2017_month <- avenelles_2017 %>% group_by(month) %>% summarize_all(mean, na.rm = T)
+
+nb_days_doc_2017 <- avenelles_2017 %>% filter(!is.na(doc_mg.L)) %>% pull(Date) %>% unique() %>% length()
+
+
+# DOC 
+
+avenelles_2017_day$doc_flux_mg <- with(avenelles_2017_day, doc_mg.L * q_L.s * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. 
+sum_doc_flux_avenelles_2017_day <- sum(avenelles_2017_day$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2017_week$doc_flux_mg <- with(avenelles_2017_week, doc_mg.L * q_L.s * 7 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2017_week <- sum(avenelles_2017_week$doc_flux_mg, na.rm = T)*1e-6
+
+avenelles_2017_month$doc_flux_mg <- with(avenelles_2017_month, doc_mg.L * q_L.s * 30.42 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
+sum_doc_flux_avenelles_2017_month <- sum(avenelles_2017_month$doc_flux_mg, na.rm = T)*1e-6
+
+ggplot()+geom_point(data = avenelles_2017_day, aes(x = Date, y = cumsum(doc_flux_mg), col = "per day"), size = 1)+
+  geom_point(data = avenelles_2017_week, aes(x = Date, y = cumsum(doc_flux_mg), col = "per week"), size = 2)+
+  geom_point(data = avenelles_2017_month, aes(x = Date, y = cumsum(doc_flux_mg), col = "per month"), size = 3)+
+  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+
+knitr::kable(data.frame(
+  "nb of days sampled doc" = nb_days_doc_2017,
+  "doc flux" = c(sum_doc_flux_avenelles_2017_day, sum_doc_flux_avenelles_2017_week, sum_doc_flux_avenelles_2017_month),
+  "% of daily doc value" = c(sum_doc_flux_avenelles_2017_day/sum_doc_flux_avenelles_2017_day*100, sum_doc_flux_avenelles_2017_week/sum_doc_flux_avenelles_2017_day*100, sum_doc_flux_avenelles_2017_month/sum_doc_flux_avenelles_2017_day*100),
+  row.names = c("day","week","month")),
+  digits = 2
+) %>% kable_paper
+```
+
+
+## Missing data
 
 ```{r common-data-weighted}
 avenelles_w <- avenelles_flux
@@ -1526,671 +2334,3 @@ weighted_error %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable
 
 
 
-# Missing data 2015
-
-```{r common-data-weighted-2015}
-avenelles_2015 <- avenelles_flux %>% filter(year == 2015)
-
-n_ave_2015 <- nrow(avenelles_2015)
-
-mes_u <- 0.05
-q_u <- 0.05
-
-set.seed(503)
-
-unique_years <- unique(avenelles_2015$year)
-nyears <- length(unique_years)
-
-n_rep <- 1000
-
-index_2015 <- which(avenelles_flux$year == 2015) # list of indices corresponding to each year
-flux_ton.s_mat_2015 <- flux_ton.s_mat[,index_2015]
-flux_ton_mat_2015 <- flux_ton_mat[,index_2015]
-q_mat_2015  <- q_mat[,index_2015]
-mean_q_2015 <- apply(q_mat, 1, mean, na.rm = T)
-
-
-
-```
-
-## 10% missing
-
-```{r percent10-2015}
-
-waf_10_2015 <- list()
-
-for(i in 1:n_rep){
-  block_size <- floor(n_ave_2015*0.10)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_10_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_10_2015 <- q_mat_2015[, -idx_block]
-
-  # Annual flux
-  sum_instant_flux_ton.y_10 <- apply(ftsm_10_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows 
-  sum_instant_q_10 <- apply(q_10_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_10 <- apply(q_10_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines
-  
-  weighted_annual_flux_ton.y_10 <- sum_instant_flux_ton.y_10 / sum_instant_q_10 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_10_2015[[i]] <- weighted_annual_flux_ton.y_10 # stored in the big list
-}
-
-waf_10_mcmean <- lapply(waf_10_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
-waf_10_upr_2015 <- lapply(waf_10_2015, quantile, 0.975) %>% unlist()
-waf_10_lwr_2015 <- lapply(waf_10_2015, quantile, 0.025) %>% unlist()
-
-```
-
-
-## 20% missing
-
-```{r percent20-2015}
-
-
-waf_20_2015 <- list()
-
-for(i in 1:n_rep){
-   block_size <- floor(n_ave_2015*0.20)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_20_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_20_2015 <- q_mat_2015[, -idx_block]
-
-  # Annual flux
-  sum_instant_flux_ton.y_20 <- apply(ftsm_20_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_20 <- apply(q_20_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_20 <- apply(q_20_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_20 <- sum_instant_flux_ton.y_20 / sum_instant_q_20 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_20_2015[[i]] <- weighted_annual_flux_ton.y_20 # stored in the big list
-}
-
-waf_20_mcmean <- lapply(waf_20_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
-waf_20_upr_2015 <- lapply(waf_20_2015, quantile, 0.975) %>% unlist()
-waf_20_lwr_2015 <- lapply(waf_20_2015, quantile, 0.025) %>% unlist()
-
-
-```
-
-## 30% missing
-
-```{r percent30-2015}
-
-
-waf_30_2015 <- list()
-
-for(i in 1:n_rep){
- block_size <- floor(n_ave_2015*0.30)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_30_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_30_2015 <- q_mat_2015[, -idx_block]
-
-  # Annual flux
-  sum_instant_flux_ton.y_30 <- apply(ftsm_30_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_30 <- apply(q_30_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_30 <- apply(q_30_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_30 <- sum_instant_flux_ton.y_30 / sum_instant_q_30 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_30_2015[[i]] <- weighted_annual_flux_ton.y_30 # stored in the big list
-}
-
-waf_30_mcmean <- lapply(waf_30_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
-waf_30_upr_2015 <- lapply(waf_30_2015, quantile, 0.975) %>% unlist()
-waf_30_lwr_2015 <- lapply(waf_30_2015, quantile, 0.025) %>% unlist()
-
-
-```
-
-## 40% missing
-
-```{r percent40-2015}
-
-
-waf_40_2015 <- list()
-
-for(i in 1:n_rep){
- block_size <- floor(n_ave_2015*0.40)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_40_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_40_2015 <- q_mat_2015[, -idx_block]
-
-  # Annual flux
-  sum_instant_flux_ton.y_40 <- apply(ftsm_40_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_40 <- apply(q_40_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_40 <- apply(q_40_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_40 <- sum_instant_flux_ton.y_40 / sum_instant_q_40 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_40_2015[[i]] <- weighted_annual_flux_ton.y_40 # stored in the big list
-}
-
-waf_40_mcmean <- lapply(waf_40_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
-waf_40_upr_2015 <- lapply(waf_40_2015, quantile, 0.975) %>% unlist()
-waf_40_lwr_2015 <- lapply(waf_40_2015, quantile, 0.025) %>% unlist()
-
-
-```
-
-
-## 50% missing
-
-```{r percent50-2015}
-
-
-waf_50_2015 <- list()
-
-for(i in 1:n_rep){
- block_size <- floor(n_ave_2015*0.50)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_50_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_50_2015 <- q_mat_2015[, -idx_block]
-  
-  # Annual flux
-  sum_instant_flux_ton.y_50 <- apply(ftsm_50_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_50 <- apply(q_50_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_50 <- apply(q_50_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_50 <- sum_instant_flux_ton.y_50 / sum_instant_q_50 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_50_2015[[i]] <- weighted_annual_flux_ton.y_50 # stored in the big list
-}
-
-waf_50_mcmean <- lapply(waf_50_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
-waf_50_upr_2015 <- lapply(waf_50_2015, quantile, 0.975) %>% unlist()
-waf_50_lwr_2015 <- lapply(waf_50_2015, quantile, 0.025) %>% unlist()
-
-
-```
-
-## 60% missing
-
-```{r percent60-2015}
-
-
-waf_60_2015 <- list()
-
-for(i in 1:n_rep){
-  block_size <- floor(n_ave_2015*0.60)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_60_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_60_2015 <- q_mat_2015[, -idx_block]
-  
-  # Annual flux
-  sum_instant_flux_ton.y_60 <- apply(ftsm_60_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_60 <- apply(q_60_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_60 <- apply(q_60_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_60 <- sum_instant_flux_ton.y_60 / sum_instant_q_60 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_60_2015[[i]] <- weighted_annual_flux_ton.y_60 # stored in the big list
-}
-
-waf_60_mcmean <- lapply(waf_60_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
-waf_60_upr_2015 <- lapply(waf_60_2015, quantile, 0.975) %>% unlist()
-waf_60_lwr_2015 <- lapply(waf_60_2015, quantile, 0.025) %>% unlist()
-
-
-```
-
-## 70% missing
-
-```{r percent70-2015}
-
-
-waf_70_2015 <- list()
-
-for(i in 1:n_rep){
-  block_size <- floor(n_ave_2015*0.70)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_70_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_70_2015 <- q_mat_2015[, -idx_block]
-  
-  # Annual flux
-  sum_instant_flux_ton.y_70 <- apply(ftsm_70_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_70 <- apply(q_70_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_70 <- apply(q_70_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_70 <- sum_instant_flux_ton.y_70 / sum_instant_q_70 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_70_2015[[i]] <- weighted_annual_flux_ton.y_70 # stored in the big list
-}
-
-waf_70_mcmean <- lapply(waf_70_2015, mean) %>% unlist()# moyenne des simulations montecarlo pour chaque resampling 
-waf_70_upr_2015 <- lapply(waf_70_2015, quantile, 0.975) %>% unlist()
-waf_70_lwr_2015 <- lapply(waf_70_2015, quantile, 0.025) %>% unlist()
-
-
-```
-
-## 80% missing
-
-```{r percent80-2015}
-
-
-waf_80_2015 <- list()
-
-for(i in 1:n_rep){
- block_size <- floor(n_ave_2015*0.80)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_80_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_80_2015 <- q_mat_2015[, -idx_block]
-
-  # Annual flux
-  sum_instant_flux_ton.y_80 <- apply(ftsm_80_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_80 <- apply(q_80_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_80 <- apply(q_80_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_80 <- sum_instant_flux_ton.y_80 / sum_instant_q_80 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_80_2015[[i]] <- weighted_annual_flux_ton.y_80 # stored in the big list
-}
-
-waf_80_mcmean <- lapply(waf_80_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
-waf_80_upr_2015 <- lapply(waf_80_2015, quantile, 0.975) %>% unlist()
-waf_80_lwr_2015 <- lapply(waf_80_2015, quantile, 0.025) %>% unlist()
-
-
-```
-
-## 90% missing
-
-```{r percent90-2015}
-
-
-waf_90_2015 <- list()
-
-for(i in 1:n_rep){
- block_size <- floor(n_ave_2015*0.90)
-  start_idx <- sample(1:(n_ave_2015-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
-  ftsm_90_2015 <- flux_ton.s_mat_2015[,-idx_block]
-  q_90_2015 <- q_mat_2015[, -idx_block]
-
-  # Annual flux
-  sum_instant_flux_ton.y_90 <- apply(ftsm_90_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-  sum_instant_q_90 <- apply(q_90_2015, 1, sum, na.rm = T) # same for Q
-  mean_instant_q_90 <- apply(q_90_2015, 1, mean, na.rm = T) # same for mean Q: 1000 lines, 3 columns
-  
-  weighted_annual_flux_ton.y_90 <- sum_instant_flux_ton.y_90 / sum_instant_q_90 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-  
-  waf_90_2015[[i]] <- weighted_annual_flux_ton.y_90 # stored in the big list
-}
-
-waf_90_mcmean <- lapply(waf_90_2015, mean) %>% unlist() # moyenne des simulations montecarlo pour chaque resampling 
-waf_90_upr_2015 <- lapply(waf_90_2015, quantile, 0.975) %>% unlist() # quantile superieur pour chaque resampling
-waf_90_lwr_2015 <- lapply(waf_90_2015, quantile, 0.025) %>% unlist() # quantile inférieur pour chaque resampling
-
-
-```
-
-## No missing data
-
-```{r percent100-2015}
-# REF
-flux_ref_2015 <- apply(flux_ton_mat_2015, 1, sum, na.rm = T)
-flux_ref_2015_mean <- mean(flux_ref_2015)
-flux_ref_2015_lwr <- quantile(flux_ref_2015, 0.025)
-flux_ref_2015_upr <- quantile(flux_ref_2015, 0.975)
-
-mean_q_2015 <- apply(q_mat, 1, mean, na.rm = T)
-q_sum_2015<- apply(q_mat, 1, mean, na.rm = T)
-
-# weighted
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2015, 1, sum, na.rm = T) # same for Q
-
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-
-waf_100_mcmean <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
-waf_100_upr_2015 <- quantile(weighted_annual_flux_ton.y_100, 0.975) 
-waf_100_lwr_2015 <- quantile(weighted_annual_flux_ton.y_100, 0.025) 
-
-
-```
-
-## Compare weighted fluxes
-
-The "error" represents the range in which resampled interannual mean fall. Max value = 97.5% quantile of the 100 resampled means; minimum value = 2.5% quantile of the 100 resampled means; median value = median value of the 100 resampled means. 
-
-```{r weighted-fluxes-compared-to-ref}
-
-mwf2015 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,0,"Ref"),
-  mean_wflux = c(mean(waf_10_mcmean), mean(waf_20_mcmean), mean(waf_30_mcmean), mean(waf_40_mcmean), mean(waf_50_mcmean), mean(waf_60_mcmean), mean(waf_70_mcmean), mean(waf_80_mcmean), mean(waf_90_mcmean), mean(waf_100_mcmean), mean(flux_ref_2015)),
-  mean_upr = c(mean(waf_10_upr_2015),mean(waf_20_upr_2015),mean(waf_30_upr_2015),mean(waf_40_upr_2015),mean(waf_50_upr_2015),mean(waf_60_upr_2015),mean(waf_70_upr_2015),mean(waf_80_upr_2015),mean(waf_90_upr_2015), waf_100_upr_2015, flux_ref_2015_upr),
-  mean_lwr = c(mean(waf_10_lwr_2015),mean(waf_20_lwr_2015),mean(waf_30_lwr_2015),mean(waf_40_lwr_2015),mean(waf_50_lwr_2015),mean(waf_60_lwr_2015),mean(waf_70_lwr_2015),mean(waf_80_lwr_2015),mean(waf_90_lwr_2015), waf_100_lwr_2015, flux_ref_2015_lwr),
-  max_mean = c(max(waf_10_mcmean), max(waf_20_mcmean), max(waf_30_mcmean), max(waf_40_mcmean), max(waf_50_mcmean), max(waf_60_mcmean), max(waf_70_mcmean), max(waf_80_mcmean), max(waf_90_mcmean), max(waf_100_mcmean), max(flux_ref_2015)),
-  min_mean = c(min(waf_10_mcmean), min(waf_20_mcmean), min(waf_30_mcmean), min(waf_40_mcmean), min(waf_50_mcmean), min(waf_60_mcmean), min(waf_70_mcmean), min(waf_80_mcmean), min(waf_90_mcmean), min(waf_100_mcmean), min(flux_ref_2015)))
-
-mwf2015$percent_missing_data <- factor(mwf2015$percent_missing_data, levels = c("Ref",0,10,20,30,40,50,60,70,80,90))
-  
-ggplot(data = mwf2015, aes(x = percent_missing_data))+
-  geom_point(aes(y = mean_wflux))+
- geom_errorbar(aes(ymin = mean_lwr, ymax = mean_upr, col = "Prediction interval range"))+
-  labs(title = "Range of prediction intervals and mean resampled resampled fluxes")+
-  theme_minimal(base_size = 15)
-
-ggplot(data = mwf2015, aes(x = percent_missing_data))+
-  geom_point(aes(y = mean_wflux))+
-  geom_errorbar(aes(ymin = min_mean, ymax = max_mean, col = "Prediction interval range"))+
-  labs(title = "Mean, max and min average of resampled fluxes")+
-  theme_minimal(base_size = 15)
-
-
-mwf2015 %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
-  
-error_mwf2015 <- mwf2015
-ref_2015 <- matrix(rep(as.numeric(mwf2015[11,2:6]),11), ncol = 5, nrow = 11, byrow = T)
-error_mwf2015[,2:6] <- (mwf2015[,2:6]-ref_2015)/ref_2015*100
-
-error_mwf2015 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,0,"Ref"),
-  mean_wflux = c(mean((waf_10_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((waf_20_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((waf_30_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((waf_40_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((waf_50_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((waf_60_mcmean-flux_ref_2015)/flux_ref_2015*100),
-                 mean((waf_70_mcmean-flux_ref_2015)/flux_ref_2015*100),
-                 mean((waf_80_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((waf_90_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((waf_100_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-                 mean((flux_ref_2015-flux_ref_2015)/flux_ref_2015*100)),
-  max_mean = c(max((waf_10_mcmean-flux_ref_2015)/flux_ref_2015*100),
-               max((waf_20_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_30_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_40_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_50_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_60_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_70_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_80_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_90_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((waf_100_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               max((flux_ref_2015-flux_ref_2015)/flux_ref_2015*100)),
-  min_mean = c(min((waf_10_mcmean-flux_ref_2015)/flux_ref_2015*100),
-               min((waf_20_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_30_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_40_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_50_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_60_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_70_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_80_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_90_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((waf_100_mcmean-flux_ref_2015)/flux_ref_2015*100), 
-               min((flux_ref_2015-flux_ref_2015)/flux_ref_2015*100)))
-
-error_mwf2015$percent_missing_data <- factor(error_mwf2015$percent_missing_data, levels = c("Ref",0,10,20,30,40,50,60,70,80,90))
-
-
-ggplot(data = error_mwf2015, aes(x = percent_missing_data))+
-  geom_point(aes(y = mean_wflux))+
-  geom_errorbar(aes(ymin = min_mean, ymax = max_mean, col = "Prediction interval range"))+
-  labs(title = "Mean, max and min error of resampled fluxes", y = "Error in %")+
-  theme_minimal(base_size = 15)+
-  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
-
-error_mwf2015 %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
-```
-
-
-
-
-
-
-```{r exit, cache = F}
-
-knitr::knit_exit()
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Archives
-
-```{r most-complete-years-function}
-compare_docfluxes <- function(data, frac){ #results = c(sum doc kg/year, sum doc kg/s, weighted doc kg/y, nb obs, relative difference between weighted and sum for the year)
-    results <<- c()
-    df <- sample_frac(data, frac)
-    df$doc_flux_mg <- with(df, doc_mg.L * q_L.s * period) # Period is in second.
-    results[1] <<- sum(df$doc_flux_mg, na.rm = T)*1e-6 #sum of all periods amounts. 
-    results[2] <<- sum(with(df, doc_mg.L* q_L.s ), na.rm = T)*1e-6 #sum of daily amounts.
-    results[3] <<- sum(with(df, doc_mg.L* q_L.s), na.rm = T)*1e-6 / with(df, sum(q_L.s, na.rm = T)) * with(df, mean(q_L.s, na.rm = T))  * 24 * 60 * 60 * 365
-    results[4] <<- dim(df)[1]
-    results[5] <<- results[3]/results[1]
-    results[6] <<- sum(df$period, na.rm = T) / (24*60*60) # sum of period in days
-    return(results)
-    
-}
-
-compare_docfluxes_interpol <- function(data, frac){ #results = c(sum doc kg/year, sum doc kg/s, weighted doc kg/y, nb obs, relative difference between weighted and sum for the year)
-    results <<- c()
-    df <- sample_frac(data, frac)
-    df$doc_flux_interpol <- with(df, doc_interpol * q_L.s * 24*60*60) # Period is in second.
-    results[1] <<- sum(df$doc_flux_interpol, na.rm = T)*1e-6 #sum of all periods amounts. 
-    results[2] <<- sum(with(df, doc_interpol* q_L.s ), na.rm = T)*1e-6 #sum of daily amounts.
-    results[3] <<- sum(with(df, doc_interpol* q_L.s), na.rm = T)*1e-6 / with(df, sum(q_L.s, na.rm = T)) * with(df, mean(q_L.s, na.rm = T))  * 24 * 60 * 60 * 365
-    results[4] <<- dim(df)[1]
-    results[5] <<- results[3]/results[1]
-    results[6] <<- sum(df$period, na.rm = T) / (24*60*60) # sum of period in days
-    return(results)
-    
-}
-
-```
-## Year 2015
-
-### Comparaison sum and weighted
-
-```{r comparison-2015}
-avenelles_2015 <- subset(avenelles, year == 2015)
-avenelles_2015 <- avenelles_2015 %>% tidyr::complete(Date = seq(min(Date), max(Date), by = "1 day"))
-
-doc_2015 <-  data.frame(compare_docfluxes(avenelles_2015, 1), 
-                       compare_docfluxes(avenelles_2015, 0.1), 
-                       compare_docfluxes(avenelles_2015, 0.25), 
-                       compare_docfluxes(avenelles_2015, 0.5), 
-                       compare_docfluxes(avenelles_2015, 0.75), 
-                       compare_docfluxes(avenelles_2015, 0.9))
-
-doc_2015 <- rbind(doc_2015, c(doc_2015[3,1]/doc_2015[1,1],
-                              doc_2015[3,2]/doc_2015[1,1],
-                              doc_2015[3,3]/doc_2015[1,1],
-                              doc_2015[3,4]/doc_2015[1,1],
-                              doc_2015[3,5]/doc_2015[1,1],
-                              doc_2015[3,6]/doc_2015[1,1]))
-
-rownames(doc_2015) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
-
-knitr::kable(doc_2015, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
-             caption = "DOC fluxes 2015") %>% 
-  kableExtra::kable_styling()
-
-```
-
-### complete year
-
-Does not work because no discharge values in the extended dataset
-
-```{r interpolation-na} 
-avenelles_2015$doc_interpol <- imputeTS::na_interpolation(avenelles_2015$doc_mg.L, maxgap = 2*24*60*60) # débit toutes les 5 min, gap de 1 jour
-
-doc_2015 <-  data.frame(compare_docfluxes_interpol(avenelles_2015, 1), 
-                       compare_docfluxes_interpol(avenelles_2015, 0.1), 
-                       compare_docfluxes_interpol(avenelles_2015, 0.25), 
-                       compare_docfluxes_interpol(avenelles_2015, 0.5), 
-                       compare_docfluxes_interpol(avenelles_2015, 0.75), 
-                       compare_docfluxes_interpol(avenelles_2015, 0.9))
-
-doc_2015 <- rbind(doc_2015, c(doc_2015[3,1]/doc_2015[1,1],
-                              doc_2015[3,2]/doc_2015[1,1],
-                              doc_2015[3,3]/doc_2015[1,1],
-                              doc_2015[3,4]/doc_2015[1,1],
-                              doc_2015[3,5]/doc_2015[1,1],
-                              doc_2015[3,6]/doc_2015[1,1]))
-
-rownames(doc_2015) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
-
-knitr::kable(doc_2015, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
-             caption = "DOC fluxes 2015 interpol") %>% 
-  kableExtra::kable_styling()
-
-
-avenelles_2015$doc_flux_mg <- with(avenelles_2015, doc_mg.L * q_L.s * period)
-avenelles_2015$doc_flux_interpol <- with(avenelles_2015, doc_interpol * q_L.s * period)
-
-ggplot(avenelles_2015)+geom_point(aes(x = Date, y = cumsum(tidyr::replace_na(doc_flux_mg,0)), col = "measured"), size = 2)+
-  geom_point(data = avenelles_2015, aes(x = Date, y = cumsum(tidyr::replace_na(doc_flux_interpol,0)), col = "interpol"), size = 1)+
-  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
-  theme_minimal(base_size = 15)+
-  theme(legend.position = "bottom")
-
-ggplot(avenelles_2015, aes(x=Date))+geom_point(aes(y=doc_mg.L, col = "measured"), size = 2)+
-  geom_point(aes(y=doc_interpol, col = "predict"), size = 1)+
-  theme_minimal(base_size = 15)
-
-```
-
-
-
-### Frequency
-
-```{r frequency-2015}
-avenelles_2015_day <- avenelles_2015 %>% group_by(Date) %>% summarize_all(mean, na.rm = T)
-avenelles_2015_week <- avenelles_2015 %>% group_by(week) %>% summarize_all(mean, na.rm = T)
-avenelles_2015_month <- avenelles_2015 %>% group_by(month) %>% summarize_all(mean, na.rm = T)
-
-nb_days_doc_2015 <- avenelles_2015 %>% filter(!is.na(doc_mg.L)) %>% pull(Date) %>% unique() %>% length()
-
-
-# DOC 
-
-avenelles_2015_day$doc_flux_mg <- with(avenelles_2015_day, doc_mg.L * q_L.s * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. 
-sum_doc_flux_avenelles_2015_day <- sum(avenelles_2015_day$doc_flux_mg, na.rm = T)*1e-6
-
-avenelles_2015_week$doc_flux_mg <- with(avenelles_2015_week, doc_mg.L * q_L.s * 7 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
-sum_doc_flux_avenelles_2015_week <- sum(avenelles_2015_week$doc_flux_mg, na.rm = T)*1e-6
-
-avenelles_2015_month$doc_flux_mg <- with(avenelles_2015_month, doc_mg.L * q_L.s * 30.42 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
-sum_doc_flux_avenelles_2015_month <- sum(avenelles_2015_month$doc_flux_mg, na.rm = T)*1e-6
-
-ggplot()+geom_point(data = avenelles_2015_day, aes(x = Date, y = cumsum(doc_flux_mg), col = "per day"), size = 1)+
-  geom_point(data = avenelles_2015_week, aes(x = Date, y = cumsum(doc_flux_mg), col = "per week"), size = 2)+
-  geom_point(data = avenelles_2015_month, aes(x = Date, y = cumsum(doc_flux_mg), col = "per month"), size = 3)+
-  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
-  theme_minimal(base_size = 15)+
-  theme(legend.position = "bottom")
-
-
-knitr::kable(data.frame(
-  "nb of days sampled doc" = nb_days_doc_2015,
-  "doc flux" = c(sum_doc_flux_avenelles_2015_day, sum_doc_flux_avenelles_2015_week, sum_doc_flux_avenelles_2015_month),
-  "% of daily doc value" = c(sum_doc_flux_avenelles_2015_day/sum_doc_flux_avenelles_2015_day*100, sum_doc_flux_avenelles_2015_week/sum_doc_flux_avenelles_2015_day*100, sum_doc_flux_avenelles_2015_month/sum_doc_flux_avenelles_2015_day*100),
-  row.names = c("day","week","month")),
-  digits = 2
-) %>% kable_paper
-```
-
-
-
-## Year 2017
-
-### Comparaison sum and weighted
-
-```{r comparison-2017}
-avenelles_2017 <- subset(avenelles, year == 2017)
-
-doc_2017 <-  data.frame(compare_docfluxes(avenelles_2017, 1), 
-                       compare_docfluxes(avenelles_2017, 0.1), 
-                       compare_docfluxes(avenelles_2017, 0.25), 
-                       compare_docfluxes(avenelles_2017, 0.5), 
-                       compare_docfluxes(avenelles_2017, 0.75), 
-                       compare_docfluxes(avenelles_2017, 0.9))
-
-doc_2017 <- rbind(doc_2017, c(doc_2017[3,1]/doc_2017[1,1],
-                              doc_2017[3,2]/doc_2017[1,1],
-                              doc_2017[3,3]/doc_2017[1,1],
-                              doc_2017[3,4]/doc_2017[1,1],
-                              doc_2017[3,5]/doc_2017[1,1],
-                              doc_2017[3,6]/doc_2017[1,1]))
-
-rownames(doc_2017) <- c("Sum DOC kg/year", "Sum DOC kg/s", "Weighted DOC kg/year", "Number of observations", "W/S","sum of period","W/S1")
-
-knitr::kable(doc_2017, digits = 2, col.names = c("Full year", "10%", "25%","50%","75%","90%"), 
-             caption = "DOC fluxes 2017") %>% 
-  kableExtra::kable_styling()
-
-```
-
-### Frequency
-
-```{r frequency-2017}
-avenelles_2017_day <- avenelles_2017 %>% group_by(Date) %>% summarize_all(mean, na.rm = T)
-avenelles_2017_week <- avenelles_2017 %>% group_by(week) %>% summarize_all(mean, na.rm = T)
-avenelles_2017_month <- avenelles_2017 %>% group_by(month) %>% summarize_all(mean, na.rm = T)
-
-nb_days_doc_2017 <- avenelles_2017 %>% filter(!is.na(doc_mg.L)) %>% pull(Date) %>% unique() %>% length()
-
-
-# DOC 
-
-avenelles_2017_day$doc_flux_mg <- with(avenelles_2017_day, doc_mg.L * q_L.s * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. 
-sum_doc_flux_avenelles_2017_day <- sum(avenelles_2017_day$doc_flux_mg, na.rm = T)*1e-6
-
-avenelles_2017_week$doc_flux_mg <- with(avenelles_2017_week, doc_mg.L * q_L.s * 7 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
-sum_doc_flux_avenelles_2017_week <- sum(avenelles_2017_week$doc_flux_mg, na.rm = T)*1e-6
-
-avenelles_2017_month$doc_flux_mg <- with(avenelles_2017_month, doc_mg.L * q_L.s * 30.42 * 24 * 3600) %>% tidyr::replace_na(0) # conversion q from m3/s to L/period. Period is in hours.
-sum_doc_flux_avenelles_2017_month <- sum(avenelles_2017_month$doc_flux_mg, na.rm = T)*1e-6
-
-ggplot()+geom_point(data = avenelles_2017_day, aes(x = Date, y = cumsum(doc_flux_mg), col = "per day"), size = 1)+
-  geom_point(data = avenelles_2017_week, aes(x = Date, y = cumsum(doc_flux_mg), col = "per week"), size = 2)+
-  geom_point(data = avenelles_2017_month, aes(x = Date, y = cumsum(doc_flux_mg), col = "per month"), size = 3)+
-  labs(y = "Somme cumulée du flux de DOC en mg", col = "Sampling frequency")+
-  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
-  theme_minimal(base_size = 15)+
-  theme(legend.position = "bottom")
-
-
-knitr::kable(data.frame(
-  "nb of days sampled doc" = nb_days_doc_2017,
-  "doc flux" = c(sum_doc_flux_avenelles_2017_day, sum_doc_flux_avenelles_2017_week, sum_doc_flux_avenelles_2017_month),
-  "% of daily doc value" = c(sum_doc_flux_avenelles_2017_day/sum_doc_flux_avenelles_2017_day*100, sum_doc_flux_avenelles_2017_week/sum_doc_flux_avenelles_2017_day*100, sum_doc_flux_avenelles_2017_month/sum_doc_flux_avenelles_2017_day*100),
-  row.names = c("day","week","month")),
-  digits = 2
-) %>% kable_paper
-```

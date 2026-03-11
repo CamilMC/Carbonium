@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.alig
                       cache = T)
 ```
 
-```{r libraries}
+```{r libraries, cache = F}
 
 library(ggplot2)
 library(ggpubr)
@@ -88,8 +88,6 @@ bv <- 5570
 
 
 ```{r summary-data}
-
-
 summary_isere <- merge(
 isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise(nb_poc = n()),
 isere %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise(nb_cmes = n()),
@@ -101,6 +99,12 @@ by = "year", all = T) %>%
 
 summary_isere %>% knitr::kable(caption = "Nombre d'observations de DOC, POC, CMES et débit par an") %>% kableExtra::kable_styling()
 
+cat("mean Q", mean(isere$q_m3.s, na.rm = T))
+cat("range OC mg/L (0-25-50-75-100)", quantile(with(isere, poc_percent*1e-2*mes_mg.L), na.rm = T))
+```
+
+
+```{r poc-isere}
 # poc_isere: only rows with defined poc_percent to fit model MES~POC
 poc_isere <- filter(isere, !is.na(poc_percent))
 poc_isere$mes_for_fit <- poc_isere$mes_mg.L/1000
@@ -2308,7 +2312,9 @@ q_mat_2020  <- q_mat[,index_2020]
 mean_q_2020 <- apply(q_mat, 1, mean, na.rm = T)
 
 
-
+# Completude?
+cat("nb obs 2020:", dim(flux_ton_mat_2020)[2])
+cat("Period in s in Isere = ", sum(isere_2020$period), "; nb of s in 1 year = ", 365*24*60*60)
 ```
 
 ## 10% missing
@@ -2319,8 +2325,23 @@ waf_10_2020 <- list()
 
 for(i in 1:n_rep){
   block_size <- floor(n_ise_2020*0.10)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+  # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_10_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_10_2020 <- q_mat_2020[, -idx_block]
@@ -2351,8 +2372,23 @@ waf_20_2020 <- list()
 
 for(i in 1:n_rep){
    block_size <- floor(n_ise_2020*0.20)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+   start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_20_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_20_2020 <- q_mat_2020[, -idx_block]
@@ -2383,8 +2419,23 @@ waf_30_2020 <- list()
 
 for(i in 1:n_rep){
  block_size <- floor(n_ise_2020*0.30)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_30_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_30_2020 <- q_mat_2020[, -idx_block]
@@ -2415,8 +2466,23 @@ waf_40_2020 <- list()
 
 for(i in 1:n_rep){
  block_size <- floor(n_ise_2020*0.40)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_40_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_40_2020 <- q_mat_2020[, -idx_block]
@@ -2448,8 +2514,23 @@ waf_50_2020 <- list()
 
 for(i in 1:n_rep){
  block_size <- floor(n_ise_2020*0.50)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_50_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_50_2020 <- q_mat_2020[, -idx_block]
@@ -2473,6 +2554,8 @@ waf_50_lwr_2020 <- lapply(waf_50_2020, quantile, 0.025) %>% unlist()
 
 ## 60% missing
 
+from here we select a block instead of removing it
+
 ```{r percent60-2020}
 
 
@@ -2480,8 +2563,23 @@ waf_60_2020 <- list()
 
 for(i in 1:n_rep){
   block_size <- floor(n_ise_2020*0.60)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+   start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_60_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_60_2020 <- q_mat_2020[, -idx_block]
@@ -2512,8 +2610,23 @@ waf_70_2020 <- list()
 
 for(i in 1:n_rep){
   block_size <- floor(n_ise_2020*0.70)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+   start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+  # 
+    # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_70_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_70_2020 <- q_mat_2020[, -idx_block]
@@ -2544,9 +2657,24 @@ waf_80_2020 <- list()
 
 for(i in 1:n_rep){
  block_size <- floor(n_ise_2020*0.80)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
-  
+   start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
+  # 
   ftsm_80_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_80_2020 <- q_mat_2020[, -idx_block]
 
@@ -2576,8 +2704,23 @@ waf_90_2020 <- list()
 
 for(i in 1:n_rep){
  block_size <- floor(n_ise_2020*0.90)
-  start_idx <- sample(1:(n_ise_2020-block_size + 1),1) # choisit aléatoirement une colonne où faire commencer le bloc manquant
-  idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ start_idx <- sample(1:n_ise_2020, 1) # choisit aléatoirement une colonne où faire commencer le bloc choisi
+  # idx_block <- start_idx:(start_idx + block_size - 1) # idx des colonnes du bloc
+ 
+   # Calculer les indices du bloc (avec retour au début si nécessaire)
+  if(start_idx + block_size - 1 <= n_ise_2020){
+    # Le bloc ne dépasse pas : bloc simple
+    idx_block <- start_idx:(start_idx + block_size - 1)
+  } else {
+    # Le bloc dépasse : il se sépare en 2 parties
+    # Partie 1 : de start_idx à la fin
+    part1 <- start_idx:n_ise_2020
+    # Partie 2 : du début jusqu'à compléter block_size
+    remaining <- block_size - length(part1)
+    part2 <- 1:remaining
+    # Combiner les deux parties
+    idx_block <- c(part1, part2)
+  }
   
   ftsm_90_2020 <- flux_ton.s_mat_2020[,-idx_block]
   q_90_2020 <- q_mat_2020[, -idx_block]
@@ -2630,34 +2773,6 @@ The "error" represents the range in which resampled interannual mean fall. Max v
 
 ```{r weighted-fluxes-compared-to-ref}
 
-mwf2020 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,0,"Ref"),
-  mean_wflux = c(mean(waf_10_mcmean), mean(waf_20_mcmean), mean(waf_30_mcmean), mean(waf_40_mcmean), mean(waf_50_mcmean), mean(waf_60_mcmean), mean(waf_70_mcmean), mean(waf_80_mcmean), mean(waf_90_mcmean), mean(waf_100_mcmean), mean(flux_ref_2020)),
-  mean_upr = c(mean(waf_10_upr_2020),mean(waf_20_upr_2020),mean(waf_30_upr_2020),mean(waf_40_upr_2020),mean(waf_50_upr_2020),mean(waf_60_upr_2020),mean(waf_70_upr_2020),mean(waf_80_upr_2020),mean(waf_90_upr_2020), waf_100_upr_2020, flux_ref_2020_upr),
-  mean_lwr = c(mean(waf_10_lwr_2020),mean(waf_20_lwr_2020),mean(waf_30_lwr_2020),mean(waf_40_lwr_2020),mean(waf_50_lwr_2020),mean(waf_60_lwr_2020),mean(waf_70_lwr_2020),mean(waf_80_lwr_2020),mean(waf_90_lwr_2020), waf_100_lwr_2020, flux_ref_2020_lwr),
-  max_mean = c(max(waf_10_mcmean), max(waf_20_mcmean), max(waf_30_mcmean), max(waf_40_mcmean), max(waf_50_mcmean), max(waf_60_mcmean), max(waf_70_mcmean), max(waf_80_mcmean), max(waf_90_mcmean), max(waf_100_mcmean), max(flux_ref_2020)),
-  min_mean = c(min(waf_10_mcmean), min(waf_20_mcmean), min(waf_30_mcmean), min(waf_40_mcmean), min(waf_50_mcmean), min(waf_60_mcmean), min(waf_70_mcmean), min(waf_80_mcmean), min(waf_90_mcmean), min(waf_100_mcmean), min(flux_ref_2020)))
-
-mwf2020$percent_missing_data <- factor(mwf2020$percent_missing_data, levels = c("Ref",0,10,20,30,40,50,60,70,80,90))
-  
-ggplot(data = mwf2020, aes(x = percent_missing_data))+
-  geom_point(aes(y = mean_wflux))+
- geom_errorbar(aes(ymin = mean_lwr, ymax = mean_upr, col = "Prediction interval range"))+
-  labs(title = "Range of prediction intervals and mean resampled resampled fluxes")+
-  theme_minimal(base_size = 15)
-
-ggplot(data = mwf2020, aes(x = percent_missing_data))+
-  geom_point(aes(y = mean_wflux))+
-  geom_errorbar(aes(ymin = min_mean, ymax = max_mean, col = "Prediction interval range"))+
-  labs(title = "Mean, max and min average of resampled fluxes")+
-  theme_minimal(base_size = 15)
-
-
-mwf2020 %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
-  
-error_mwf2020 <- mwf2020
-ref_2020 <- matrix(rep(as.numeric(mwf2020[11,2:6]),11), ncol = 5, nrow = 11, byrow = T)
-error_mwf2020[,2:6] <- (mwf2020[,2:6]-ref_2020)/ref_2020*100
-
 error_mwf2020 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,0,"Ref"),
   mean_wflux = c(mean((waf_10_mcmean-flux_ref_2020)/flux_ref_2020*100), 
                  mean((waf_20_mcmean-flux_ref_2020)/flux_ref_2020*100), 
@@ -2695,7 +2810,6 @@ error_mwf2020 <- data.frame(percent_missing_data = c(10,20,30,40,50,60,70,80,90,
 
 error_mwf2020$percent_missing_data <- factor(error_mwf2020$percent_missing_data, levels = c("Ref",0,10,20,30,40,50,60,70,80,90))
 
-
 ggplot(data = error_mwf2020, aes(x = percent_missing_data))+
   geom_point(aes(y = mean_wflux))+
   geom_errorbar(aes(ymin = min_mean, ymax = max_mean, col = "Prediction interval range"))+
@@ -2704,7 +2818,34 @@ ggplot(data = error_mwf2020, aes(x = percent_missing_data))+
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
 
 error_mwf2020 %>% knitr::kable(digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+# boxplot
+error_boxplot <- data.frame("M10" = (waf_10_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M20" = (waf_20_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M30" = (waf_30_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M40" = (waf_40_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M50" = (waf_50_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M60" = (waf_60_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M70" = (waf_70_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M80" = (waf_80_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M90" = (waf_90_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "M0" = (waf_100_mcmean-flux_ref_2020)/flux_ref_2020*100,
+                            "Ref" = (flux_ref_2020-flux_ref_2020)/flux_ref_2020*100
+                            )
+
+error_boxplot_long <- tidyr::pivot_longer(data = error_boxplot, cols = 1:11, names_to = "percent_missing", values_to = "error_percent")
+error_boxplot_long$percent_missing <- factor(error_boxplot_long$percent_missing, levels = c("Ref","M0","M10","M20","M30","M40","M50","M60","M70","M80","M90"))
+error_boxplot_long$Site <- "Isere"
+error_boxplot_long$OC <- "POC"
+
+write.csv(error_boxplot_long, "error_boxplot_long_isere.csv")
+
+ggplot(error_boxplot_long)+
+  geom_boxplot(aes(y=error_percent, x=percent_missing))+
+  theme_minimal()
 ```
+
+
 
 
 
