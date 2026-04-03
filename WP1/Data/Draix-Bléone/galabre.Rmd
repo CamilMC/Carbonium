@@ -688,8 +688,9 @@ ggplot()+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
-knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+ggsave("flux_galabre.svg")
 
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 
 ```
 
@@ -716,8 +717,6 @@ annual_sflux_df <- data.frame(year = unique(galabre_nas$year),
                         annual_flux_pi_upper = annual_sflux_pi[3,])
 ```
 
-
-
 ```{r interannual-sflux-reference, eval = T}
 interannual_sflux_ton.y <- rowMeans(annual_sflux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
 interannual_sflux_pi <- quantile(interannual_sflux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
@@ -736,7 +735,7 @@ total_sflux_df$group <- c(rep("annual", length(unique(galabre_nas$year))), "inte
 ```{r interannual-sflux-reference-plot}
 
 ggplot()+
-  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
     geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, linewidth = 0.8)+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, linewidth = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
@@ -745,7 +744,10 @@ ggplot()+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
-knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+ggsave("sflux_galabre.svg")
+
+
+knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 
 
 ```
