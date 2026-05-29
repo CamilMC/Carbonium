@@ -64,7 +64,7 @@ cat("range OC (0-25-50-75-100)", quantile(with(arles, doc_mg.L), na.rm = T))
 n <- 100000
 
 ggarrange(
-ggplot(subset(arles, year %in% c(2007:2016)), aes(x = commondate))+
+ggplot(subset(arles, year %in% c(2007:2007)), aes(x = commondate))+
   geom_point(aes(y = q_m3.s, col = "Débit, m3/s"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("lightblue"), name = "")+
@@ -73,7 +73,7 @@ ggplot(subset(arles, year %in% c(2007:2016)), aes(x = commondate))+
   theme_minimal(base_size = 15)+
   theme(legend.position = "none"),
 
-ggplot(subset(arles, year %in% c(2007:2016)), aes(x = commondate))+
+ggplot(subset(arles, year %in% c(2007:2007)), aes(x = commondate))+
   geom_point(aes(y = doc_mg.L, col = "DOC, mg.L"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("palegreen4"), name = "")+
@@ -88,7 +88,7 @@ ggplot(subset(arles, year %in% c(2007:2016)), aes(x = commondate))+
 
 On considère que l'erreur sur DOC vient de la mesure par analyse TOC.
 
-```{r uncertainties}
+```{r constant-numbers}
 complete_years <- c(2007,2008,2009)
 nyears <- length(complete_years)
 
@@ -113,7 +113,7 @@ doc_noise <- doc_cv*doc_random
 doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
 
 # Q matrix
-q_meas <- matrix(arles_flux$q_m3.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+q_meas <- matrix(arles_flux$q_m3.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector arles_for_gnls$q_m3.s
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
@@ -210,7 +210,10 @@ ggplot()+
 knitr::kable(total_sflux_df, digits = 6, row.names = F) %>% kableExtra::kable_styling()
 
 ggsave("sflux_arles.svg")
+```
 
+
+```{r load-cache-specific-flux, eval = F}
 list.files("arles_test_methode_cache/html/")
 load_cache(label = "specific-flux", path = "arles_test_methode_cache/html/", envir = .GlobalEnv)
 load("arles_test_method_cache/html/specific-flux_c3fe67b272eba528eebc27dbdf147908.RData")
@@ -474,7 +477,7 @@ knitr::kable(total_sflux_day4_df, digits = 6, row.names = F) %>% kableExtra::kab
 
 ```{r arles-week, cache.lazy = F}
 # prepare df
-arles_group_week <- arles_time %>% mutate("week" = week(Date), year = year(Date), DateHeure = NULL) %>% group_by(week,year) # group isere_time by week
+arles_group_week <- arles_time %>% mutate("week" = week(Date), year = year(Date), DateHeure = NULL) %>% group_by(week,year) # group arles_time by week
 nrow_week <- n_groups(arles_group_week)
 
 
@@ -590,7 +593,7 @@ knitr::kable(total_sflux_week_df, digits = 6, row.names = F) %>% kableExtra::kab
 
 ```{r arles-week2, cache.lazy = F}
 # prepare df
-arles_group_week2 <- arles_time %>% mutate(week = week(Date), week2 =  floor(as.numeric(week - min(week)) / 2), year = year(Date), Date = NULL) %>% group_by(week2,year) # group isere_time by week2
+arles_group_week2 <- arles_time %>% mutate(week = week(Date), week2 =  floor(as.numeric(week - min(week)) / 2), year = year(Date), Date = NULL) %>% group_by(week2,year) # group arles_time by week2
 nrow_week2 <- n_groups(arles_group_week2)
 
 
@@ -702,7 +705,7 @@ ggplot()+
 
 ```{r arles-month, cache.lazy = F}
 # prepare df
-arles_group_month <- arles_time %>% mutate(week = week(Date), month =  floor(as.numeric(week - min(week)) / 2), year = year(Date), Date = NULL) %>% group_by(month,year) # group isere_time by month
+arles_group_month <- arles_time %>% mutate(week = week(Date), month =  floor(as.numeric(week - min(week)) / 2), year = year(Date), Date = NULL) %>% group_by(month,year) # group arles_time by month
 nrow_month <- n_groups(arles_group_month)
 
 
@@ -1365,6 +1368,136 @@ ggplot(error_boxplot_long)+
 ```
 
 
+
+# Compare biais weighting method
+
+```{r load-data-for-biais, eval = F}
+list.files("arles_cache/html/")
+#load("arles_cache/html/constant-numbers_a01f3a223c35de779edf5e8e955f3746.RData")
+
+knitr::load_cache(label = "constant-numbers", path = "arles_cache/html/", envir = .GlobalEnv)
+
+```
+
+```{r weighted-fluxes-100}
+# 2007 ---- 
+arles_2007 <- arles_flux %>% filter(year == 2007)
+
+percent_year_2007 <- round(dim(arles_2007)[1]/365*100, digits = 2)
+
+index_2007 <- which(arles_flux$year == 2007) # list of indices corresponding to each year
+flux_ton.s_mat_2007 <- flux_ton.s_mat[,index_2007]
+flux_ton_mat_2007 <- flux_ton_mat[,index_2007]
+q_mat_2007  <- q_mat[,index_2007]
+mean_q_2007 <- apply(q_mat, 1, mean, na.rm = T)
+
+
+flux_ref_2007 <- apply(flux_ton_mat_2007, 1, sum, na.rm = T)
+mean_q_2007 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2007 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2007 <- apply(flux_ton.s_mat_2007, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2007 <- apply(q_mat_2007, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2007 <- sum_instant_flux_ton.y_2007 / sum_instant_q_2007 * mean_q_2007 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2007 <- mean(weighted_annual_flux_ton.y_2007, na.rm = T) # moyenne des simulations montecarlo 
+
+# 2008 ---- 
+arles_2008 <- arles_flux %>% filter(year == 2008)
+
+percent_year_2008 <- round(dim(arles_2008)[1]/365*100, digits = 2)
+
+index_2008 <- which(arles_flux$year == 2008) # list of indices corresponding to each year
+flux_ton.s_mat_2008 <- flux_ton.s_mat[,index_2008]
+flux_ton_mat_2008 <- flux_ton_mat[,index_2008]
+q_mat_2008  <- q_mat[,index_2008]
+mean_q_2008 <- apply(q_mat, 1, mean, na.rm = T)
+
+flux_ref_2008 <- apply(flux_ton_mat_2008, 1, sum, na.rm = T)
+mean_q_2008 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2008 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2008 <- apply(flux_ton.s_mat_2008, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2008 <- apply(q_mat_2008, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2008 <- sum_instant_flux_ton.y_2008 / sum_instant_q_2008 * mean_q_2008 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2008 <- mean(weighted_annual_flux_ton.y_2008, na.rm = T) # moyenne des simulations montecarlo 
+
+# 2009 ----
+arles_2009 <- arles_flux %>% filter(year == 2009)
+
+percent_year_2009 <- round(dim(arles_2009)[1]/365*100, digits = 2)
+
+index_2009 <- which(arles_flux$year == 2009) # list of indices corresponding to each year
+flux_ton.s_mat_2009 <- flux_ton.s_mat[,index_2009]
+flux_ton_mat_2009 <- flux_ton_mat[,index_2009]
+q_mat_2009  <- q_mat[,index_2009]
+mean_q_2009 <- apply(q_mat, 1, mean, na.rm = T)
+
+flux_ref_2009 <- apply(flux_ton_mat_2009, 1, sum, na.rm = T)
+mean_q_2009 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2009 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2009 <- apply(flux_ton.s_mat_2009, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2009 <- apply(q_mat_2009, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2009 <- sum_instant_flux_ton.y_2009 / sum_instant_q_2009 * mean_q_2009 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2009 <- mean(weighted_annual_flux_ton.y_2009, na.rm = T) # moyenne des simulations montecarlo 
+```
+
+
+```{r compare-biais}
+biais <- data.frame(year = c(2007,2008,2009),
+                    percent_year = c(percent_year_2007, percent_year_2008, percent_year_2009),
+                    mean_biais = c(mean((waf_100_mcmean_2007-flux_ref_2007)/flux_ref_2007*100),
+                                   mean((waf_100_mcmean_2008-flux_ref_2008)/flux_ref_2008*100),
+                                   mean((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100)),
+                    median_biais = c(median((waf_100_mcmean_2007-flux_ref_2007)/flux_ref_2007*100),
+                                   median((waf_100_mcmean_2008-flux_ref_2008)/flux_ref_2008*100),
+                                   median((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100)),
+                    max_biais = c(max((waf_100_mcmean_2007-flux_ref_2007)/flux_ref_2007*100),
+                                  max((waf_100_mcmean_2008-flux_ref_2008)/flux_ref_2008*100),
+                                  max((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100)),
+                    min_biais = c(min((waf_100_mcmean_2007-flux_ref_2007)/flux_ref_2007*100),
+                                  min((waf_100_mcmean_2008-flux_ref_2008)/flux_ref_2008*100),
+                                  min((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100)),
+                    qmean.qsum = c(median(mean_q_2007 / sum_instant_q_2007),
+                                   median(mean_q_2008 / sum_instant_q_2008),
+                                   median(mean_q_2009 / sum_instant_q_2009)),
+                    K = c(median(mean_q_2007 / sum_instant_q_2007* 60 * 60 * 24 * 365),
+                                   median(mean_q_2008 / sum_instant_q_2008* 60 * 60 * 24 * 365),
+                                   median(mean_q_2009 / sum_instant_q_2009* 60 * 60 * 24 * 365)))
+
+
+knitr::kable(biais, digits = 2) %>% kableExtra::kable_styling()
+
+ggplot(biais)+geom_point(aes(x = K, y = median_biais, col = as.factor(year)))+
+  geom_errorbar(aes(x = K, ymin = min_biais, ymax = max_biais))+
+  theme_minimal()
+
+lm(median_biais~K, data = biais) %>% summary()
+
+
+biais_boxplot <- data.frame("2007" = (waf_100_mcmean_2007-flux_ref_2007)/flux_ref_2007*100,
+                            "2008" = (waf_100_mcmean_2008-flux_ref_2008)/flux_ref_2008*100,
+                            "2009" = (waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100)
+
+biais_boxplot_long <- tidyr::pivot_longer(data = biais_boxplot, cols = 1:3, names_to = "year", values_to = "biais_percent")
+biais_boxplot_long$percent_year <- rep(c(percent_year_2007, percent_year_2008, percent_year_2009),1000)
+
+ggplot(biais_boxplot_long)+
+  geom_boxplot(aes(y=biais_percent, x=percent_year, col = year))+
+  theme_minimal()
+
+q_boxplot <- data.frame("2007" = mean_q_2007 / sum_instant_q_2007 * 60 * 24 *365,
+                            "2008" = mean_q_2008 / sum_instant_q_2008 * 60 * 24 *365,
+                            "2009" = mean_q_2009 / sum_instant_q_2009 * 60 * 24 *365)
+
+q_boxplot_long <- tidyr::pivot_longer(data = q_boxplot, cols = 1:3, names_to = "year", values_to = "qmean.qsum")
+
+ggplot()+
+  geom_boxplot(data = biais_boxplot_long, aes(y=biais_percent, x=year, col = "Biais"))+
+  geom_boxplot(data = q_boxplot_long, aes(y=qmean.qsum, x=year, col = "Q"))+
+    theme_minimal()
+
+```
 
 
 
