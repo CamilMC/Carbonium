@@ -198,7 +198,7 @@ total_sflux_df <- rbind(annual_sflux_df, interannual_sflux_df)
 total_sflux_df$group <- c(rep("annual", nyears), "interannual")
 
 ggplot()+
-  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
     geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
@@ -208,6 +208,12 @@ ggplot()+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 knitr::kable(total_sflux_df, digits = 6, row.names = F) %>% kableExtra::kable_styling()
+
+ggsave("sflux_arles.svg")
+
+list.files("arles_test_methode_cache/html/")
+load_cache(label = "specific-flux", path = "arles_test_methode_cache/html/", envir = .GlobalEnv)
+load("arles_test_method_cache/html/specific-flux_c3fe67b272eba528eebc27dbdf147908.RData")
 
 ```
 

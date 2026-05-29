@@ -3454,6 +3454,7 @@ ggplot(error_boxplot_long)+
   geom_boxplot(aes(y=error_percent, x=percent_missing))+
   theme_minimal()
 ```
+
 # Compare biais weighting method
 
 ```{r load-data-for-biais, eval = F}
@@ -3464,7 +3465,7 @@ knitr::load_cache(label = "constant-numbers", path = "isere_cache/html/", envir 
 
 ```
 
-```{r weighted-fluxes-100}
+```{r weighted-fluxes-100, cache.lazy=F}
 # 2015 ----
 isere_2015 <- isere_pwl %>% filter(year == 2015)
 
@@ -3480,10 +3481,10 @@ flux_ref_2015 <- apply(flux_ton_mat_2015, 1, sum, na.rm = T)
 mean_q_2015 <- apply(q_mat, 1, mean, na.rm = T)
 q_sum_2015 <- apply(q_mat, 1, mean, na.rm = T)
 
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2015, 1, sum, na.rm = T) # same for Q
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-waf_100_mcmean_2015 <- mean(weighted_annual_flux_ton.y_100, na.rm = T) # moyenne des simulations montecarlo 
+sum_instant_flux_ton.y_2015 <- apply(flux_ton.s_mat_2015, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2015 <- apply(q_mat_2015, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2015 <- sum_instant_flux_ton.y_2015 / sum_instant_q_2015 * mean_q_2015 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2015 <- mean(weighted_annual_flux_ton.y_2015, na.rm = T) # moyenne des simulations montecarlo 
 
 # 2016 ---- 
 isere_2016 <- isere_pwl %>% filter(year == 2016)
@@ -3501,10 +3502,10 @@ flux_ref_2016 <- apply(flux_ton_mat_2016, 1, sum, na.rm = T)
 mean_q_2016 <- apply(q_mat, 1, mean, na.rm = T)
 q_sum_2016 <- apply(q_mat, 1, mean, na.rm = T)
 
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2016, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2016, 1, sum, na.rm = T) # same for Q
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2016 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-waf_100_mcmean_2016 <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+sum_instant_flux_ton.y_2016 <- apply(flux_ton.s_mat_2016, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2016 <- apply(q_mat_2016, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2016 <- sum_instant_flux_ton.y_2016 / sum_instant_q_2016 * mean_q_2016 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2016 <- mean(weighted_annual_flux_ton.y_2016, na.rm = T) # moyenne des simulations montecarlo 
 
 # 2017 ---- 
 isere_2017 <- isere_pwl %>% filter(year == 2017)
@@ -3521,10 +3522,10 @@ flux_ref_2017 <- apply(flux_ton_mat_2017, 1, sum, na.rm = T)
 mean_q_2017 <- apply(q_mat, 1, mean, na.rm = T)
 q_sum_2017 <- apply(q_mat, 1, mean, na.rm = T)
 
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2017, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2017, 1, sum, na.rm = T) # same for Q
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2017 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-waf_100_mcmean_2017 <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+sum_instant_flux_ton.y_2017 <- apply(flux_ton.s_mat_2017, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2017 <- apply(q_mat_2017, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2017 <- sum_instant_flux_ton.y_2017 / sum_instant_q_2017 * mean_q_2017 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2017 <- mean(weighted_annual_flux_ton.y_2017, na.rm = T) # moyenne des simulations montecarlo 
 
 # 2019 ----
 isere_2019 <- isere_pwl %>% filter(year == 2019)
@@ -3541,10 +3542,10 @@ flux_ref_2019 <- apply(flux_ton_mat_2019, 1, sum, na.rm = T)
 mean_q_2019 <- apply(q_mat, 1, mean, na.rm = T)
 q_sum_2019 <- apply(q_mat, 1, mean, na.rm = T)
 
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2019, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2019, 1, sum, na.rm = T) # same for Q
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2019 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-waf_100_mcmean_2019 <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+sum_instant_flux_ton.y_2019 <- apply(flux_ton.s_mat_2019, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2019 <- apply(q_mat_2019, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2019 <- sum_instant_flux_ton.y_2019 / sum_instant_q_2019 * mean_q_2019 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2019 <- mean(weighted_annual_flux_ton.y_2019, na.rm = T) # moyenne des simulations montecarlo 
 
 # 2020 ----
 isere_2020 <- isere_pwl %>% filter(year == 2020)
@@ -3561,10 +3562,10 @@ flux_ref_2020 <- apply(flux_ton_mat_2020, 1, sum, na.rm = T)
 mean_q_2020 <- apply(q_mat, 1, mean, na.rm = T)
 q_sum_2020 <- apply(q_mat, 1, mean, na.rm = T)
 
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2020, 1, sum, na.rm = T) # same for Q
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-waf_100_mcmean_2020 <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+sum_instant_flux_ton.y_2020 <- apply(flux_ton.s_mat_2020, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2020 <- apply(q_mat_2020, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2020 <- sum_instant_flux_ton.y_2020 / sum_instant_q_2020 * mean_q_2020 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2020 <- mean(weighted_annual_flux_ton.y_2020, na.rm = T) # moyenne des simulations montecarlo 
 
 # 2021 ----
 isere_2021 <- isere_pwl %>% filter(year == 2021)
@@ -3581,10 +3582,10 @@ flux_ref_2021 <- apply(flux_ton_mat_2021, 1, sum, na.rm = T)
 mean_q_2021 <- apply(q_mat, 1, mean, na.rm = T)
 q_sum_2021 <- apply(q_mat, 1, mean, na.rm = T)
 
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2021, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2021, 1, sum, na.rm = T) # same for Q
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2021 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-waf_100_mcmean_2021 <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+sum_instant_flux_ton.y_2021 <- apply(flux_ton.s_mat_2021, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2021 <- apply(q_mat_2021, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2021 <- sum_instant_flux_ton.y_2021 / sum_instant_q_2021 * mean_q_2021 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2021 <- mean(weighted_annual_flux_ton.y_2021, na.rm = T) # moyenne des simulations montecarlo 
 
 # 2022 ----
 isere_2022 <- isere_pwl %>% filter(year == 2022)
@@ -3601,10 +3602,10 @@ flux_ref_2022 <- apply(flux_ton_mat_2022, 1, sum, na.rm = T)
 mean_q_2022 <- apply(q_mat, 1, mean, na.rm = T)
 q_sum_2022 <- apply(q_mat, 1, mean, na.rm = T)
 
-sum_instant_flux_ton.y_100 <- apply(flux_ton.s_mat_2022, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
-sum_instant_q_100 <- apply(q_mat_2022, 1, sum, na.rm = T) # same for Q
-weighted_annual_flux_ton.y_100 <- sum_instant_flux_ton.y_100 / sum_instant_q_100 * mean_q_2022 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
-waf_100_mcmean_2022 <- mean(weighted_annual_flux_ton.y_100) # moyenne des simulations montecarlo 
+sum_instant_flux_ton.y_2022 <- apply(flux_ton.s_mat_2022, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2022 <- apply(q_mat_2022, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2022 <- sum_instant_flux_ton.y_2022 / sum_instant_q_2022 * mean_q_2022 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2022 <- mean(weighted_annual_flux_ton.y_2022, na.rm = T) # moyenne des simulations montecarlo 
 ```
 
 
@@ -3638,36 +3639,61 @@ biais <- data.frame(year = c(2015,2016,2017,2019,2020,2021,2022),
                                   min((waf_100_mcmean_2019-flux_ref_2019)/flux_ref_2019*100),
                                   min((waf_100_mcmean_2020-flux_ref_2020)/flux_ref_2020*100),
                                   min((waf_100_mcmean_2021-flux_ref_2021)/flux_ref_2021*100),
-                                  min((waf_100_mcmean_2022-flux_ref_2022)/flux_ref_2022*100)))
+                                  min((waf_100_mcmean_2022-flux_ref_2022)/flux_ref_2022*100)),
+                    qmean.qsum = c(median(mean_q_2015 / sum_instant_q_2015),
+                                   median(mean_q_2016 / sum_instant_q_2016),
+                                   median(mean_q_2017 / sum_instant_q_2017),
+                                   median(mean_q_2019 / sum_instant_q_2019),
+                                   median(mean_q_2020 / sum_instant_q_2020),
+                                   median(mean_q_2021 / sum_instant_q_2021),
+                                   median(mean_q_2022 / sum_instant_q_2022)),
+                    K = c(median(mean_q_2015 / sum_instant_q_2015 * 60 * 60 * 24 * 365),
+                                   median(mean_q_2016 / sum_instant_q_2016* 60 * 60 * 24 * 365),
+                                   median(mean_q_2017 / sum_instant_q_2017* 60 * 60 * 24 * 365),
+                                   median(mean_q_2019 / sum_instant_q_2019* 60 * 60 * 24 * 365),
+                                   median(mean_q_2020 / sum_instant_q_2020* 60 * 60 * 24 * 365),
+                                   median(mean_q_2021 / sum_instant_q_2021* 60 * 60 * 24 * 365),
+                                   median(mean_q_2022 / sum_instant_q_2022* 60 * 60 * 24 * 365)))
 
 
 knitr::kable(biais, digits = 2) %>% kableExtra::kable_styling()
 
-ggplot(biais)+geom_point(aes(x=year, y = mean_biais))+
-  geom_errorbar(aes(x=year, ymin = min_biais, ymax = max_biais))
+ggplot(biais)+geom_point(aes(x = K, y = median_biais, col = as.factor(year)))+
+  geom_errorbar(aes(x = K, ymin = min_biais, ymax = max_biais))+
+  theme_minimal()
 
-ggplot(biais)+geom_point(aes(x=percent_year, y = mean_biais, col = as.factor(year)))+
-  geom_errorbar(aes(x=percent_year, ymin = min_biais, ymax = max_biais))
+lm(median_biais~K, data = biais) %>% summary()
 
 
 biais_boxplot <- data.frame("2015" = (waf_100_mcmean_2015-flux_ref_2015)/flux_ref_2015*100,
-                            "2016" = (waf_100_mcmean_2016-flux_ref_2019)/flux_ref_2016*100,
-                            "2017" = (waf_100_mcmean_2017-flux_ref_2019)/flux_ref_2017*100,
+                            "2016" = (waf_100_mcmean_2016-flux_ref_2016)/flux_ref_2016*100,
+                            "2017" = (waf_100_mcmean_2017-flux_ref_2017)/flux_ref_2017*100,
                             "2019" = (waf_100_mcmean_2019-flux_ref_2019)/flux_ref_2019*100,
-                            "2020" = (waf_100_mcmean_2020-flux_ref_2019)/flux_ref_2020*100,
-                            "2021" = (waf_100_mcmean_2021-flux_ref_2019)/flux_ref_2021*100,
-                            "2022" = (waf_100_mcmean_2022-flux_ref_2019)/flux_ref_2022*100)
+                            "2020" = (waf_100_mcmean_2020-flux_ref_2020)/flux_ref_2020*100,
+                            "2021" = (waf_100_mcmean_2021-flux_ref_2021)/flux_ref_2021*100,
+                            "2022" = (waf_100_mcmean_2022-flux_ref_2022)/flux_ref_2022*100)
 
 biais_boxplot_long <- tidyr::pivot_longer(data = biais_boxplot, cols = 1:7, names_to = "year", values_to = "biais_percent")
 biais_boxplot_long$percent_year <- rep(c(percent_year_2015, percent_year_2016, percent_year_2017, percent_year_2019, percent_year_2020, percent_year_2021, percent_year_2022),1000)
 
 ggplot(biais_boxplot_long)+
-  geom_boxplot(aes(y=biais_percent, x=year))+
-  theme_minimal()
-
-ggplot(biais_boxplot_long)+
   geom_boxplot(aes(y=biais_percent, x=percent_year, col = year))+
   theme_minimal()
+
+q_boxplot <- data.frame("2015" = mean_q_2015 / sum_instant_q_2015 * 60 * 24 *365,
+                            "2016" = mean_q_2016 / sum_instant_q_2016 * 60 * 24 *365,
+                            "2017" = mean_q_2017 / sum_instant_q_2017 * 60 * 24 *365,
+                            "2019" = mean_q_2019 / sum_instant_q_2019 * 60 * 24 *365,
+                            "2020" = mean_q_2020 / sum_instant_q_2020 * 60 * 24 *365,
+                            "2021" = mean_q_2021 / sum_instant_q_2021 * 60 * 24 *365,
+                            "2022" = mean_q_2022 / sum_instant_q_2022 * 60 * 24 *365)
+
+q_boxplot_long <- tidyr::pivot_longer(data = q_boxplot, cols = 1:7, names_to = "year", values_to = "qmean.qsum")
+
+ggplot()+
+  geom_boxplot(data = biais_boxplot_long, aes(y=biais_percent, x=year, col = "Biais"))+
+  geom_boxplot(data = q_boxplot_long, aes(y=qmean.qsum, x=year, col = "Q"))+
+    theme_minimal()
 
 ```
 

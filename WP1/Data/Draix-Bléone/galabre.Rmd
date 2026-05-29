@@ -331,8 +331,8 @@ na_lines <- which(is.na(galabre_gnls$mes_for_fit)) # 0
 zero_lines <- which(galabre_gnls$mes_for_fit == 0)
 fit_lines <- which(galabre_gnls$mes_for_fit != 0 & !is.na(galabre_gnls$mes_for_fit))
 
-galabre_pwl_gnls <- galabre_gnls[fit_lines, ]
-galabre_pwl_gnls$aspt <- aspt_value # from nls fitting
+galabre_nas_gnls <- galabre_gnls[fit_lines, ]
+galabre_nas_gnls$aspt <- aspt_value # from nls fitting
 
 nrow_boot <- nrow(coefs_boot)
 nrow_galabre_gnls <- nrow(galabre_gnls)
@@ -342,7 +342,7 @@ nrow_galabre_gnls <- nrow(galabre_gnls)
 ```{r pred-galabre-gnls, cache.lazy = F}
 
 # predict POC pour mes > 0
-poc_fitted <- predict(pocfitg, newdata = galabre_pwl_gnls, na.action = na.pass)
+poc_fitted <- predict(pocfitg, newdata = galabre_nas_gnls, na.action = na.pass)
 galabre_gnls$poc_fitted <- NA
 galabre_gnls[fit_lines, ]$poc_fitted <- poc_fitted
 galabre_gnls[zero_lines, ]$poc_fitted <- 0
@@ -2822,3 +2822,219 @@ ggplot(error_boxplot_long)+
 
 
 
+
+
+# Compare biais weighting method
+
+```{r load-data-for-biais, eval = F}
+list.files("galabre_cache/html/")
+#load("galabre_cache/html/constant-numbers_a01f3a223c35de779edf5e8e955f3746.RData")
+
+knitr::load_cache(label = "constant-numbers", path = "galabre_cache/html/", envir = .GlobalEnv)
+
+```
+
+```{r weighted-fluxes-100, cache.lazy = F}
+# 2009 ---- 
+galabre_2009 <- galabre_nas %>% filter(year == 2009)
+
+percent_year_2009 <- round(dim(galabre_2009)[1]/(365*24*60*60/(10*60))*100, digits = 2)
+
+index_2009 <- which(galabre_nas$year == 2009) # list of indices corresponding to each year
+flux_ton.s_mat_2009 <- flux_ton.s_mat[,index_2009]
+flux_ton_mat_2009 <- flux_ton_mat[,index_2009]
+q_mat_2009  <- q_mat[,index_2009]
+mean_q_2009 <- apply(q_mat, 1, mean, na.rm = T)
+
+
+flux_ref_2009 <- apply(flux_ton_mat_2009, 1, sum, na.rm = T)
+mean_q_2009 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2009 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2009 <- apply(flux_ton.s_mat_2009, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2009 <- apply(q_mat_2009, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2009 <- sum_instant_flux_ton.y_2009 / sum_instant_q_2009 * mean_q_2009 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2009 <- mean(weighted_annual_flux_ton.y_2009, na.rm = T) # moyenne des simulations montecarlo 
+
+# 2010 ---- 
+galabre_2010 <- galabre_nas %>% filter(year == 2010)
+
+percent_year_2010 <- round(dim(galabre_2010)[1]/(365*24*60*60/(10*60))*100, digits = 2)
+
+index_2010 <- which(galabre_nas$year == 2010) # list of indices corresponding to each year
+flux_ton.s_mat_2010 <- flux_ton.s_mat[,index_2010]
+flux_ton_mat_2010 <- flux_ton_mat[,index_2010]
+q_mat_2010  <- q_mat[,index_2010]
+mean_q_2010 <- apply(q_mat, 1, mean, na.rm = T)
+
+flux_ref_2010 <- apply(flux_ton_mat_2010, 1, sum, na.rm = T)
+mean_q_2010 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2010 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2010 <- apply(flux_ton.s_mat_2010, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2010 <- apply(q_mat_2010, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2010 <- sum_instant_flux_ton.y_2010 / sum_instant_q_2010 * mean_q_2010 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2010 <- mean(weighted_annual_flux_ton.y_2010, na.rm = T) # moyenne des simulations montecarlo 
+
+# 2011 ----
+galabre_2011 <- galabre_nas %>% filter(year == 2011)
+
+percent_year_2011 <- round(dim(galabre_2011)[1]/(365*24*60*60/(10*60))*100, digits = 2)
+
+index_2011 <- which(galabre_nas$year == 2011) # list of indices corresponding to each year
+flux_ton.s_mat_2011 <- flux_ton.s_mat[,index_2011]
+flux_ton_mat_2011 <- flux_ton_mat[,index_2011]
+q_mat_2011  <- q_mat[,index_2011]
+mean_q_2011 <- apply(q_mat, 1, mean, na.rm = T)
+
+flux_ref_2011 <- apply(flux_ton_mat_2011, 1, sum, na.rm = T)
+mean_q_2011 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2011 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2011 <- apply(flux_ton.s_mat_2011, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2011 <- apply(q_mat_2011, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2011 <- sum_instant_flux_ton.y_2011 / sum_instant_q_2011 * mean_q_2009 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2011 <- mean(weighted_annual_flux_ton.y_2011, na.rm = T) # moyenne des simulations montecarlo 
+
+# 2012 ----
+galabre_2012 <- galabre_nas %>% filter(year == 2012)
+
+percent_year_2012 <- round(dim(galabre_2012)[1]/(365*24*60*60/(10*60))*100, digits = 2)
+
+index_2012 <- which(galabre_nas$year == 2012) # list of indices corresponding to each year
+flux_ton.s_mat_2012 <- flux_ton.s_mat[,index_2012]
+flux_ton_mat_2012 <- flux_ton_mat[,index_2012]
+q_mat_2012  <- q_mat[,index_2012]
+mean_q_2012 <- apply(q_mat, 1, mean, na.rm = T)
+
+flux_ref_2012 <- apply(flux_ton_mat_2012, 1, sum, na.rm = T)
+mean_q_2012 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2012 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2012 <- apply(flux_ton.s_mat_2012, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2012 <- apply(q_mat_2012, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2012 <- sum_instant_flux_ton.y_2012 / sum_instant_q_2012 * mean_q_2009 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2012 <- mean(weighted_annual_flux_ton.y_2012, na.rm = T) # moyenne des simulations montecarlo 
+
+# 2013 ----
+galabre_2013 <- galabre_nas %>% filter(year == 2013)
+
+percent_year_2013 <- round(dim(galabre_2013)[1]/(365*24*60*60/(10*60))*100, digits = 2)
+
+index_2013 <- which(galabre_nas$year == 2013) # list of indices corresponding to each year
+flux_ton.s_mat_2013 <- flux_ton.s_mat[,index_2013]
+flux_ton_mat_2013 <- flux_ton_mat[,index_2013]
+q_mat_2013  <- q_mat[,index_2013]
+mean_q_2013 <- apply(q_mat, 1, mean, na.rm = T)
+
+flux_ref_2013 <- apply(flux_ton_mat_2013, 1, sum, na.rm = T)
+mean_q_2013 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2013 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2013 <- apply(flux_ton.s_mat_2013, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2013 <- apply(q_mat_2013, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2013 <- sum_instant_flux_ton.y_2013 / sum_instant_q_2013 * mean_q_2009 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2013 <- mean(weighted_annual_flux_ton.y_2013, na.rm = T) # moyenne des simulations montecarlo 
+
+# 2014 ----
+galabre_2014 <- galabre_nas %>% filter(year == 2014)
+
+percent_year_2014 <- round(dim(galabre_2014)[1]/(365*24*60*60/(10*60))*100, digits = 2)
+
+index_2014 <- which(galabre_nas$year == 2014) # list of indices corresponding to each year
+flux_ton.s_mat_2014 <- flux_ton.s_mat[,index_2014]
+flux_ton_mat_2014 <- flux_ton_mat[,index_2014]
+q_mat_2014  <- q_mat[,index_2014]
+mean_q_2014 <- apply(q_mat, 1, mean, na.rm = T)
+
+flux_ref_2014 <- apply(flux_ton_mat_2014, 1, sum, na.rm = T)
+mean_q_2014 <- apply(q_mat, 1, mean, na.rm = T)
+q_sum_2014 <- apply(q_mat, 1, mean, na.rm = T)
+
+sum_instant_flux_ton.y_2014 <- apply(flux_ton.s_mat_2014, 1, sum, na.rm = T)  # sum of fluxes per year, for each MC world computed previously. Result is a matrix with 1000 rows and 3 columns  (1 per year)
+sum_instant_q_2014 <- apply(q_mat_2014, 1, sum, na.rm = T) # same for Q
+weighted_annual_flux_ton.y_2014 <- sum_instant_flux_ton.y_2014 / sum_instant_q_2014 * mean_q_2009 * 60 * 60 * 24 *365 # 1000 lines and 3 columns of weignted annual fluxes
+waf_100_mcmean_2014 <- mean(weighted_annual_flux_ton.y_2014, na.rm = T) # moyenne des simulations montecarlo 
+
+```
+
+
+```{r compare-biais}
+biais <- data.frame(year = c(2009,2010,2011,2012,2013,2014),
+                    percent_year = c(percent_year_2009, percent_year_2010, percent_year_2011, percent_year_2012, percent_year_2013, percent_year_2014),
+                    mean_biais = c(mean((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100),
+                                   mean((waf_100_mcmean_2010-flux_ref_2010)/flux_ref_2010*100),
+                                   mean((waf_100_mcmean_2011-flux_ref_2011)/flux_ref_2011*100),
+                                   mean((waf_100_mcmean_2012-flux_ref_2012)/flux_ref_2012*100),
+                                   mean((waf_100_mcmean_2013-flux_ref_2013)/flux_ref_2013*100),
+                                   mean((waf_100_mcmean_2014-flux_ref_2014)/flux_ref_2014*100)),
+                    median_biais = c(median((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100),
+                                   median((waf_100_mcmean_2010-flux_ref_2010)/flux_ref_2010*100),
+                                   median((waf_100_mcmean_2011-flux_ref_2011)/flux_ref_2011*100),
+                                   median((waf_100_mcmean_2012-flux_ref_2012)/flux_ref_2012*100),
+                                   median((waf_100_mcmean_2013-flux_ref_2013)/flux_ref_2013*100),
+                                   median((waf_100_mcmean_2014-flux_ref_2014)/flux_ref_2014*100)),
+                    max_biais = c(max((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100),
+                                  max((waf_100_mcmean_2010-flux_ref_2010)/flux_ref_2010*100),
+                                  max((waf_100_mcmean_2011-flux_ref_2011)/flux_ref_2011*100),
+                                  max((waf_100_mcmean_2012-flux_ref_2012)/flux_ref_2012*100),
+                                  max((waf_100_mcmean_2013-flux_ref_2013)/flux_ref_2013*100),
+                                  max((waf_100_mcmean_2014-flux_ref_2014)/flux_ref_2014*100)),
+                    min_biais = c(min((waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100),
+                                  min((waf_100_mcmean_2010-flux_ref_2010)/flux_ref_2010*100),
+                                  min((waf_100_mcmean_2011-flux_ref_2011)/flux_ref_2011*100),
+                                  min((waf_100_mcmean_2012-flux_ref_2012)/flux_ref_2012*100),
+                                  min((waf_100_mcmean_2013-flux_ref_2013)/flux_ref_2013*100),
+                                  min((waf_100_mcmean_2014-flux_ref_2014)/flux_ref_2014*100)),
+                    qmean.qsum = c(median(mean_q_2009 / sum_instant_q_2009),
+                                   median(mean_q_2010 / sum_instant_q_2010),
+                                   median(mean_q_2011 / sum_instant_q_2011),
+                                   median(mean_q_2012 / sum_instant_q_2012),
+                                   median(mean_q_2013 / sum_instant_q_2013),
+                                   median(mean_q_2014 / sum_instant_q_2014)),
+                    K = c(median(mean_q_2009 / sum_instant_q_2009* 60 * 60 * 24 * 365),
+                          median(mean_q_2010 / sum_instant_q_2010* 60 * 60 * 24 * 365),
+                          median(mean_q_2011 / sum_instant_q_2011* 60 * 60 * 24 * 365),
+                          median(mean_q_2012 / sum_instant_q_2012* 60 * 60 * 24 * 365),
+                          median(mean_q_2013 / sum_instant_q_2013* 60 * 60 * 24 * 365),
+                          median(mean_q_2014 / sum_instant_q_2014* 60 * 60 * 24 * 365)))
+
+
+knitr::kable(biais, digits = 2) %>% kableExtra::kable_styling()
+
+ggplot(biais)+geom_point(aes(x = K, y = median_biais, col = as.factor(year)))+
+  geom_errorbar(aes(x = K, ymin = min_biais, ymax = max_biais))+
+  theme_minimal()
+
+lm(mean_biais~K, data = biais) %>% summary()
+
+
+biais_boxplot <- data.frame("2009" = (waf_100_mcmean_2009-flux_ref_2009)/flux_ref_2009*100,
+                            "2010" = (waf_100_mcmean_2010-flux_ref_2010)/flux_ref_2010*100,
+                            "2011" = (waf_100_mcmean_2011-flux_ref_2011)/flux_ref_2011*100,
+                            "2012" = (waf_100_mcmean_2012-flux_ref_2012)/flux_ref_2012*100,
+                            "2013" = (waf_100_mcmean_2013-flux_ref_2013)/flux_ref_2013*100,
+                            "2014" = (waf_100_mcmean_2014-flux_ref_2014)/flux_ref_2014*100)
+
+biais_boxplot_long <- tidyr::pivot_longer(data = biais_boxplot, cols = 1:6, names_to = "year", values_to = "biais_percent")
+biais_boxplot_long$percent_year <- rep(c(percent_year_2009, percent_year_2010, percent_year_2011, percent_year_2012, percent_year_2013, percent_year_2014),1000)
+
+ggplot(biais_boxplot_long)+
+  geom_boxplot(aes(y=biais_percent, x=percent_year, col = year))+
+  theme_minimal()
+
+q_boxplot <- data.frame("2009" = mean_q_2009 / sum_instant_q_2009 * 60 * 24 *365,
+                            "2010" = mean_q_2010 / sum_instant_q_2010 * 60 * 24 *365,
+                            "2011" = mean_q_2011 / sum_instant_q_2011 * 60 * 24 *365,
+                        "2012" = mean_q_2012 / sum_instant_q_2012 * 60 * 24 *365,
+                        "2013" = mean_q_2013 / sum_instant_q_2013 * 60 * 24 *365,
+                        "2014" = mean_q_2014 / sum_instant_q_2014 * 60 * 24 *365)
+
+q_boxplot_long <- tidyr::pivot_longer(data = q_boxplot, cols = 1:6, names_to = "year", values_to = "qmean.qsum")
+
+ggplot()+
+  geom_boxplot(data = biais_boxplot_long, aes(y=biais_percent, x=year, col = "Biais"))+
+  geom_boxplot(data = q_boxplot_long, aes(y=qmean.qsum, x=year, col = "Q"))+
+    theme_minimal()
+
+```
