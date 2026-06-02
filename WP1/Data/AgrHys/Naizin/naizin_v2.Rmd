@@ -131,6 +131,9 @@ ggplot()+geom_line(data = naizin, aes(x=commondate, y = doc_mg.L, group = year, 
   theme_minimal()+
   theme(legend.position = "none")
 ```
+```{r variable-distribution}
+hist
+```
 
 
 
@@ -169,18 +172,19 @@ doc_noise <- doc_cv*doc_random
 doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
 
 # Q matrix
-q_meas <- matrix(naizin_flux$q_m3.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_meas <- matrix(naizin_flux$q_m3.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_m3.s
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
 
 # Flux per time step
-flux_ton_mat <- doc_mat*1e-9*q_mat*1e-3*24*60*60 # flux per period (period is 24h, so flux in ton/s is converted to flux per period). 
-flux_ton.s_mat <- doc_mat*1e-9*q_mat*1e-3 # without period
+flux_ton_mat <- doc_mat*1e-9*q_mat*1e3*24*60*60 # flux per period (period is 24h, so flux in ton/s is converted to flux per period). 
+flux_ton.s_mat <- doc_mat*1e-9*q_mat*1e3 # without period
 
-index_years <- lapply(complete_years, function(y){which(naizin_flux$year == y)}) # list of indices corresponding to each year
+
 
 # Annual flux
+index_years <- lapply(complete_years, function(y){which(naizin_flux$year == y)}) # list of indices corresponding to each year
 annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
@@ -206,7 +210,7 @@ interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = inter
 total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
 total_flux_df$group <- c(rep("annual", nyears), "interannual")
 
-# Q df
+# Q df ----
 
 annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
@@ -224,7 +228,7 @@ q_df <- data.frame(year = c(complete_years, "interannual"),
                         q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
                    group = c(rep("annual", nyears), "interannual"))
 
-# Plot
+# Plot -----
 ggplot()+
   geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
     geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
@@ -252,8 +256,8 @@ knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_sty
 ## Specific flux
 
 ```{r specific-flux}
-sflux_ton_mat <- doc_mat*1e-9*q_mat*1e-3*24*60*60/bv # flux per period (period in h, so flux in ton/s is converted to flux per period). 
-sflux_ton.s_mat <- doc_mat*1e-9*q_mat*1e-3/bv # without period
+sflux_ton_mat <- doc_mat*1e-9*q_mat*1e3*24*60*60/bv # flux per period (period in h, so flux in ton/s is converted to flux per period). 
+sflux_ton.s_mat <- doc_mat*1e-9*q_mat*1e3/bv # without period
 
 annual_sflux_ton.y <- sapply(index_years, function(idx){apply(sflux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_sflux_pi <- apply(annual_sflux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
@@ -295,8 +299,102 @@ ggsave("sflux_naizin.svg")
 knitr::kable(total_sflux_df, digits = 3, row.names = F) %>% kableExtra::kable_styling()
 ```
 
+## Variance
 
 
 
+```{r test}
+C <- as.vector(doc_mat)
+Q <- as.vector(q_mat)
+F <- C * Q
 
+# Décomposition exacte du produit
+term1 <- mean(Q)^2 * var(C)          # effet C pur
+term2 <- mean(C)^2 * var(Q)          # effet Q pur  
+term3 <- var(C) * var(Q)             # interaction C×Q
+term4 <- 2 * mean(C) * mean(Q) * cov(C, Q)  # covariance (≈0 dans ton cas)
+
+cat("Var(F) observée       :", var(F), "\n")
+cat("Var(F) reconstituée   :", term1 + term2 + term3 + term4, "\n")
+cat("\nPart effet C pur      :", 100 * term1 / var(F), "%\n")
+cat("Part effet Q pur      :", 100 * term2 / var(F), "%\n")
+cat("Part interaction C×Q  :", 100 * term3 / var(F), "%\n")
+```
+
+
+```{r test-gel}
+cat("tot var", var(as.vector(doc_mat*q_mat)),"\n")
+cat("tot var units converted", var(as.vector(doc_mat*1e-9*q_mat*1e3*24*60*60)),"\n")
+cat("var DOC fixed", var(as.vector(naizin_flux$doc_mg.L*1e-9*q_mat*1e3*24*60*60)),"\n")
+cat("var Q fixed", var(as.vector(doc_mat*1e-9*naizin_flux$q_m3.s*1e3*24*60*60)),"\n")
+cat("%var explained by DOC", var(as.vector(naizin_flux$doc_mg.L*1e-9*q_mat*1e3*24*60*60))/var(as.vector(doc_mat*1e-9*q_mat*1e3*24*60*60))*100, "% \n")
+cat("%var explained by Q", var(as.vector(doc_mat*1e-9*naizin_flux$q_m3.s*1e3*24*60*60))/var(as.vector(doc_mat*1e-9*q_mat*1e3*24*60*60))*100, "% \n")
+
+cat("tot var s", var(as.vector(doc_mat*1e-9*q_mat*1e3)),"\n")
+cat("var DOC fixed", var(as.vector(naizin_flux$doc_mg.L*1e-9*q_mat*1e3)),"\n")
+cat("var Q fixed", var(as.vector(doc_mat*1e-9*naizin_flux$q_m3.s*1e3)),"\n")
+cat("%var explained by Q", var(as.vector(naizin_flux$doc_mg.L*1e-9*q_mat*1e3))/var(as.vector(doc_mat*1e-9*q_mat*1e3))*100, "% \n")
+cat("%var explained by DOC", var(as.vector(doc_mat*1e-9*naizin_flux$q_m3.s*1e3))/var(as.vector(doc_mat*1e-9*q_mat*1e3))*100, "% \n")
+
+```
+```{r test-log-var}
+log_doc <- log(as.vector(doc_mat*1e-9))
+log_q <- log(as.vector(q_mat*1e3))
+log_flux <- log(as.vector(doc_mat*1e-9*q_mat*1e3))
+
+vcov_log <- cov(log_doc, log_q, use = "pairwise.complete.obs")
+
+var_log_total <- var(log_doc)+var(log_q)+2*vcov_log
+
+cat("\n=== Décomposition log-variance (exacte) ===\n")
+cat(sprintf("Part de doc : %.1f %%\n", 100 * var(log_doc) / var_log_total))
+cat(sprintf("Part de q: %.1f %%\n", 100 * var(log_q) / var_log_total))
+
+
+```
+
+Calculer la variance par année ? Par observation, pour voir dans les cas de DOC petit si la variance de DOC prend plus de place que la variance de Q ? 
+
+```{r variance-per-obs}
+q_var_perobs <- apply(naizin_flux$doc_mg.L*1e-9*q_mat*1e3, 2, var)
+doc_var_perobs <- apply(doc_mat*1e-9*naizin_flux$q_m3.s*1e3, 2, var)
+tot_var_perobs <- apply(doc_mat*1e-9*q_mat*1e3, 2, var)
+
+cov_bycol <- function(mat1, mat2){
+  n <- dim(mat1)[2]
+  cov_vec <- vector("numeric", n)
+  for(i in 1:n){
+      cov_vec[i] <- cov(mat1[,i], mat2[,i])    
+  }
+return(cov_vec)
+}
+
+cov_perobs <- cov_bycol(doc_mat*1e-9, q_mat*1e3)
+
+tot_var_perobs <- naizin_flux$q_m3.s^2*doc_var_perobs + naizin_flux$doc_mg.L*q_var_perobs+
+  q_var_perobs*doc_var_perobs + 2*naizin_flux$q_m3.s*naizin_flux$doc_mg.L*cov_perobs
+
+
+boxplot(q_var_perobs)
+boxplot(doc_var_perobs)
+boxplot(tot_var_perobs)
+
+var_df <- cbind(q_var_perobs,doc_var_perobs,tot_var_perobs,naizin_flux$doc_mg.L, naizin_flux$q_m3.s) %>% as.data.frame()
+names(var_df) <- c("q_var","doc_var","tot_var","doc_mg.L","q_m3.s")
+
+ggplot(var_df, aes(x= doc_mg.L)) + 
+  geom_col(aes(y = doc_var, fill = "doc_var")) + 
+  geom_col(aes(y = q_var, fill = "q_var"))+
+  geom_col(aes(y = tot_var, fill = "tot var"))
+
+
+doc_var_perobs_percent <- doc_var_perobs/tot_var_perobs*100
+q_var_perobs_percent <- q_var_perobs/tot_var_perobs*100
+
+var_df_long <- rbind(cbind(naizin_flux$doc_mg.L,"doc",doc_var_perobs_percent),
+                     cbind(naizin_flux$doc_mg.L,"Q",q_var_perobs_percent)) %>%
+  as.data.frame()
+ggplot(var_df_long)+
+  geom_bar(aes(x=as.numeric(V1), y = as.numeric(doc_var_perobs_percent), fill = V2), position = "stack", stat = "identity")
+```
 
