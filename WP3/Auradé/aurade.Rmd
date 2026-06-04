@@ -1,0 +1,374 @@
+---
+title: "Auradé"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    number_section: true
+date: "2025-06-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+
+library(ggplot2)
+library(ggpubr)
+
+library(dplyr)
+library(data.table)
+library(readxl)
+library(lubridate)
+library(kableExtra)
+
+library(nlme)
+
+set.seed(0206)
+```
+
+# Data
+
+## Load data
+
+Données fournies par Anne Probst. 
+
+```{r load-data}
+debit <- read_xlsx("aurade.xlsx", sheet = "q_L.s_HF")
+doc <- read_xlsx("aurade.xlsx", sheet = "DOC", col_types = c("date","numeric","numeric"))
+```
+
+
+```{r merge}
+# data table ----
+debit_dt <- setDT(debit)
+doc_dt <- setDT(doc)
+
+debit_dt[,dhdebit := DateHeure]
+doc_dt[,dhdoc := DateHeure]
+
+aurade_dt <- debit_dt[doc_dt, on = "DateHeure", roll = "nearest"]
+aurade_dt[,diff := abs(as.numeric(dhdebit-dhdoc, units = "secs"))]
+table(aurade_dt$diff > 86400)
+
+aurade <- aurade_dt %>% subset(diff < 86400) %>% as.data.frame()
+```
+
+
+```{r prepare-df}
+debit$year <- year(debit$DateHeure)
+debit$commondate <- as.Date(paste0("2000-", format(debit$DateHeure,"%j")), "%Y-%j")
+debit$period <- as.numeric(-(debit$DateHeure - lead(debit$DateHeure))) # period in min. 10 min in average
+
+
+aurade$year <- year(aurade$DateHeure)
+aurade$commondate <- as.Date(paste0("2000-", format(aurade$DateHeure,"%j")), "%Y-%j")
+aurade$period <- as.numeric(-(aurade$DateHeure - lead(aurade$DateHeure))) # period in s
+
+```
+
+
+## Visualize
+
+Données débit totales. Données DOC: uniquement celles auant un débit correspondant. 
+
+From OZCAR [website](https://www.ozcar-ri.org/fr/observatoire-aurade/)
+
+
+Observatoire Auradé: Contexte scientifique
+
+Cet observatoire est focalisé sur le bassin versant du Montoussé à Auradé (3,28 km²), sous-affluent de la Save. Il est situé à 40 km à l’Ouest de Toulouse, dans les coteaux de Gascogne au sud-ouest de la France. Il s’agit d’un bassin entièrement agricole, les cultures (blé/tournesol en rotation) occupant 90% de sa surface. Le climat est de type tempéré océanique (avec des températures moyennes de 13,9°C, des précipitations moyennes de 620 mm/an pour la période 1985-2018. Les périodes de crues ont lieu en hiver (décembre/janvier) et au printemps (mai/juin) avec une période d’étiage allant de fin juin à octobre, parfois accompagnée de périodes d’assèchement. Ce bassin versant est caractérisé par une forte évapotranspiration (500-600 mm/an). Le bassin est développé sur une molasse argilo-calcaire du Miocène qui provient de l’érosion des Pyrénées. Les sols appartiennent à la séquence des sols bruns calcaires-bruns calciques-bruns lessivés.
+
+
+```{r annual-q-doc, fig.dim = c(15, 30)}
+
+ggarrange(
+ggplot(debit, aes(x = commondate)) + 
+  geom_point(aes(y = q_L.s), col = "lightblue", size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_y_continuous(trans = "log", breaks = c(0,1,10,100))+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "Q, L/s") +
+  theme_bw()+
+  theme(legend.position = "bottom"),
+
+ggplot(aurade, aes(x = commondate)) + 
+  geom_point(aes(y = doc_mg.L), col = "palegreen4", size = 0.5) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  facet_grid(rows = vars(year))+
+  labs(x = "", y = "DOC, mg/L") +
+  theme_bw()+
+  theme(legend.position = "bottom"),
+
+ncol = 2
+) %>%
+  annotate_figure(top = text_grob("Mesures de débit et DOC", face = "bold", size = 14))
+
+```
+```{r histograms, fig.dim = c(8, 4)}
+ggarrange(
+  ggplot(debit)+geom_histogram(aes(log10(q_L.s*1e-3)),fill = "lightblue")+labs(x= "Débit (log10), m3/s", y = "")+theme_minimal(),
+  ggplot(aurade)+geom_histogram(aes(log10(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_minimal()
+)
+
+ggarrange(
+  ggplot(debit)+geom_boxplot(aes(x = "Débit (log10), m3/s", y = log10(q_L.s*1e-3)),fill = "lightblue")+labs(x="", y = "")+theme_minimal(),
+  ggplot(aurade)+geom_boxplot(aes(x= "DOC, mg/L", y = doc_mg.L), fill = "palegreen4")+labs(x="", y = "")+theme_minimal()
+)
+
+
+debit %>% group_by(year) %>% summarise("Median Q, L/s" = median(q_L.s, na.rm = T), Nb_obs = n(), Median_period = median(period, na.rm = T), "% of the year covered" = Nb_obs*Median_period/(60*24*365)*100) %>% kable(digits = 2, caption = "Summary of discharge data") %>% kable_styling()
+aurade %>% group_by(year) %>% summarise("Median DOC, mg.L" = median(doc_mg.L, na.rm = T), Nb_obs = n()) %>% kable(digits = 2, caption = "Summary of DOC data") %>% kable_styling()
+```
+
+
+```{r relation-doc-debit}
+ggplot(aurade)+geom_point(aes(x = log(q_L.s), doc_mg.L))+labs(title = "DOC/Q relationship")+theme_minimal()
+```
+
+
+# Annual and interannual flux 
+
+Années choisies: toutes les années donc les mesures de débit couvrent > 50% de l'année. ARBITRAIRE: le ruisseau a-t-il été asséché plus longtemps que les autres années si les mesures couvrent moins de 50% du temps, ou y a-t-il eu un problème d'instrumentation ? 
+
+--> les années exclues sont 2004, 2005, 2011 et 2012.
+
+Bassin versant: 3,2 km2 (calculé sur)
+
+```{r uncertainties}
+complete_years <- c(2006:2010,2013:2021)
+nyears <- length(complete_years)
+bv <- 3.2
+
+aurade_flux <- aurade %>% filter(year %in% complete_years)
+debit_flux <- debit %>% filter(year %in% complete_years)
+
+q_u <- 0.1
+
+nobs <- dim(aurade_flux)[1]
+nobs_debit <- dim(debit_flux)[1]
+nrep <- 1000
+```
+
+## total flux
+
+```{r compute-flux}
+#doc matrix
+doc_meas <- matrix(aurade_flux$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
+
+doc_cv <- 3.2*doc_meas^(-0.6) # from all data available on 29/05/2026
+doc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
+doc_noise <- doc_cv*doc_random
+doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
+
+# Q matrix
+q_meas <- matrix(aurade_flux$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+
+
+# Flux per time step
+flux_ton_mat <- doc_mat*1e-9*q_mat*24*60*60 # flux per period (period is 24h, so flux in ton/s is converted to flux per period). 
+flux_ton.s_mat <- doc_mat*1e-9*q_mat # without period
+
+
+
+# Annual flux
+index_years <- lapply(complete_years, function(y){which(aurade_flux$year == y)}) # list of indices corresponding to each year
+annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+
+annual_flux_df <- data.frame(year = complete_years, 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = annual_flux_sd, 
+                        annual_flux_pi_lower = annual_flux_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_pi[3,])
+
+# Interannual flux 
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_pi_lower = interannual_flux_pi[1], 
+                        annual_flux_pi_upper = interannual_flux_pi[3])
+
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", nyears), "interannual")
+
+# Q df ----
+
+annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
+annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+interannual_q <- rowMeans(annual_q, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_q_pi <- quantile(interannual_q, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_q_mean <- mean(interannual_q, na.rm = T) # mean interannual flux
+interannual_q_variability <- sd(annual_q_mean, na.rm = T) # standard deviation of interannual flux per year
+
+q_df <- data.frame(year = c(complete_years, "interannual"), 
+                        q_mean = c(annual_q_mean, interannual_q_mean),
+                        q_variability = c(annual_flux_sd, interannual_q_variability), 
+                        q_pi_lower = c(annual_q_pi[1,], interannual_q_pi[1]), 
+                        q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
+                   group = c(rep("annual", nyears), "interannual"))
+
+# Plot -----
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggplot()+
+  geom_col(data = q_df, aes(x=year, y = q_mean, fill = group))+
+    geom_errorbar(data = q_df, aes(x = year, ymin = q_pi_lower, ymax = q_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(q_df, year == "interannual"), aes(x = year, ymin = q_mean - q_variability, ymax = q_mean + q_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Discharge (m3/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+```
+
+
+```{r compute-flux-weighted, cache.lazy = F}
+
+#doc matrix
+doc_meas <- matrix(aurade_flux$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
+
+doc_cv <- 3.2*doc_meas^(-0.6) # from all data available on 29/05/2026
+doc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
+doc_noise <- doc_cv*doc_random
+doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
+
+# Q matrix aurade
+q_meas <- matrix(aurade_flux$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+
+# Q matrix debit
+q_meas_debit <- matrix(debit$q_L.s, nrow = nrep, ncol = nobs_debit, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_noise_debit <- matrix(rnorm(nrep*nobs_debit, mean = 0, sd = q_u), nrow = nrep, ncol = nobs_debit) # creates a noise in percent (proportion), between 0 and 10%
+q_mat_debit <- q_meas_debit * (1 + q_noise_debit) # final value of q, with noise
+
+# Ci * Qi
+flux_ton.s_mat <- doc_mat*1e-9*q_mat # without period
+
+
+
+# Annual flux
+index_years <- lapply(complete_years, function(y){which(aurade_flux$year == y)}) # list of indices corresponding to each year
+
+annual_flux_ton.s <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+
+index_years_debit <- lapply(complete_years, function(y){which(debit_flux$year == y)}) # list of indices corresponding to each year
+annual_meanQ <- sapply(index_years_debit,function(idx){apply(q_mat_debit[,idx], 1, mean, na.rm = T)}) 
+annual_sumQ <- sapply(index_years_debit,function(idx){apply(q_mat_debit[,idx], 1, sum, na.rm = T)}) 
+
+annual_flux_ton.y <- sapply(1:nyears, FUN = function(idx){annual_flux_ton.s[,idx]*annual_meanQ[,idx]/annual_sumQ[,idx]*60*60*24*365})
+
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+
+annual_flux_df <- data.frame(year = complete_years, 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = annual_flux_sd, 
+                        annual_flux_pi_lower = annual_flux_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_pi[3,])
+
+# Interannual flux 
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_pi_lower = interannual_flux_pi[1], 
+                        annual_flux_pi_upper = interannual_flux_pi[3])
+
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", nyears), "interannual")
+
+# Q df ----
+
+annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
+annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+interannual_q <- rowMeans(annual_q, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_q_pi <- quantile(interannual_q, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_q_mean <- mean(interannual_q, na.rm = T) # mean interannual flux
+interannual_q_variability <- sd(annual_q_mean, na.rm = T) # standard deviation of interannual flux per year
+
+q_df <- data.frame(year = c(complete_years, "interannual"), 
+                        q_mean = c(annual_q_mean, interannual_q_mean),
+                        q_variability = c(annual_flux_sd, interannual_q_variability), 
+                        q_pi_lower = c(annual_q_pi[1,], interannual_q_pi[1]), 
+                        q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
+                   group = c(rep("annual", nyears), "interannual"))
+
+# Plot -----
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggplot()+
+  geom_col(data = q_df, aes(x=year, y = q_mean, fill = group))+
+    geom_errorbar(data = q_df, aes(x = year, ymin = q_pi_lower, ymax = q_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(q_df, year == "interannual"), aes(x = year, ymin = q_mean - q_variability, ymax = q_mean + q_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Discharge (m3/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+```
+
+## Specific flux
+
+
+```{r specific-flux}
+
+total_sflux_df <- cbind(total_flux_df[,"year"], total_flux_df[,2:5] / bv, total_flux_df[,"group"]) %>% setNames(names(total_flux_df))
+
+ggplot()+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
+    geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (tons/km2/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggsave("sflux_aurade.svg")
+
+knitr::kable(total_sflux_df, digits = 3, row.names = F) %>% kableExtra::kable_styling()
+```
+

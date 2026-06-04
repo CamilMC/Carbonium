@@ -137,9 +137,6 @@ hist
 
 
 
-```{r exit, cache = F}
-knitr::knit_exit()
-```
 
 
 # Annual and interannual flux 
@@ -298,6 +295,12 @@ ggsave("sflux_naizin.svg")
 
 knitr::kable(total_sflux_df, digits = 3, row.names = F) %>% kableExtra::kable_styling()
 ```
+
+
+```{r exit, cache = F}
+knitr::knit_exit()
+```
+
 
 ## Variance
 
