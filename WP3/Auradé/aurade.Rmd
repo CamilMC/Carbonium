@@ -11,7 +11,7 @@ date: "2025-06-30"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 ```{r libraries}
@@ -73,7 +73,10 @@ aurade$period <- as.numeric(-(aurade$DateHeure - lead(aurade$DateHeure))) # peri
 
 ## Visualize
 
-Données débit totales. Données DOC: uniquement celles auant un débit correspondant. 
+Sur le site: https://www-sciencedirect-com.insu.bib.cnrs.fr/science/article/pii/S1470160X19308891
+
+
+Données débit totales. Données DOC: uniquement celles ayant un débit correspondant. 
 
 From OZCAR [website](https://www.ozcar-ri.org/fr/observatoire-aurade/)
 
@@ -83,7 +86,7 @@ Observatoire Auradé: Contexte scientifique
 Cet observatoire est focalisé sur le bassin versant du Montoussé à Auradé (3,28 km²), sous-affluent de la Save. Il est situé à 40 km à l’Ouest de Toulouse, dans les coteaux de Gascogne au sud-ouest de la France. Il s’agit d’un bassin entièrement agricole, les cultures (blé/tournesol en rotation) occupant 90% de sa surface. Le climat est de type tempéré océanique (avec des températures moyennes de 13,9°C, des précipitations moyennes de 620 mm/an pour la période 1985-2018. Les périodes de crues ont lieu en hiver (décembre/janvier) et au printemps (mai/juin) avec une période d’étiage allant de fin juin à octobre, parfois accompagnée de périodes d’assèchement. Ce bassin versant est caractérisé par une forte évapotranspiration (500-600 mm/an). Le bassin est développé sur une molasse argilo-calcaire du Miocène qui provient de l’érosion des Pyrénées. Les sols appartiennent à la séquence des sols bruns calcaires-bruns calciques-bruns lessivés.
 
 
-```{r annual-q-doc, fig.dim = c(15, 30)}
+```{r annual-q-doc, fig.dim = c(8, 20)}
 
 ggarrange(
 ggplot(debit, aes(x = commondate)) + 
@@ -108,25 +111,60 @@ ncol = 2
   annotate_figure(top = text_grob("Mesures de débit et DOC", face = "bold", size = 14))
 
 ```
-```{r histograms, fig.dim = c(8, 4)}
+```{r histograms, fig.dim = c(8, 3)}
 ggarrange(
-  ggplot(debit)+geom_histogram(aes(log10(q_L.s*1e-3)),fill = "lightblue")+labs(x= "Débit (log10), m3/s", y = "")+theme_minimal(),
-  ggplot(aurade)+geom_histogram(aes(log10(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_minimal()
+  ggplot(debit)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_minimal(),
+  ggplot(aurade)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_minimal()
 )
 
 ggarrange(
-  ggplot(debit)+geom_boxplot(aes(x = "Débit (log10), m3/s", y = log10(q_L.s*1e-3)),fill = "lightblue")+labs(x="", y = "")+theme_minimal(),
-  ggplot(aurade)+geom_boxplot(aes(x= "DOC, mg/L", y = doc_mg.L), fill = "palegreen4")+labs(x="", y = "")+theme_minimal()
+  ggplot(debit)+geom_boxplot(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_minimal(),
+  ggplot(aurade)+geom_boxplot(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_minimal()
 )
 
+debit <- debit %>% group_by(year) %>% mutate(cum_debit = cumsum(q_L.s), md =max(cum_debit))
+debit$dayofyear <- debit$DateHeure %>% yday()
+labels <- debit %>% select(c(year,md)) %>% unique
+colors <- viridisLite::viridis(18, end = 0.8)
 
 debit %>% group_by(year) %>% summarise("Median Q, L/s" = median(q_L.s, na.rm = T), Nb_obs = n(), Median_period = median(period, na.rm = T), "% of the year covered" = Nb_obs*Median_period/(60*24*365)*100) %>% kable(digits = 2, caption = "Summary of discharge data") %>% kable_styling()
 aurade %>% group_by(year) %>% summarise("Median DOC, mg.L" = median(doc_mg.L, na.rm = T), Nb_obs = n()) %>% kable(digits = 2, caption = "Summary of DOC data") %>% kable_styling()
 ```
+```{r debit-cumule}
+ 
+ggplot(debit)+geom_line(aes(x=dayofyear, y = cum_debit, group = as.factor(year), col = as.factor(year)))+
+  scale_color_manual(values = colors)+
+  annotate(geom = "label", x = 375, y = labels$md[1], label = labels$year[1], col = colors[1], size = 2)+ #2004
+  annotate(geom = "label", x = 375, y = labels$md[2], label = labels$year[2], col = colors[2],size = 2)+ #2005
+  annotate(geom = "label", x = 375, y = labels$md[3], label = labels$year[3], col = colors[3],size = 2)+ #2006
+  annotate(geom = "label", x = 375, y = labels$md[4], label = labels$year[4], col = colors[4],size = 2)+ #2007
+  annotate(geom = "label", x = 390, y = labels$md[5], label = labels$year[5], col = colors[5],size = 2)+ #2008
+  annotate(geom = "label", x = 375, y = labels$md[6], label = labels$year[6], col = colors[6],size = 2)+ #2009
+  annotate(geom = "label", x = 375, y = labels$md[7], label = labels$year[7], col = colors[7],size = 2)+ #2010
+  annotate(geom = "label", x = 200, y = labels$md[8], label = labels$year[8], col = colors[8],size = 2)+ #2011
+  annotate(geom = "label", x = 390, y = labels$md[9], label = labels$year[9], col = colors[9],size = 2)+ #2012
+  annotate(geom = "label", x = 375, y = labels$md[10], label = labels$year[10], col = colors[10],size = 2)+ #2013
+  annotate(geom = "label", x = 375, y = labels$md[11], label = labels$year[11], col = colors[11],size = 2)+
+  annotate(geom = "label", x = 390, y = labels$md[12], label = labels$year[12], col = colors[12],size = 2)+
+  annotate(geom = "label", x = 390, y = labels$md[13], label = labels$year[13], col = colors[13],size = 2)+
+  annotate(geom = "label", x = 390, y = labels$md[14], label = labels$year[14], col = colors[14],size = 2)+
+  annotate(geom = "label", x = 375, y = labels$md[15], label = labels$year[15], col = colors[15],size = 2)+
+  annotate(geom = "label", x = 390, y = labels$md[16], label = labels$year[16], col = colors[16],size = 2)+
+  annotate(geom = "label", x = 375, y = labels$md[17], label = labels$year[17], col = colors[17],size = 2)+
+  annotate(geom = "label", x = 280, y = labels$md[18], label = labels$year[18], col = colors[18],size = 2)+ # 2021
+  labs(x="Day of year", y = "Débit cumulé, L")+
+  theme_minimal()+theme(legend.position = "none")
+```
 
 
 ```{r relation-doc-debit}
-ggplot(aurade)+geom_point(aes(x = log(q_L.s), doc_mg.L))+labs(title = "DOC/Q relationship")+theme_minimal()
+
+lm(doc_mg.L~log(q_L.s), data = aurade) %>% summary()
+ggplot(aurade)+geom_point(aes(x = log(q_L.s), y = doc_mg.L, col = "DOC observed"))+
+  geom_point(aes(x = log(q_L.s), 2.5+0.64*log(q_L.s), col = "DOC predicted LM"))+
+  geom_point(aes(x = log(q_L.s), 1*log(q_L.s), col = "DOC, 1:1"))+
+  scale_color_manual(values = c("DOC observed" = "grey", "DOC predicted LM" = "palegreen4", "DOC, 1:1" = "lightblue"))+
+  labs(title = "DOC/Q relationship", col = "")+theme_minimal()
 ```
 
 
@@ -136,10 +174,12 @@ Années choisies: toutes les années donc les mesures de débit couvrent > 50% d
 
 --> les années exclues sont 2004, 2005, 2011 et 2012.
 
-Bassin versant: 3,2 km2 (calculé sur)
+D'après @Ponnou-Delaffon, 2011-2012 correspond à une période sèche -> à inclure ? 
+
+Bassin versant: 3,2 km2 (calculé sur QGIS)
 
 ```{r uncertainties}
-complete_years <- c(2006:2010,2013:2021)
+complete_years <- c(2006:2021)
 nyears <- length(complete_years)
 bv <- 3.2
 
@@ -153,7 +193,9 @@ nobs_debit <- dim(debit_flux)[1]
 nrep <- 1000
 ```
 
-## total flux
+## Total Flux
+
+### Simple sum
 
 ```{r compute-flux}
 #doc matrix
@@ -170,8 +212,12 @@ q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
 
+# period matrix
+period_mat <- matrix(aurade_flux$period, nrow = nrep, ncol = nobs, byrow = T)
+
+
 # Flux per time step
-flux_ton_mat <- doc_mat*1e-9*q_mat*24*60*60 # flux per period (period is 24h, so flux in ton/s is converted to flux per period). 
+flux_ton_mat <- doc_mat*1e-9*q_mat*period_mat # flux per period
 flux_ton.s_mat <- doc_mat*1e-9*q_mat # without period
 
 
@@ -246,9 +292,9 @@ knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_sty
 
 ```
 
+### Weighting method
 
-```{r compute-flux-weighted, cache.lazy = F}
-
+```{r compute-flux-weighted, cache.lazy = F, eval = F}
 #doc matrix
 doc_meas <- matrix(aurade_flux$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
 
@@ -268,21 +314,24 @@ q_noise_debit <- matrix(rnorm(nrep*nobs_debit, mean = 0, sd = q_u), nrow = nrep,
 q_mat_debit <- q_meas_debit * (1 + q_noise_debit) # final value of q, with noise
 
 # Ci * Qi
-flux_ton.s_mat <- doc_mat*1e-9*q_mat # without period
-
-
+flux_ton.s_mat <- doc_mat*1e-9*q_mat # in ton/s
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(aurade_flux$year == y)}) # list of indices corresponding to each year
 
-annual_flux_ton.s <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_ton.s <- sapply(index_years, function(idx){apply(flux_ton.s_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_sumQ <- sapply(index_years,function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) 
 
 index_years_debit <- lapply(complete_years, function(y){which(debit_flux$year == y)}) # list of indices corresponding to each year
 annual_meanQ <- sapply(index_years_debit,function(idx){apply(q_mat_debit[,idx], 1, mean, na.rm = T)}) 
-annual_sumQ <- sapply(index_years_debit,function(idx){apply(q_mat_debit[,idx], 1, sum, na.rm = T)}) 
 
 annual_flux_ton.y <- sapply(1:nyears, FUN = function(idx){annual_flux_ton.s[,idx]*annual_meanQ[,idx]/annual_sumQ[,idx]*60*60*24*365})
 
+# pour info: mean Q / somme Q
+annual_mQ.sQ <- sapply(1:nyears, FUN = function(idx){annual_meanQ[,idx]/annual_sumQ[,idx]})
+annual_mQ.sQ_mean <- colMeans(annual_mQ.sQ)
+
+# intervalles de confiance
 annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
 annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
@@ -306,6 +355,13 @@ interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = inter
 
 total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
 total_flux_df$group <- c(rep("annual", nyears), "interannual")
+write.table(total_flux_df,"total_flux_df_aurade.txt")
+
+# Alternative interanual flux
+sum_q <- apply(q_mat, 1, sum)
+mean_q <- apply(q_mat_debit, 1, mean)
+
+alt_interannual_flux_ton.y <- rowMeans(flux_ton.s_mat, na.rm = T)/sum_q*mean_q*60*60*24*365
 
 # Q df ----
 
@@ -324,6 +380,8 @@ q_df <- data.frame(year = c(complete_years, "interannual"),
                         q_pi_lower = c(annual_q_pi[1,], interannual_q_pi[1]), 
                         q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
                    group = c(rep("annual", nyears), "interannual"))
+
+write.table(q_df,"q_df_aurade.txt")
 
 # Plot -----
 ggplot()+
@@ -345,6 +403,27 @@ ggplot()+
    labs(x = "Year", y = "Discharge (m3/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+
+```{r compute-flux-weighted-plots}
+total_flux_df <- read.table("total_flux_df_aurade.txt")
+total_q_df <- read.table("q_df_aurade.txt")
+
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  geom_line(data = q_df, aes(x = year, y = q_mean/2e4, group = 1, col = "discharge"))+
+  scale_y_continuous(sec.axis = sec_axis(~.*2e4, name = "Discharge, L/s"))+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred","discharge"="grey"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")+
+  guides(color = guide_legend(nrow=2))
+
+ggsave("flux_aurade.svg")
 
 knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 
@@ -353,22 +432,56 @@ knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_sty
 ## Specific flux
 
 
-```{r specific-flux}
+```{r specific-flux, cache = F}
 
 total_sflux_df <- cbind(total_flux_df[,"year"], total_flux_df[,2:5] / bv, total_flux_df[,"group"]) %>% setNames(names(total_flux_df))
 
+n <- 1e2
+
 ggplot()+
   geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
-    geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
-  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), 
+                aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"),
+                width = 0.1, size = 0.8)+
+    geom_line(data = q_df, aes(x = year, y = q_mean*1e-3*n, group = 1, col = "discharge"))+
+  scale_y_continuous(sec.axis = sec_axis(~./n, name = "Discharge (m3/s)"))+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
-  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred", "discharge" = "grey"), name = "")+
    labs(x = "Year", y = "Flux (tons/km2/year)", fill = "")+
   theme_minimal(base_size = 15)+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")+
+  guides(color = guide_legend(nrow=2))
 
 ggsave("sflux_aurade.svg")
 
 knitr::kable(total_sflux_df, digits = 3, row.names = F) %>% kableExtra::kable_styling()
+```
+
+
+```{r exit, cache = F}
+knitr::knit_exit()
+```
+
+
+# Sensibilité
+
+## L'impact de doc est-il porté par les valeurs extrêmes ou par la baseline ? 
+
+```{r analyse-par-quantile}
+# Découper les simulations par quantile de c
+quantiles_doc <- quantile(aurade_flux$doc_mg.L, probs = c(0, 0.5, 0.75, 0.90, 0.95, 1), na.rm = T)
+bins <- cut(aurade_flux$doc_mg.L, breaks = quantiles_doc, include.lowest = TRUE)
+
+# Élasticité locale par groupe
+df <- data.frame(Fl = aurade_flux$doc_mg.L*aurade_flux$q_L.s, C = aurade_flux$doc_mg.L, Q = aurade_flux$q_L.s, bins)
+
+df %>%
+  group_by(bins) %>%
+  summarise(
+    F_moyen     = mean(Fl),
+    #elasticite_c = mean(rowMeans((C * 1.1 * Q) - C * Q)[bins == cur_group()[[1]]]) / mean(Fl) / 0.1,
+    n           = n()
+  )
 ```
 

@@ -1,0 +1,426 @@
+---
+title: "Avenelles - méthodes"
+author: "CamilMC"
+date: "2026-06-17"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = F)
+```
+
+```{r libraries}
+lapply(c("dplyr"), library, character.only = T)
+lapply(c("ggplot2","ggpubr"), library, character.only = T)
+lapply(c("lubridate"), library, character.only = T)
+lapply(c("knitr","kableExtra"), library, character.only = T)
+
+```
+# Data visualisation
+
+## Get data
+
+```{r bv-aire}
+bv <- 45
+```
+
+
+```{r load-data-from-excel, message = F}
+
+avenelles <- readxl::read_xlsx(path = "Data_Avenelles_DOC_DIC_Debit.xlsx", sheet = "Data_Avenelles_DOC_DIC_Debit", col_types = c("date","numeric", "text","numeric","text","numeric","text","text","numeric")) %>%  mutate(Site = NULL, bv_km2 = NULL) %>% unique()
+
+avenelles$year <- year(avenelles$DateHeure)
+avenelles$week <- week(avenelles$DateHeure)
+avenelles$month <- month(avenelles$DateHeure)
+
+avenelles$commondate <- as.Date(paste0("2000-", format(avenelles$DateHeure,"%j")), "%Y-%j")
+avenelles$Date <- format(avenelles$DateHeure, "%Y-%m-%d") %>% as.Date()
+
+avenelles$period <- with(avenelles, as.numeric(-(DateHeure - lead(DateHeure)))) # period in second between 2 lines. This leads to some large periods being calculated when data is missing / not sampled during a long interval. 
+avenelles$periodj <- round(avenelles$period / 60 / 60 / 24, 0)
+avenelles[which(avenelles$periodj > 4),"period"] <- 2*24*60*60 # the median time of sampling is every second day. This line replaces periods that are artificially longer than 2 days
+avenelles[which(avenelles$periodj > 4),"periodj"] <- 2
+
+avenelles <- unique(avenelles)
+  
+strange_periods_dates <- avenelles %>% subset(periodj > 4) %>% pull(Date) 
+
+```
+
+## Characteristics
+
+```{r summary-data}
+summary_avenelles <- merge(
+avenelles %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / ")),
+avenelles %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>% 
+  merge(avenelles %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
+  merge(avenelles %>% group_by(year) %>% summarise("Correlation DOC/log(Q)" = round(cor(doc_mg.L, log(q_L.s), use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
+  rbind(c("All years", 
+          dim(subset(avenelles, !is.na(doc_mg.L)))[1], 
+          paste(quantile(avenelles$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(avenelles, !is.na(q_L.s)))[1], 
+          paste(quantile(avenelles$q_L.s, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          length(unique(avenelles$Date)),
+          round(cor(avenelles$doc_mg.L, log(avenelles$q_L.s), use = "pairwise.complete.obs" ),2)
+          ))
+
+knitr::kable(summary_avenelles, caption = "Summary table of Avenelles data") %>% kableExtra::kable_styling()
+
+```
+
+```{r plot-by-year-doc, fig.dim = c(10,15)}
+
+
+title <- expression(atop("Series of DOC and Q by year"))
+plots <- ggarrange(
+ggplot(avenelles, aes(x = commondate))+
+  geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("lightblue"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "Débit, L/s", col = "")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "none"),
+
+ggplot(avenelles, aes(x = commondate))+
+  geom_point(aes(y = doc_mg.L, col = "DOC, mg.L"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("palegreen4"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "DOC, mg/L", col = "")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "none")
+)
+
+annotate_figure(plots, top = text_grob(title))
+
+```
+
+DOC observation for year 2014 are FALSE: there has been a mix between DIC and DOC data (confirmed by Sophie Guillon). 2014 is excluded from the analysis. Data for 2015 seem to be partially wrong as well. 
+
+Years to use for test of methods: `r complete_years <- c(2006,2007,2008,2009,2010,2011,2012,2013,2016,2017,2018,2019,2021)`
+
+# Test of methods
+
+```{r ref-load-random-load}
+set.seed(1806)
+
+ref_load <- avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% summarise(annual_load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T)) 
+
+avenelles_p10 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(10*1e-2)))
+avenelles_p20 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(20*1e-2)))
+avenelles_p30 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(30*1e-2)))
+avenelles_p40 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(40*1e-2)))
+avenelles_p50 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(50*1e-2)))
+avenelles_p60 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(60*1e-2)))
+avenelles_p70 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(70*1e-2)))
+avenelles_p80 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(80*1e-2)))
+avenelles_p90 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(90*1e-2)))
+avenelles_p100 <- lapply(1:1000, function(i) data.frame(avenelles %>% subset(year %in% complete_years) %>% group_by(year) %>% sample_frac(100*1e-2)))
+
+```
+
+## Verhoff ratio 1980
+
+
+Known to be biaised. Compute yearly flux by:
+
+* Randomly sampling 10 to 90% of each year, 1000 times
+* Calculate annual load with ratio method for each year
+* Compare with reference load and estimate average bias
+
+```{r test-verhoff}
+
+avenelles_p10_load <- lapply(avenelles_p10, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p10_meanload <- lapply(avenelles_p10_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p10_bias <- lapply(avenelles_p10_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p10_meanbiais <- as.data.frame(do.call(cbind,avenelles_p10_bias)) %>% rowMeans
+
+avenelles_p20_load <- lapply(avenelles_p20, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p20_meanload <- lapply(avenelles_p20_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p20_bias <- lapply(avenelles_p20_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p20_meanbiais <- as.data.frame(do.call(cbind,avenelles_p20_bias)) %>% rowMeans
+
+avenelles_p30_load <- lapply(avenelles_p30, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p30_meanload <- lapply(avenelles_p30_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p30_bias <- lapply(avenelles_p30_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p30_meanbiais <- as.data.frame(do.call(cbind,avenelles_p30_bias)) %>% rowMeans
+
+avenelles_p40_load <- lapply(avenelles_p40, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p40_meanload <- lapply(avenelles_p40_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p40_bias <- lapply(avenelles_p40_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p40_meanbiais <- as.data.frame(do.call(cbind,avenelles_p40_bias)) %>% rowMeans
+
+avenelles_p50_load <- lapply(avenelles_p50, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p50_meanload <- lapply(avenelles_p50_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p50_bias <- lapply(avenelles_p50_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p50_meanbiais <- as.data.frame(do.call(cbind,avenelles_p50_bias)) %>% rowMeans
+
+avenelles_p60_load <- lapply(avenelles_p60, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p60_meanload <- lapply(avenelles_p60_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p60_bias <- lapply(avenelles_p60_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p60_meanbiais <- as.data.frame(do.call(cbind,avenelles_p60_bias)) %>% rowMeans
+
+avenelles_p70_load <- lapply(avenelles_p70, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p70_meanload <- lapply(avenelles_p70_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p70_bias <- lapply(avenelles_p70_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p70_meanbiais <- as.data.frame(do.call(cbind,avenelles_p70_bias)) %>% rowMeans
+
+avenelles_p80_load <- lapply(avenelles_p80, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p80_meanload <- lapply(avenelles_p80_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p80_bias <- lapply(avenelles_p80_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p80_meanbiais <- as.data.frame(do.call(cbind,avenelles_p80_bias)) %>% rowMeans
+
+avenelles_p90_load <- lapply(avenelles_p90, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p90_meanload <- lapply(avenelles_p90_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p90_bias <- lapply(avenelles_p90_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p90_meanbiais <- as.data.frame(do.call(cbind,avenelles_p90_bias)) %>% rowMeans
+
+avenelles_p100_load <- lapply(avenelles_p100, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p100_meanload <- lapply(avenelles_p100_load, function(i) {round((i$load/i$sum_q*ref_load$mean_q*60*60*24*365))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p100_bias <- lapply(avenelles_p100_load, function(i) {round(((i$load/i$sum_q*ref_load$mean_q*60*60*24*365)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p100_meanbiais <- as.data.frame(do.call(cbind,avenelles_p100_bias)) %>% rowMeans
+
+data.frame(
+  Year = complete_years,
+  "Annual load, tons" = ref_load$annual_load * 1e-9,
+  "Average estimated load, 10% of data" = avenelles_p10_meanload * 1e-9,
+  "Average bias, 10 % of data" = avenelles_p10_meanbiais,
+    "Average estimated load, 20% of data" = avenelles_p20_meanload * 1e-9,
+  "Average bias, 20 % of data" = avenelles_p20_meanbiais,
+    "Average estimated load, 30% of data" = avenelles_p30_meanload * 1e-9,
+  "Average bias, 30 % of data" = avenelles_p30_meanbiais,
+    "Average estimated load, 40% of data" = avenelles_p40_meanload * 1e-9,
+  "Average bias, 40 % of data" = avenelles_p40_meanbiais,
+    "Average estimated load, 50% of data" = avenelles_p50_meanload * 1e-9,
+  "Average bias, 50 % of data" = avenelles_p50_meanbiais,
+    "Average estimated load, 60% of data" = avenelles_p60_meanload * 1e-9,
+  "Average bias, 60 % of data" = avenelles_p60_meanbiais,
+    "Average estimated load, 70% of data" = avenelles_p70_meanload * 1e-9,
+  "Average bias, 70 % of data" = avenelles_p70_meanbiais,
+    "Average estimated load, 80% of data" = avenelles_p80_meanload * 1e-9,
+  "Average bias, 80 % of data" = avenelles_p80_meanbiais,
+    "Average estimated load, 90% of data" = avenelles_p90_meanload * 1e-9,
+  "Average bias, 90 % of data" = avenelles_p90_meanbiais,
+    "Average estimated load, 100% of data" = avenelles_p100_meanload * 1e-9,
+  "Average bias, 100 % of data" = avenelles_p100_meanbiais,
+  check.names = F
+)  %>% knitr::kable(digits = 2) %>% kableExtra::kable_styling()
+
+
+summary_df <- data.frame(
+  year = complete_years,
+  annual_load_ref = ref_load$annual_load * 1e-9,
+  annual_load_p10 = avenelles_p10_meanload * 1e-9,
+  bias_p10 = avenelles_p10_meanbiais,
+  annual_load_p20 = avenelles_p20_meanload * 1e-9,
+  bias_p20 = avenelles_p20_meanbiais,
+  annual_load_p30 = avenelles_p30_meanload * 1e-9,
+  bias_p30 = avenelles_p30_meanbiais,
+  annual_load_p40 = avenelles_p40_meanload * 1e-9,
+  bias_p40 = avenelles_p40_meanbiais,
+  annual_load_p50 = avenelles_p50_meanload * 1e-9,
+  bias_p50 = avenelles_p50_meanbiais,
+  annual_load_p60 = avenelles_p60_meanload * 1e-9,
+  bias_p60 = avenelles_p60_meanbiais,
+  annual_load_p70 = avenelles_p70_meanload * 1e-9,
+  bias_p70 = avenelles_p70_meanbiais,
+  annual_load_p80 = avenelles_p80_meanload * 1e-9,
+  bias_p80 = avenelles_p80_meanbiais,
+  annual_load_p90 = avenelles_p90_meanload * 1e-9,
+  bias_p90 = avenelles_p90_meanbiais,
+  annual_load_p100 = avenelles_p100_meanload * 1e-9,
+  bias_p100 = avenelles_p100_meanbiais)
+
+ggplot(summary_df,aes(x=year))+geom_line(aes(y=annual_load_ref), size = 1)+
+  geom_line(aes(y=annual_load_p10, col = "10%"))+
+    geom_line(aes(y=annual_load_p20, col = "20%"))+
+    geom_line(aes(y=annual_load_p30, col = "30%"))+
+    geom_line(aes(y=annual_load_p40, col = "40%"))+
+    geom_line(aes(y=annual_load_p50, col = "50%"))+
+    geom_line(aes(y=annual_load_p60, col = "60%"))+
+    geom_line(aes(y=annual_load_p70, col = "70%"))+
+    geom_line(aes(y=annual_load_p80, col = "80%"))+
+    geom_line(aes(y=annual_load_p90, col = "90%"))+
+    geom_line(aes(y=annual_load_p100, col = " 100%"))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot(summary_df,aes(x=year))+geom_line(data = ref_load, aes(x = year, y=mean_q/3), size = 1)+
+  geom_line(aes(y=bias_p10, col = "10%"))+
+    geom_line(aes(y=bias_p20, col = "20%"))+
+    geom_line(aes(y=bias_p30, col = "30%"))+
+    geom_line(aes(y=bias_p40, col = "40%"))+
+    geom_line(aes(y=bias_p50, col = "50%"))+
+    geom_line(aes(y=bias_p60, col = "60%"))+
+    geom_line(aes(y=bias_p70, col = "70%"))+
+    geom_line(aes(y=bias_p80, col = "80%"))+
+    geom_line(aes(y=bias_p90, col = "90%"))+
+    geom_line(aes(y=bias_p100, col = " 100%"))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average bias,%", col = "% of randomly \n sampled data", title = "Average bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*3, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+
+```
+
+
+
+## Camille's ratio
+
+Based on the observation that sum(Li)/sum(Qi) = sum(La)/sum(Qa)
+
+Bias = absolute bias
+
+```{r test-camille}
+
+avenelles_p10_load <- lapply(avenelles_p10, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p10_meanload <- lapply(avenelles_p10_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p10_bias <- lapply(avenelles_p10_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p10_meanbiais <- as.data.frame(do.call(cbind,avenelles_p10_bias)) %>% rowMeans
+
+avenelles_p20_load <- lapply(avenelles_p20, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p20_meanload <- lapply(avenelles_p20_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p20_bias <- lapply(avenelles_p20_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p20_meanbiais <- as.data.frame(do.call(cbind,avenelles_p20_bias)) %>% rowMeans
+
+avenelles_p30_load <- lapply(avenelles_p30, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p30_meanload <- lapply(avenelles_p30_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p30_bias <- lapply(avenelles_p30_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p30_meanbiais <- as.data.frame(do.call(cbind,avenelles_p30_bias)) %>% rowMeans
+
+avenelles_p40_load <- lapply(avenelles_p40, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p40_meanload <- lapply(avenelles_p40_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p40_bias <- lapply(avenelles_p40_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p40_meanbiais <- as.data.frame(do.call(cbind,avenelles_p40_bias)) %>% rowMeans
+
+avenelles_p50_load <- lapply(avenelles_p50, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p50_meanload <- lapply(avenelles_p50_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p50_bias <- lapply(avenelles_p50_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p50_meanbiais <- as.data.frame(do.call(cbind,avenelles_p50_bias)) %>% rowMeans
+
+avenelles_p60_load <- lapply(avenelles_p60, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p60_meanload <- lapply(avenelles_p60_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p60_bias <- lapply(avenelles_p60_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p60_meanbiais <- as.data.frame(do.call(cbind,avenelles_p60_bias)) %>% rowMeans
+
+avenelles_p70_load <- lapply(avenelles_p70, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p70_meanload <- lapply(avenelles_p70_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p70_bias <- lapply(avenelles_p70_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p70_meanbiais <- as.data.frame(do.call(cbind,avenelles_p70_bias)) %>% rowMeans
+
+avenelles_p80_load <- lapply(avenelles_p80, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p80_meanload <- lapply(avenelles_p80_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p80_bias <- lapply(avenelles_p80_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p80_meanbiais <- as.data.frame(do.call(cbind,avenelles_p80_bias)) %>% rowMeans
+
+avenelles_p90_load <- lapply(avenelles_p90, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p90_meanload <- lapply(avenelles_p90_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p90_bias <- lapply(avenelles_p90_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p90_meanbiais <- as.data.frame(do.call(cbind,avenelles_p90_bias)) %>% rowMeans
+
+avenelles_p100_load <- lapply(avenelles_p100, function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*period, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s))})
+avenelles_p100_meanload <- lapply(avenelles_p100_load, function(i) {round((i$load/i$sum_q*ref_load$sum_q))}) %>% do.call(what = cbind) %>% rowMeans
+avenelles_p100_bias <- lapply(avenelles_p100_load, function(i) {round(((i$load/i$sum_q*ref_load$sum_q)-ref_load$annual_load)/ref_load$annual_load*100)}) 
+avenelles_p100_meanbiais <- as.data.frame(do.call(cbind,avenelles_p100_bias)) %>% rowMeans
+
+data.frame(
+  Year = complete_years,
+  "Annual load, tons" = ref_load$annual_load * 1e-9,
+  "Average estimated load, 10% of data" = avenelles_p10_meanload * 1e-9,
+  "Average bias, 10 % of data" = avenelles_p10_meanbiais,
+    "Average estimated load, 20% of data" = avenelles_p20_meanload * 1e-9,
+  "Average bias, 20 % of data" = avenelles_p20_meanbiais,
+    "Average estimated load, 30% of data" = avenelles_p30_meanload * 1e-9,
+  "Average bias, 30 % of data" = avenelles_p30_meanbiais,
+    "Average estimated load, 40% of data" = avenelles_p40_meanload * 1e-9,
+  "Average bias, 40 % of data" = avenelles_p40_meanbiais,
+    "Average estimated load, 50% of data" = avenelles_p50_meanload * 1e-9,
+  "Average bias, 50 % of data" = avenelles_p50_meanbiais,
+    "Average estimated load, 60% of data" = avenelles_p60_meanload * 1e-9,
+  "Average bias, 60 % of data" = avenelles_p60_meanbiais,
+    "Average estimated load, 70% of data" = avenelles_p70_meanload * 1e-9,
+  "Average bias, 70 % of data" = avenelles_p70_meanbiais,
+    "Average estimated load, 80% of data" = avenelles_p80_meanload * 1e-9,
+  "Average bias, 80 % of data" = avenelles_p80_meanbiais,
+    "Average estimated load, 90% of data" = avenelles_p90_meanload * 1e-9,
+  "Average bias, 90 % of data" = avenelles_p90_meanbiais,
+    "Average estimated load, 100% of data" = avenelles_p100_meanload * 1e-9,
+  "Average bias, 100 % of data" = avenelles_p100_meanbiais,
+  check.names = F
+)  %>% knitr::kable(digits = 2) %>% kableExtra::kable_styling()
+
+
+summary_df <- data.frame(
+  year = complete_years,
+  annual_load_ref = ref_load$annual_load * 1e-9,
+  annual_load_p10 = avenelles_p10_meanload * 1e-9,
+  bias_p10 = avenelles_p10_meanbiais,
+  annual_load_p20 = avenelles_p20_meanload * 1e-9,
+  bias_p20 = avenelles_p20_meanbiais,
+  annual_load_p30 = avenelles_p30_meanload * 1e-9,
+  bias_p30 = avenelles_p30_meanbiais,
+  annual_load_p40 = avenelles_p40_meanload * 1e-9,
+  bias_p40 = avenelles_p40_meanbiais,
+  annual_load_p50 = avenelles_p50_meanload * 1e-9,
+  bias_p50 = avenelles_p50_meanbiais,
+  annual_load_p60 = avenelles_p60_meanload * 1e-9,
+  bias_p60 = avenelles_p60_meanbiais,
+  annual_load_p70 = avenelles_p70_meanload * 1e-9,
+  bias_p70 = avenelles_p70_meanbiais,
+  annual_load_p80 = avenelles_p80_meanload * 1e-9,
+  bias_p80 = avenelles_p80_meanbiais,
+  annual_load_p90 = avenelles_p90_meanload * 1e-9,
+  bias_p90 = avenelles_p90_meanbiais,
+  annual_load_p100 = avenelles_p100_meanload * 1e-9,
+  bias_p100 = avenelles_p100_meanbiais)
+
+ggplot(summary_df,aes(x=year))+geom_line(aes(y=annual_load_ref), size = 2)+
+  geom_line(aes(y=annual_load_p10, col = "10%"))+
+    geom_line(aes(y=annual_load_p20, col = "20%"))+
+    geom_line(aes(y=annual_load_p30, col = "30%"))+
+    geom_line(aes(y=annual_load_p40, col = "40%"))+
+    geom_line(aes(y=annual_load_p50, col = "50%"))+
+    geom_line(aes(y=annual_load_p60, col = "60%"))+
+    geom_line(aes(y=annual_load_p70, col = "70%"))+
+    geom_line(aes(y=annual_load_p80, col = "80%"))+
+    geom_line(aes(y=annual_load_p90, col = "90%"))+
+    geom_line(aes(y=annual_load_p100, col = " 100%"))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot(summary_df,aes(x=year))+#geom_line(data = ref_load, aes(x = year, y=mean_q/10), size = 1)+
+  geom_line(aes(y=bias_p10, col = "10%"))+
+    geom_line(aes(y=bias_p20, col = "20%"))+
+    geom_line(aes(y=bias_p30, col = "30%"))+
+    geom_line(aes(y=bias_p40, col = "40%"))+
+    geom_line(aes(y=bias_p50, col = "50%"))+
+    geom_line(aes(y=bias_p60, col = "60%"))+
+    geom_line(aes(y=bias_p70, col = "70%"))+
+    geom_line(aes(y=bias_p80, col = "80%"))+
+    geom_line(aes(y=bias_p90, col = "90%"))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Absolute average bias,%", col = "% of randomly \n sampled data", title = "Average bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*10, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot(summary_df)+geom_point(aes(x=))
+
+```
