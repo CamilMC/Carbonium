@@ -75,7 +75,6 @@ knitr::kable(summary_avenelles) %>% kableExtra::kable_styling()
 cat("mean Q", mean(avenelles$q_L.s, na.rm = T))
 cat("range OC (0-25-50-75-100)", quantile(with(avenelles, doc_mg.L), na.rm = T))
 
-
 avenelles %>% filter(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise(nb_obs = n(), nb_unique_date = length(unique(Date))) %>% kable() %>% kable_styling()
 ```
 
