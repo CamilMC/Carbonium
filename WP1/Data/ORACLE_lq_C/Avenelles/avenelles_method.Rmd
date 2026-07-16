@@ -455,7 +455,7 @@ ggplot()+
 ```
 
 
-## Minimize bias on average flow, data randomly missing, data missing by block
+## Minimize bias on average flow, data missing by block
 
 ```{r ref-load-block}
 set.seed(2606)
@@ -575,8 +575,8 @@ Known to be biaised. Compute yearly flux by:
 list_verhoff <- function(list_df){
   
 list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
-load_verhoff <- lapply(list_load, function(i) {(i$load/i$sum_q*ref_avenelles$mean_q[match(i$year, ref_avenelles$year)]*60*60*24*365)}) %>% do.call(what = cbind) %>% rowMeans #Retourne un vecteur avec une valeur de flux par année
-bias_verhoff <- lapply(list_load, function(i) {abs(((i$load/i$sum_q*ref_avenelles$mean_q[match(i$year, ref_avenelles$year)]*60*60*24*365)-ref_avenelles$annual_load[match(i$year, ref_avenelles$year)])/ref_avenelles$annual_load[match(i$year, ref_avenelles$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+load_verhoff <- lapply(list_load, function(i) {(i$load/i$sum_q*ref_avenelles$mean_q[match(i$year, ref_avenelles$year)]*24*365)}) %>% do.call(what = cbind) %>% rowMeans #Retourne un vecteur avec une valeur de flux par année
+bias_verhoff <- lapply(list_load, function(i) {abs(((i$load/i$sum_q*ref_avenelles$mean_q[match(i$year, ref_avenelles$year)]*24*365)-ref_avenelles$annual_load[match(i$year, ref_avenelles$year)])/ref_avenelles$annual_load[match(i$year, ref_avenelles$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
 mean_bias_verhoff <- as.data.frame(do.call(cbind,bias_verhoff)) %>% rowMeans #Calcule le biais moyen absolu par année    
   
 return(list(load_verhoff = load_verhoff,   mean_bias_verhoff = mean_bias_verhoff))
@@ -714,11 +714,12 @@ aggregate_block <- function(df, n_days) {
   df %>%
     mutate(block = as.numeric(as.Date(DateHeure) - min(as.Date(DateHeure))) %/% n_days) %>%
     group_by(block) %>%
-  group_modify(~ {
-      valid_idx <- which(!is.na(.x))
+    group_modify(~ {
+      valid_idx <- which(!is.na(.x$doc_mg.L) & !is.na(.x$q_L.s))
       if (length(valid_idx) == 0) {
-        # renvoyer une ligne de NA avec les bonnes colonnes
         .x[1, ] %>% mutate(across(everything(), ~ NA))
+      } else if (length(valid_idx) == 1) {
+        .x[valid_idx, ]          # voir piège n°2 ci-dessous
       } else {
         idx <- sample(valid_idx, 1)
         .x[idx, ]
@@ -729,10 +730,10 @@ aggregate_block <- function(df, n_days) {
 }
 
 # 1000 tirages pour chaque agrégation
-n_days_vec <- c(1,2, 4, 6, 8, 10, 12, 14)
+n_days_vec <- c(1, 2, 4, 6, 8, 10, 12, 14)
 
 list_aggregated <- lapply(n_days_vec, function(n_days) {
-  lapply(1:20, function(i) {
+  lapply(1:100, function(i) {
     avenelles_complete %>%
       group_by(year) %>%
       group_modify(~ aggregate_block(.x, n_days)) %>%
@@ -745,12 +746,23 @@ list_aggregated <- lapply(n_days_vec, function(n_days) {
 ```{r annual-load-aggregated}
 list_agg_sum <- function(list_df){
   
-list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*periodj*24*60*60, na.rm = T), sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T), slq = cov(doc_mg.L*q_L.s*period, q_L.s, use = "pairwise.complete.obs"))}) # génère une liste de dataframes
-load_aggregated <- as.data.frame(do.call(cbind,list_load)) %>% rowMeans(na.rm=T) #Calcule le load moyen par année  
-bias_aggregated <- lapply(list_load, function(i) {abs((i$load-ref_avenelles$annual_load[match(i$year, ref_avenelles$year)])/ref_avenelles$annual_load[match(i$year, ref_avenelles$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+list_load <- lapply(list_df, function(i) 
+  {i %>% group_by(year) %>% summarise(load = sum(doc_mg.L*q_L.s*periodj*24*60*60, na.rm = T), 
+              sum_q = sum(q_L.s, na.rm = T), 
+              mean_q = mean(q_L.s, na.rm = T), 
+              slq = cov(doc_mg.L*q_L.s*period, q_L.s, use = "pairwise.complete.obs"))}) # génère une liste de dataframes
+
+load_aggregated <- as.data.frame(do.call(cbind,list_load)) %>% rowMeans(na.rm = T) #Calcule le load moyen par année  
+
+bias_aggregated <- lapply(list_load, function(i) 
+  {abs(
+    (i$load-ref_avenelles$annual_load[match(i$year, ref_avenelles$year)])/
+      ref_avenelles$annual_load[match(i$year, ref_avenelles$year)]*100)}) #Retourne une liste de vecteurs avec les 100 biais par année, en valeur absolue. 
+
 mean_bias_aggregated <- as.data.frame(do.call(cbind,bias_aggregated)) %>% rowMeans #Calcule le biais moyen absolu par année    
   
-return(list(load_aggregated = load_aggregated, load_med = load_aggregated_med, load_max = load_aggregated_max, load_min = load_aggregated_min, mean_bias_aggregated = mean_bias_aggregated))
+return(list(load_aggregated = load_aggregated, mean_bias_aggregated = mean_bias_aggregated))
+
 }  
   
 results_aggregated <- lapply(list_aggregated, list_agg_sum)
@@ -767,40 +779,16 @@ ggplot(results_aggregated_df,aes(x=year))+geom_line(data = ref_avenelles, aes(y=
   scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
   theme_minimal()+
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
-# 
-# ggplot()+
-#   geom_line(data = ref_avenelles, aes(x = year, y=annual_load*5e-10), size = 1)+
-#   geom_line(data = results_aggregated_df, aes(x=year, y=mean_bias_aggregated, group = nb_days, col = nb_days))+
-#   scale_color_viridis_d(direction = -1)+
-#   labs(x= "Year", y = "Average absolute bias,%", col = "Nb days aggregated", title = "Average absolute bias by year depending on sampling frequency", subtitle = "Average annual discharge in black")+
-#   scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
-#   scale_y_continuous(sec.axis = sec_axis(~.*5e10, name = "Average annual load, tons"))+
-#   theme_minimal()+
-#   theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
 
-
-```
-```{r test-2018}
-avenelles_2018 <- avenelles %>% subset(year == 2018)
-
-ggplot()+geom_point(data = avenelles, aes(x=DateHeure, y = doc_mg.L*q_L.s, col = as.character(periodj)))+scale_color_viridis_d(option = "H")+theme_bw()
-ggplot()+geom_point(data = avenelles_2018, aes(x=DateHeure, y = doc_mg.L*q_L.s, col = as.character(periodj)))+scale_color_viridis_d(option = "H")+theme_bw()
-
-
-avenelles_2018$periodj %>% print
-annual_load_2018 <- with(avenelles_2018, sum(doc_mg.L*q_L.s*period, na.rm = T))
-
-ave_aggregated_2018 <- lapply(n_days_vec, function(n_days){
-    avenelles_2018 %>%
-      group_by(year) %>%
-      group_modify(~ aggregate_block(.x, n_days)) %>%
-      data.frame() %>% mutate(periodj = n_days)
-  }) %>% setNames(paste0("d", n_days_vec))
-
-
-
-
-loads_2018 <- vapply(ave_aggregated_2018, function(i) {with(i, sum(doc_mg.L*q_L.s*period, na.rm = T))}, FUN.VALUE = numeric(1)) %>% tibble::enframe(name = "nb_days", value = "load") %>% rbind(c(nb_days = "all", load = annual_load_2018))
+ggplot()+
+ # geom_line(data = ref_avenelles, aes(x = year, y=annual_load*5e-10), size = 1)+
+  geom_line(data = results_aggregated_df, aes(x=year, y=mean_bias_aggregated, group = nb_days, col = nb_days))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "Nb days aggregated", title = "Average absolute bias by year depending on sampling frequency", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+ # scale_y_continuous(sec.axis = sec_axis(~.*5e10, name = "Average annual load, tons"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
 
 
 ```
@@ -961,6 +949,115 @@ ggsave(here("figures","sflux_avenelles.svg"))
 
 knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
+
+
+## Variance decomposition
+
+Comme flux = DOC × Q × période, on a exactement : ln(flux) = ln(DOC) + ln(Q) + ln(période)
+Et donc, sans approximation : Var(ln flux) = Var(ln DOC) + Var(ln Q) + 2·Cov(ln DOC, ln Q)
+(Claude)
+
+```{r variance}
+# part des paramètres dans la variance
+
+
+list_var <- lapply(index_years, function(idx){
+  
+lnQ <- log(q_mat[,idx])
+lnDOC <- log(doc_mat[,idx])
+lnp <- log(period_mat[,idx])
+lnFlux <- lnQ + lnDOC + lnp
+
+var_lnQ <- var(as.vector(lnQ), na.rm = T)
+var_lnDOC <- var(as.vector(lnDOC), na.rm = T)
+var_lnp <- var(as.vector(lnp), na.rm = T)
+var_lnFlux <- var(as.vector(lnFlux), na.rm = T) 
+cov_qdoc <- 2*cov(as.vector(lnQ), as.vector(lnDOC), use = "pairwise.complete.obs")
+cov_qp <- 2*cov(as.vector(lnQ), as.vector(lnp), use = "pairwise.complete.obs")
+cov_docp <- 2*cov(as.vector(lnDOC), as.vector(lnp), use = "pairwise.complete.obs")
+
+
+var_df <- c(var_lnQ = var_lnQ,
+                    var_lnDOC = var_lnDOC,
+            var_lnp = var_lnp,
+                    cov_qdoc = cov_qdoc,
+            cov_qp = cov_qp,
+            cov_docp = cov_docp,
+                    var_lnFlux = var_lnFlux) 
+
+return(var_df)
+})
+
+
+annual_variances <- bind_rows(list_var, .id = "year")
+annual_variances$year <- complete_years
+
+
+# variance over all dataset
+lnQ <- log(q_mat)
+lnDOC <- log(doc_mat)
+lnp <- log(period_mat)
+lnFlux <- lnQ + lnDOC + lnp
+
+var_lnQ <- var(as.vector(lnQ), na.rm = T)
+var_lnDOC <- var(as.vector(lnDOC), na.rm = T)
+var_lnp <- var(as.vector(lnp), na.rm = T)
+var_lnFlux <- var(as.vector(lnFlux), na.rm = T) 
+cov_qdoc <- 2*cov(as.vector(lnQ), as.vector(lnDOC), use = "pairwise.complete.obs")
+cov_qp <- 2*cov(as.vector(lnQ), as.vector(lnp), use = "pairwise.complete.obs")
+cov_docp <- 2*cov(as.vector(lnDOC), as.vector(lnp), use = "pairwise.complete.obs")
+
+interannual_variance <- data.frame(year = "all", var_lnQ = var_lnQ,  var_lnDOC = var_lnDOC, var_lnp = var_lnp, cov_qdoc = cov_qdoc, cov_qp = cov_qp, cov_docp = cov_docp,var_lnFlux = var_lnFlux)
+
+variance_decomposition <- rbind(annual_variances, interannual_variance)  
+
+variance_decomposition <- variance_decomposition %>% 
+  mutate(part_Q = var_lnQ/var_lnFlux, part_DOC = var_lnDOC/var_lnFlux, part_p = var_lnp/var_lnFlux, 
+         part_covqdoc = cov_qdoc/var_lnFlux, part_covqp = cov_qp/var_lnFlux, part_covdocp = cov_docp/var_lnFlux, 
+         part_p_tot = part_p+part_covqp+part_covdocp, 
+         check = part_Q+part_DOC+part_p+part_covqdoc+part_covqp+part_covdocp)
+
+
+vd_long <- variance_decomposition %>%
+  select(year, part_Q, part_DOC, part_covqdoc, part_p_tot) %>%
+  tidyr::pivot_longer(cols = c(part_Q, part_DOC, part_covqdoc, part_p_tot),
+               names_to = "terme", values_to = "part")  %>%
+  mutate(terme = recode(terme,
+                         part_Q = "Débit (Q)",
+                         part_DOC = "DOC",
+                         part_covqdoc = "Covariance Q-DOC",
+                        part_p_tot = "Variance due aux intervalles de prélèvement"))
+
+ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
+  geom_col(position = "stack") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_fill_manual(values = c("Débit (Q)" = "lightblue",
+                                "DOC" = "indianred",
+                                "Covariance Q-DOC" = "darkblue",
+                               "Variance due aux intervalles de prélèvement" = "darkred")) +
+  scale_y_continuous(labels = scales::percent, breaks = c(0,0.20,0.40,0.60,0.80,1.00)) +
+  labs(x = "Année", y = "Part de la variance du log-flux",
+       fill = "Terme",
+       title = "Contribution de Q, DOC et de leur covariance à la variance du flux") +
+  theme_bw()
+
+vd_long_abs <- variance_decomposition %>%
+  select(year, var_lnQ, var_lnDOC, var_lnp, cov_qdoc, cov_qp, cov_docp) %>%
+  tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur")
+
+ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
+  geom_col(position = "dodge") +
+  geom_point(data = variance_decomposition, aes(x = year, y = var_lnFlux),
+             inherit.aes = FALSE, shape = 18, size = 3) +
+  #  scale_fill_manual(values = c("Débit (Q)" = ,
+  #                               "DOC" = "indianred",
+  #                               "Covariance Q-DOC" = "darkblue")) +
+  scale_fill_manual(values = c("darkblue","lightblue","darkred","indianred","palegreen4","cornsilk3"))+
+   theme_bw() +
+  labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
+
+```
+
 
 # Export données
 
