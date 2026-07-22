@@ -1035,7 +1035,7 @@ ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
                                 "DOC" = "indianred",
                                 "Covariance Q-DOC" = "darkblue",
                                "Variance due aux intervalles de prélèvement" = "darkred")) +
-  scale_y_continuous(labels = scales::percent, breaks = c(0,0.20,0.40,0.60,0.80,1.00)) +
+  scale_y_continuous(labels = scales::percent, breaks = c(-0.40,-0.20,0,0.20,0.40,0.60,0.80,1.00,1.2,1.4)) +
   labs(x = "Année", y = "Part de la variance du log-flux",
        fill = "Terme",
        title = "Contribution de Q, DOC et de leur covariance à la variance du flux") +

@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.alig
                       cache = T)
 ```
 
-```{r libraries, cache = F}
+```{r libraries}
 lapply(c("dplyr"), library, character.only = T)
 lapply(c("ggplot2","ggpubr"), library, character.only = T)
 lapply(c("lubridate"), library, character.only = T)
@@ -88,7 +88,7 @@ annotate_figure(plots, top = text_grob(title))
 
 
 
-```{r arles-complete-years, fig.dim = c(10,15), cache = F}
+```{r arles-complete-years, fig.dim = c(10,15)}
 complete_years <- c(2007,2008,2009,2010)
 arles_complete <- arles %>% subset(year %in% complete_years) %>% filter(!is.na(doc_mg.L) & !is.na(q_L.s))
 ```
@@ -373,7 +373,7 @@ ggplot()+
 
 ## Minimize bias on average flow, data missing by block
 
-```{r ref-load-block, cache.lazy = F}
+```{r ref-load-block, cache.lazy = T}
 set.seed(2606)
 
 sample_block <- function(df, frac) {

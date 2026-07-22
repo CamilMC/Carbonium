@@ -628,7 +628,7 @@ ggplot(galabre_nas, aes(x = mes_for_fit))+
 
 
 # Reference annual and interannual fluxes 
-
+  
 ## Total flux
 
 ```{r annual-flux-reference, eval = T, cache.lazy = F}

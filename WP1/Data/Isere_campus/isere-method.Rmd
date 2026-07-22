@@ -1,0 +1,1223 @@
+---
+title: "Isere Campus"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    number_section: true
+date: "2025-06-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+lapply(c("dplyr","readxl"), library, character.only = T)
+lapply(c("ggplot2","ggpubr"), library, character.only = T)
+lapply(c("lubridate"), library, character.only = T)
+lapply(c("knitr","kableExtra"), library, character.only = T)
+library(here)
+
+```
+
+
+# Données
+
+Les données dont on dispose pour la station de mesures d'Isère - campus sont: 
+
+* débits horaires de 2005 à 2025
+* CMES de 2006 à 2025
+* POC mesuré (et non calculé): 
+    - Carbonisère: suivi hebdo de 2006 à 2008 + crue du 19 mai 2006  + chasse du 27/06/2006 + crue du 30/08/2006 + chasse du 5/06/2006
+    - crues du 19/08/2022 (lave torrentielle) et chasse du 22/06/2022
+    - suivi hebdo Carbonium (pas encore disponible)
+* DOC: 
+  - Carbonisère: suivi hebdo de 2006 à 2008 + crue du 19 mai 2006  + chasse du 27/06/2006 + crue du 30/08/2006 + chasse du 5/06/2006
+  - suivi hebdo Carbonium (pas encore dispo)
+
+## Charger les données POC
+
+```{r bv-area}
+bv <- 5570
+```
+
+```{r prepare-data, eval = T}
+# Crues
+carbonisere <- read_xlsx("Bilan carbonisère.xlsx") 
+
+crues_2022 <- read_xlsx(path = "Crues_Isère_2022.xlsx", sheet = "test_match") 
+crues_2022$mes_mg.L <- NA
+crues_2022$debit_m3.s <- NA
+crues_2022$doc_mg.L <- NA
+
+
+
+doc_isere_2011 <- read_excel("doc_isere_2011-2012.xls")
+doc_isere_2011$name <- "DOC 2011"
+doc_isere_2011$poc_percent <- NA
+doc_isere_2011$mes_mg.L <- doc_isere_2011$mes_g.L * 1e3
+
+poc_isere_2011 <- read_excel("poc_isere_2011-2012.xls")
+poc_isere_2011$doc_mg.L <- NA
+poc_isere_2011$name <- "POC 2011"
+poc_isere_2011$mes_mg.L <- poc_isere_2011$mes_g.L * 1e3
+
+crues <- rbind(select(carbonisere, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent","doc_mg.L")),select(crues_2022, c("DateHeure","name","debit_m3.s", "mes_mg.L","poc_percent","doc_mg.L"))) %>%
+  rbind(select(doc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent","doc_mg.L"))) %>% rbind(select(poc_isere_2011, c("DateHeure","name","debit_m3.s","mes_mg.L","poc_percent","doc_mg.L")))
+
+# Chroniques BDOH
+cmes <- readxl::read_xlsx(path = "isere.xlsx", sheet = "cmes", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+debit <- readxl::read_xlsx(path = "isere.xlsx", sheet = "debit", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+
+# Merge dataframe
+isere <- merge(debit, cmes, by="DateHeure") %>% merge(crues, by = "DateHeure", all = T) 
+isere$year <- year(isere$DateHeure)
+isere$commondate <- as.Date(paste0("2000-", format(isere$Date,"%j")), "%Y-%j")
+
+isere$mes_g.L <- isere$mes_mg.L*1e-3
+isere$q_L.s <- isere$q_m3.s*1e3
+
+isere$period <- as.numeric(-(isere$DateHeure - lead(isere$DateHeure))) # period in s
+
+
+```
+
+
+## Visualization 
+
+```{r plot-by-year-q-cmes, fig.dim = c(10,15)}
+title <- expression(atop("Series of MES and Q by year"))
+
+plots <- ggarrange(
+ggplot(isere, aes(x = commondate))+
+  geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("lightblue"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "Débit, L/s", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none"),
+
+ggplot(isere, aes(x = commondate))+
+  geom_point(aes(y = cmes_g.L, col = "CMES, g.L"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("palegreen4"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "CMES, g/L", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none")
+)
+
+annotate_figure(plots, top = text_grob(title))
+```
+
+```{r plot-year-poc}
+ggplot(filter(isere, !is.na(poc_percent)), aes(x = commondate))+
+  geom_point(aes(y = poc_percent, col = "POC, %"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("darkred"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "POC, %", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none")
+
+
+```
+
+## Isere complete years 
+
+```{r isere-complete-years, fig.dim = c(10,15)}
+complete_years <- c(2007:2014, 2016, 2019, 2020)
+isere_complete <- isere %>% subset(year %in% complete_years)
+```
+
+Years to use for test of methods: `r cat(complete_years)`
+
+```{r plot-complete-years, fig.dim = c(10,15)}
+title <- expression(atop("Series of DOC and Q by year"))
+plots <- ggarrange(
+ggplot(subset(isere_complete, year %in% complete_years), aes(x = commondate))+
+  geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("lightblue"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "Débit, L/s", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none"),
+
+ggplot(isere, aes(x = commondate))+
+  geom_point(aes(y = cmes_g.L, col = "CMES, g.L"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("palegreen4"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "CMES, g/L", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none")
+)
+
+annotate_figure(plots, top = text_grob(title))
+
+```
+
+## Characteristics
+
+```{r summary-data}
+summary_isere <- merge(
+isere %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise("Number of CMES observations" = n(), "CMES range, g/L" = paste(quantile(cmes_g.L, probs = c(0,0.5,1), na.rm = T), collapse = " / ")),
+isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise("Number of POC observations" = n(), "POC, percent" = paste(quantile(poc_percent, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>%
+  merge(isere %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>% 
+  merge(isere %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(as.Date(DateHeure)))), by = "year", all = T) %>%
+  merge(isere %>% group_by(year) %>% summarise("Correlation CMES/log(Q)" = round(cor(cmes_g.L, log(q_L.s), use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
+  rbind(c("All years", 
+          dim(subset(isere, !is.na(cmes_g.L)))[1], 
+          paste(quantile(isere$cmes_g.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(isere, !is.na(poc_percent)))[1], 
+          paste(quantile(isere$poc_percent, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(isere, !is.na(q_L.s)))[1], 
+          paste(quantile(isere$q_L.s, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          length(unique(as.Date(isere$DateHeure))),
+          round(cor(isere$cmes_g.L, log(isere$q_L.s), use = "pairwise.complete.obs" ),2)
+          )) %>%
+    rbind(c("Complete years", 
+          dim(subset(isere_complete, !is.na(cmes_g.L)))[1], 
+          paste(quantile(isere_complete$cmes_g.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(isere_complete, !is.na(poc_percent)))[1], 
+          paste(quantile(isere_complete$poc_percent, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(isere_complete, !is.na(q_L.s)))[1], 
+          paste(quantile(isere_complete$q_L.s, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          length(unique(as.Date(isere_complete$DateHeure))),
+          round(cor(isere_complete$cmes_g.L, log(isere_complete$q_L.s), use = "pairwise.complete.obs" ),2)
+          )
+          )
+
+knitr::kable(summary_isere, caption = "Summary table of Isere data") %>% kableExtra::kable_styling()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r histograms}
+ggarrange(
+  ggplot(isere_complete)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
+  ggplot(isere_complete)+geom_histogram(aes(cmes_g.L), fill = "palegreen4")+labs(x= "CMES, g/L", y = "")+theme_bw(),
+  ggplot(isere_complete)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
+  ggplot(isere_complete)+geom_histogram(aes(log(cmes_g.L)), fill = "palegreen4")+labs(x= "CMES (log10), g/L", y = "")+theme_bw()
+)
+```
+
+# Fit MES-POC
+
+
+Objectif: construire la relation MES-POC pour pouvoir reconstruire la chronique de POC à partir de la chronique de MES. Cette relation prend la forme de $POC\% = a*MES^b + c$. Le modèle est fitté sur les données de crues dont la concentration en POC a été mesurée: **poc_isere**.
+
+```{r poc-isere}
+poc_isere <- isere %>% filter(!is.na(poc_percent) & !is.na(mes_g.L) & mes_g.L != 0) # one missing value for MES, 3 MES = 0
+poc_isere[which(poc_isere$poc_percent ==0),"poc_percent"] <- 0.001
+poc_isere$mes_for_fit <- poc_isere$mes_g.L 
+
+n_obs <- nrow(poc_isere)
+n_boot <- 1000
+```
+
+
+```{r uncertainties}
+q_u <- 0.1 # dire d'expert Cédric
+mes_u <- 0.5 # au pif
+```
+
+
+On cherche à fitter le modèle $POC \% = a *MES^{b} + aspt$. Deux fonctions R sont disponibles : *nls* et *gnls*. nls est robuste, mais gnls permet de choisir la structure de la variance. On sait que la variance diminue pour les hautes valeurs de MES (on tend vers l'asymptote). L'erreur dépend probablement de $y*\sigma^{2\delta}$.
+
+```{r asymptot}
+# find asymptotic value : arbitrarily decide that it corresponds to the median of the 10% of poc_percent corresponding to the 10% of highest MES values.
+aspt_value <- poc_isere[order(poc_isere$mes_for_fit, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% mean() 
+aspt_value_sd <- poc_isere[order(poc_isere$mes_for_fit, decreasing = T),] %>% pull(poc_percent) %>% head(dim(poc_isere)[1]/10) %>% sd() 
+
+poc_isere$aspt <- aspt_value
+```
+
+## MES (observed with POC%) and CMES (from turbidity)
+
+```{r mes-cmes}
+
+fit_mes <- lm(cmes_g.L~mes_g.L, data = poc_isere)
+summary(fit_mes)
+
+cmes_u <- summary(fit_mes)$coef[2,2] # standard error on cmes
+
+ggarrange(
+ggplot(poc_isere) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = name, shape = name))+
+  scale_color_viridis_d()+
+  scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
+  geom_abline(slope = 1, intercept =0, col ="darkred")+
+  geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
+  xlim(0,200)+
+  theme_minimal(base_size = 15),
+
+ggplot(poc_isere) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = name, shape = name))+
+  scale_color_viridis_d()+
+  scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
+  geom_abline(slope = 1, intercept =0, col ="darkred")+
+  geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
+  xlim(0,50)+ylim(0,50)+
+  theme_minimal(base_size = 15),
+
+ggplot(poc_isere) + geom_point(aes(x=cmes_g.L, y = mes_g.L, col = name, shape = name))+
+  scale_color_viridis_d()+
+  scale_shape_manual(values = c(1,2,3,4,5,6,7,8,9,10,11))+
+  geom_abline(slope = 1, intercept =0, col ="darkred")+
+  geom_abline(intercept = coef(fit_mes)[1], slope = coef(fit_mes)[2], linetype = 2)+
+  xlim(0,10)+ylim(0,10)+
+  theme_minimal(base_size = 15),
+
+ncol = 3, common.legend = T, legend = "bottom")
+
+```
+
+## Log-log linear regression: get starting values
+
+
+```{r lm-poc-mes}
+pocfit <- lm(log(poc_percent)~log(mes_for_fit), data = select(poc_isere, c(poc_percent, mes_for_fit)))
+
+summary(pocfit)
+```
+
+
+## GNLS with aspt 
+
+### Fit GNLS model 
+
+```{r fit-poc-mes-gnls}
+library(nlme)
+
+# fit gnls
+pocfitg <- gnls(
+  poc_percent ~ a*mes_for_fit^b + aspt,
+  data = select(poc_isere, c(mes_for_fit, poc_percent, aspt)),
+  start = list(a = coef(pocfit)[[2]], b = coef(pocfit)[[1]]), # on utilise les valeurs de pocfit comme coefficients initiaux
+  weights = varPower(value = 1, form = ~ fitted(.)),
+  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
+)
+
+# summary 
+summary(pocfitg) %>% print()
+
+# variance parameters
+theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
+sigma_gnls <- pocfitg$sigma
+
+# formula
+formula_pocfitg <- paste("GNLS:", round(coef(pocfitg)[1], 3), "x MES ^", round(coef(pocfitg)[2],3), "+", round(aspt_value, 3), sep = "")
+
+## model function 
+f <- function(x, a, b, aspt){
+  a * x ^ b + aspt
+}
+```
+
+### GNLS extension to isere
+
+**mes_for_fit** contient beaucoup de zéros (462553). Ils ne peuvent pas être inclus dans le modèle parce qu'il est instable avec 0^(-b). On va fitter les autres lignes et imposer POC% = 0 pour les lignes où MES = 0. 
+
+Pour la méthode, on utilise uniquement les années où les chroniques de débit sont complètes... de 2009 à 2014. 
+
+```{r constant-numbers}
+# prepare dataframe
+isere_gnls <- isere_complete
+isere_gnls$mes_for_fit <- isere_gnls$cmes_g.L
+with(isere_gnls, sum(mes_for_fit == 0 | is.na(mes_for_fit), na.rm = T)) # 141
+
+na_lines <- which(is.na(isere_gnls$mes_for_fit)) # 0
+zero_lines <- which(isere_gnls$mes_for_fit == 0)
+fit_lines <- which(isere_gnls$mes_for_fit != 0 & !is.na(isere_gnls$mes_for_fit))
+
+isere_nas_gnls <- isere_gnls[fit_lines, ]
+isere_nas_gnls$aspt <- aspt_value # from nls fitting
+
+# predict POC pour mes > 0
+poc_fitted <- predict(pocfitg, newdata = isere_nas_gnls, na.action = na.pass)
+isere_gnls$poc_fitted <- NA
+isere_gnls[fit_lines, ]$poc_fitted <- poc_fitted
+isere_gnls[zero_lines, ]$poc_fitted <- 0
+
+
+ggplot(isere_gnls)+geom_point(aes(x=mes_for_fit, y = poc_fitted))+
+  labs(y = "POC %, fitted", x = "MES, g/L")+theme_bw()
+```
+
+### GNLS bootstrap
+
+```{r intervalles-de-confiance-bootstrap}
+
+coefs_boot <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
+                     
+
+for(i in seq_len(n_boot)){
+  
+  idx_boot <- sample(n_obs, replace = T)
+  df_boot <- poc_isere[idx_boot, c("mes_for_fit","poc_percent","aspt")]
+  
+  tryCatch(
+    {fit_init <- nls(
+      poc_percent ~ a * mes_for_fit^b + aspt,
+      data = df_boot,
+      start = coef(pocfitg))
+      # fit init is necessary to find the correct starting values for gnls. Otherwise, too much convergence result in extreme values in a and b
+
+      pocfit_bg <- gnls(
+      poc_percent~a*mes_for_fit^b+aspt,
+      data = df_boot,
+      start = coef(fit_init),
+      weights = varPower(form = ~fitted(.)),
+      control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4, maxIter = 200))
+      
+      coefs_boot[i,] <- coef(pocfit_bg)
+      }, 
+    error = function(e) NULL) 
+}
+
+# removes NA
+coefs_boot <- na.omit(coefs_boot)
+apply(coefs_boot, 2, quantile, probs = c(0.025, 0.975)) %>% knitr::kable() #ic coef
+ggplot(as.data.frame(coefs_boot))+
+  geom_point(aes(x = a, y = b))+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "none")
+
+# adds uncertainty around aspt
+coefs_boot <- cbind(coefs_boot, "aspt" = rnorm(length(coefs_boot)/2, mean = aspt_value, sd = aspt_value_sd))
+
+# compute POC
+fitted_boot <- apply(coefs_boot, 1, function(p){p["a"] * poc_isere$mes_for_fit^p["b"] + p["aspt"]}) # MC worlds in columns
+fitted_boot_ic <- apply(fitted_boot, 1, quantile, 
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE) # prediction intervals
+fitted_boot_mean <- apply(fitted_boot, 1, mean) # meet bottstrapped valur
+
+# intergrates in poc_isere
+poc_isere_boot_gnls <- poc_isere %>% mutate(poc_fitted = fitted_boot_mean, upr = fitted_boot_ic[3, ], lwr = fitted_boot_ic[1,])
+
+ggplot(poc_isere_boot_gnls)+
+  geom_point(aes(x=mes_for_fit, y = poc_percent, col = "measured", shape = "measured"))+ 
+  geom_point(aes(x=mes_for_fit, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
+  geom_ribbon(aes(x = mes_for_fit, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
+  theme_minimal(base_size = 15)
+
+ggplot(poc_isere_boot_gnls, aes(x=poc_percent))+
+  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
+  geom_errorbar(aes(ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 1, intercept = 0, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
+  theme_minimal(base_size = 15)
+```
+
+
+
+
+```{r pred-isere-gnls, cache.lazy = F}
+nrow_boot <- nrow(coefs_boot)
+nrow_isere_gnls <- nrow(isere_gnls)
+
+
+# MES matrix
+mes_meas <- matrix(isere_gnls$mes_for_fit, nrow = nrow_boot, ncol = nrow_isere_gnls, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+mes_noise <- matrix(rnorm(nrow_boot*nrow_isere_gnls, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_isere_gnls) # 
+mes_mat <- mes_meas * (1 + mes_noise) # final value of q, with noise. 
+
+
+# Prediction matrix, no model noise
+mu_gnls <- f(mes_mat, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+# Prediction matrix, with noise
+noise_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_isere_gnls)
+sigma_mat_gnls <- sigma_gnls * abs(mu_gnls)^theta # variance depends on predicted value
+
+noise_mat_gnls <- matrix(rnorm(nrow_boot*nrow_isere_gnls, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_isere_gnls)
+noise_mat_gnls <- noise_mat_gnls*sigma_mat_gnls
+
+pred_gnls <- mu_gnls + noise_mat_gnls
+
+mes_mat_zeros <- which(mes_mat == 0)
+pred_gnls[mes_mat_zeros] <- 0
+#pred_gnls <- pmin(pmax(pred_gnls, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro et au dessus de 100 (no case)
+
+# Prediction interval 
+pi <- t(apply(pred_gnls, 2, quantile, probs = c(0.025, 0.975), na.rm = T))
+colnames(pi) <- c("lower", "upper")
+
+# Mean bootstrap value
+boot_pred_gnls <- colMeans(pred_gnls, na.rm = T)
+
+## insert in isere_for_gnls
+isere_gnls <- isere_gnls %>% mutate(poc_boot_pred = boot_pred_gnls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# variances
+isere_gnls$poc_var_mean <- apply(mu_gnls, 2, var) # variance of fit parameters + MES 
+isere_gnls$poc_var_tot <- apply(pred_gnls, 2, var) # total variance per prediction, for prediction total uncertainty
+
+# plot
+ggplot(isere_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5, size = 0.5)+
+  geom_point(aes(y = poc_fitted, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+# plot variance
+ggplot(isere_gnls, aes(x = mes_for_fit))+
+  geom_line(aes(y = poc_var_mean, col = "model variance"))+
+  geom_line(aes(y = poc_var_tot, col = "total variance (includes noise)"))+
+  scale_color_manual(values = c("lightblue", "darkblue"))+
+  scale_x_continuous(trans = "log", breaks = c(0.01,0.1,1,10,50))+
+  labs(x = "MES, g/L", y = "variance")+
+  theme_minimal(base_size = 15)
+    
+```
+
+
+
+
+# Test of methods for estimating fluxes when data is missing
+
+```{r switch-names}
+isere_complete <- isere_gnls
+```
+
+```{r ref-isere}
+ref_isere <- isere_complete%>% group_by(year) %>% summarise(annual_load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s*period, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T), slq = cov(poc_fitted*1e-2*cmes_g.L*q_L.s*period, q_L.s, use = "pairwise.complete.obs"), n_obs = n()) 
+
+```
+
+
+
+
+## Minimize bias on average flow, data randomly missing
+
+```{r ref-load-random-load, cache.lazy = T}
+set.seed(1806)
+
+# Fonction d'échantillonnage par bloc
+sample_block <- function(df, frac) {
+  n <- nrow(df)
+  block_size <- round(n * frac)
+  start <- sample(1:n, 1)
+  indices <- ((start - 1 + 0:(block_size - 1)) %% n) + 1
+  return(df[indices, ])
+}
+
+# Génération de toutes les listes en une seule fois
+fracs <- seq(0.1, 1, by = 0.1)
+
+list_random <- lapply(fracs, function(frac) {
+  lapply(1:100, function(i) {
+    isere_complete %>%
+      group_by(year) %>%
+      group_modify(~ sample_block(.x, frac))
+  })
+}) %>% setNames(paste0("p", fracs * 100))
+
+```
+
+### Verhoff ratio 1980
+
+
+Known to be biaised. Compute yearly flux by:
+
+* Randomly sampling 10 to 90% of each year, 1000 times
+* Calculate annual load with ratio method for each year
+* Compare with reference load and estimate average bias
+
+```{r test-verhoff}
+list_verhoff <- function(list_df){
+  
+list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load.s = sum(poc_fitted*1e-2*cmes_g.L*q_L.s, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
+load_verhoff <- lapply(list_load, function(i) {(i$load.s/i$sum_q*ref_isere$mean_q[match(i$year, ref_isere$year)]*60*60*24*365)}) %>% do.call(what = cbind) %>% rowMeans #Retourne un vecteur avec une valeur de flux par année
+bias_verhoff <- lapply(list_load, function(i) {abs(((i$load.s/i$sum_q*ref_isere$mean_q[match(i$year, ref_isere$year)]*60*60*24*365)-ref_isere$annual_load[match(i$year, ref_isere$year)])/ref_isere$annual_load[match(i$year, ref_isere$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+mean_bias_verhoff <- as.data.frame(do.call(cbind,bias_verhoff)) %>% rowMeans #Calcule le biais moyen absolu par année    
+  
+return(list(load_verhoff = load_verhoff,   mean_bias_verhoff = mean_bias_verhoff))
+}  
+  
+  
+results_verhoff <- lapply(list_random, list_verhoff)
+results_verhoff_listdf <- lapply(results_verhoff, as.data.frame) %>% lapply(cbind, year = complete_years)
+results_verhoff_df <- bind_rows(results_verhoff_listdf, .id = "percent")
+
+
+ggplot(results_verhoff_df,aes(x=year))+
+  geom_line(aes(y = load_verhoff, group = percent, col = percent))+
+  geom_line(data = ref_isere, aes(y=annual_load), size = 1)+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot()+
+  geom_line(data = ref_isere, aes(x = year, y=mean_q*1e-4), size = 1)+
+  geom_line(data = results_verhoff_df, aes(x=year, y=mean_bias_verhoff, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "% of randomly \n sampled data", title = "Average absolute bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*1e4, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+
+
+```
+
+### Beales ratio
+
+```{r test-beales}
+list_beales <- function(list_df){
+
+  
+    
+list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load.s = sum(poc_fitted*1e-2*cmes_g.L*q_L.s, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T), sqq = var(q_L.s, na.rm = T))}) # génère une liste de dataframes
+load_beales <- lapply(list_load, function(i) {
+  i$load.s/i$sum_q*ref_isere$mean_q[match(i$year, ref_isere$year)]* 60*60*24*365 * 
+  ((1+(1/length(i$load.s-1/ref_isere$n_obs[match(i$year, ref_isere$year)])*ref_isere$slq[match(i$year, ref_isere$year)]/(i$load.s*ref_isere$mean_q[match(i$year, ref_isere$year)])))/
+    1+ 1/length(i$load.s-1/ref_isere$n_obs[match(i$year, ref_isere$year)])*i$sqq/sqrt(ref_isere$mean_q[match(i$year, ref_isere$year)])
+     )}) %>% 
+  do.call(what = cbind) %>% rowMeans(na.rm = T) #Retourne un vecteur avec une valeur de flux par année
+bias_beales <- lapply(list_load, function(i) {abs((load_beales-ref_isere$annual_load[match(i$year, ref_isere$year)])/ref_isere$annual_load[match(i$year, ref_isere$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+mean_bias_beales <- as.data.frame(do.call(cbind,bias_beales)) %>% rowMeans #Calcule le biais moyen absolu par année    
+  
+return(list(load_beales = load_beales,   mean_bias_beales = mean_bias_beales))
+}  
+  
+  
+results_beales <- lapply(list_random, list_beales)
+results_beales_listdf <- lapply(results_beales, as.data.frame) %>% lapply(cbind, year = complete_years)
+results_beales_df <- bind_rows(results_beales_listdf, .id = "percent")
+
+
+ggplot(results_beales_df,aes(x=year))+geom_line(data = ref_isere, aes(y=annual_load), size = 1)+
+  geom_line(aes(y = load_beales, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot()+
+  geom_line(data = ref_isere, aes(x = year, y=mean_q/3), size = 1)+
+  geom_line(data = results_beales_df, aes(x=year, y=mean_bias_beales, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "% of randomly \n sampled data", title = "Average absolute bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*3, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+```
+
+
+### Camille's ratio
+
+Based on the observation that sum(Li)/sum(Qi) = sum(La)/sum(Qa)
+
+Bias = absolute bias
+
+```{r test-camille}
+list_camille <- function(list_df){
+  
+list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s*period, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
+load_camille <- lapply(list_load, function(i) {i$load/i$sum_q*ref_isere$sum_q[match(i$year, ref_isere$year)]}) %>% do.call(what = cbind) %>% rowMeans #Retourne un vecteur avec une valeur de flux par année
+bias_camille <- lapply(list_load, function(i) {abs(((i$load/i$sum_q*ref_isere$sum_q[match(i$year, ref_isere$year[match(i$year, ref_isere$year)])])-ref_isere$annual_load[match(i$year, ref_isere$year)])/ref_isere$annual_load[match(i$year, ref_isere$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+mean_bias_camille <- as.data.frame(do.call(cbind,bias_camille)) %>% rowMeans #Calcule le biais moyen absolu par année    
+  
+return(list(load_camille = load_camille,   mean_bias_camille = mean_bias_camille))
+}  
+  
+  
+results_camille <- lapply(list_random, list_camille)
+results_camille_listdf <- lapply(results_camille, as.data.frame) %>% lapply(cbind, year = complete_years)
+results_camille_df <- bind_rows(results_camille_listdf, .id = "percent")
+
+
+ggplot(results_camille_df,aes(x=year))+
+  geom_line(aes(y = load_camille, group = percent, col = percent))+
+  geom_line(data = ref_isere, aes(y=annual_load), size = 1)+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+
+ggplot()+
+  geom_line(data = ref_isere, aes(x = year, y=mean_q*1e-4), size = 1)+
+  geom_line(data = results_camille_df, aes(x=year, y=mean_bias_camille, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "% of randomly \n sampled data", title = "Average absolute bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*1e4, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+```
+
+
+## Minimize bias on average flow, data missing by block
+
+
+
+
+```{r ref-load-block, cache.lazy = F}
+set.seed(2606)
+
+
+sample_block <- function(df, frac) {
+  n <- nrow(df)
+  block_size <- round(n * frac)
+  
+  # Tirage aléatoire du point de départ (avec retour au début si le bloc dépasse la fin)
+  start <- sample(1:n, 1)
+  indices <- ((start - 1 + 0:(block_size - 1)) %% n) + 1
+  
+  return(df[indices, ])
+}
+
+# Génération des 1000 tirages par bloc pour chaque pourcentage
+fracs <- c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+
+list_random <- lapply(fracs, function(frac) {
+  lapply(1:100, function(i) {
+    isere_complete %>%
+      group_by(year) %>%
+      group_modify(~ sample_block(.x, frac)) 
+  })
+}) %>% setNames(paste0("p", fracs * 100))
+
+
+```
+
+### Verhoff ratio 1980
+
+
+Known to be biaised. Compute yearly flux by:
+
+* Randomly sampling 10 to 90% of each year, 1000 times
+* Calculate annual load with ratio method for each year
+* Compare with reference load and estimate average bias
+
+```{r test-verhoff-block}
+list_verhoff <- function(list_df){
+  
+list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
+load_verhoff <- lapply(list_load, function(i) {(i$load/i$sum_q*ref_isere$mean_q[match(i$year, ref_isere$year)]*24*365)}) %>% do.call(what = cbind) %>% rowMeans #Retourne un vecteur avec une valeur de flux par année
+bias_verhoff <- lapply(list_load, function(i) {abs(((i$load/i$sum_q*ref_isere$mean_q[match(i$year, ref_isere$year)]*24*365)-ref_isere$annual_load[match(i$year, ref_isere$year)])/ref_isere$annual_load[match(i$year, ref_isere$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+mean_bias_verhoff <- as.data.frame(do.call(cbind,bias_verhoff)) %>% rowMeans #Calcule le biais moyen absolu par année    
+  
+return(list(load_verhoff = load_verhoff,   mean_bias_verhoff = mean_bias_verhoff))
+}  
+  
+  
+results_verhoff <- lapply(list_random, list_verhoff)
+results_verhoff_listdf <- lapply(results_verhoff, as.data.frame) %>% lapply(cbind, year = complete_years)
+results_verhoff_df <- bind_rows(results_verhoff_listdf, .id = "percent")
+
+
+ggplot(results_verhoff_df,aes(x=year))+geom_line(data = ref_isere, aes(y=annual_load), size = 1)+
+  geom_line(aes(y = load_verhoff, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot()+
+  geom_line(data = ref_isere, aes(x = year, y=mean_q/4), size = 1)+
+  geom_line(data = results_verhoff_df, aes(x=year, y=mean_bias_verhoff, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "% of randomly \n sampled data", title = "Average absolute bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*4, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+
+```
+
+### Beales ratio
+
+```{r test-beales-block}
+list_beales <- function(list_df){
+
+  
+    
+list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T), sqq = var(q_L.s, na.rm = T))}) # génère une liste de dataframes
+load_beales <- lapply(list_load, function(i) {
+  i$load/i$sum_q*ref_isere$mean_q[match(i$year, ref_isere$year)]* 60*60*24*365 * 
+  ((1+(1/length(i$load-1/ref_isere$n_obs[match(i$year, ref_isere$year)])*ref_isere$slq[match(i$year, ref_isere$year)]/(i$load*ref_isere$mean_q[match(i$year, ref_isere$year)])))/
+    1+ 1/length(i$load-1/ref_isere$n_obs[match(i$year, ref_isere$year)])*i$sqq/sqrt(ref_isere$mean_q[match(i$year, ref_isere$year)])
+     )}) %>% 
+  do.call(what = cbind) %>% rowMeans(na.rm = T) #Retourne un vecteur avec une valeur de flux par année
+bias_beales <- lapply(list_load, function(i) {abs((load_beales-ref_isere$annual_load[match(i$year, ref_isere$year)])/ref_isere$annual_load[match(i$year, ref_isere$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+mean_bias_beales <- as.data.frame(do.call(cbind,bias_beales)) %>% rowMeans #Calcule le biais moyen absolu par année    
+  
+return(list(load_beales = load_beales,   mean_bias_beales = mean_bias_beales))
+}  
+  
+  
+results_beales <- lapply(list_random, list_beales)
+results_beales_listdf <- lapply(results_beales, as.data.frame) %>% lapply(cbind, year = complete_years)
+results_beales_df <- bind_rows(results_beales_listdf, .id = "percent")
+
+
+ggplot(results_beales_df,aes(x=year))+geom_line(data = ref_isere, aes(y=annual_load), size = 1)+
+  geom_line(aes(y = load_beales, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot()+
+  geom_line(data = ref_isere, aes(x = year, y=mean_q/3), size = 1)+
+  geom_line(data = results_beales_df, aes(x=year, y=mean_bias_beales, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "% of randomly \n sampled data", title = "Average absolute bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*3, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+
+```
+
+
+
+### Camille's ratio
+
+Based on the observation that sum(Li)/sum(Qi) = sum(La)/sum(Qa)
+
+Bias = absolute bias
+
+```{r test-camille-block}
+list_camille <- function(list_df){
+  
+list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s*period, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
+load_camille <- lapply(list_load, function(i) {i$load/i$sum_q*ref_isere$sum_q[match(i$year, ref_isere$year)]}) %>% do.call(what = cbind) %>% rowMeans #Retourne un vecteur avec une valeur de flux par année
+bias_camille <- lapply(list_load, function(i) {abs(((i$load/i$sum_q*ref_isere$sum_q[match(i$year, ref_isere$year[match(i$year, ref_isere$year)])])-ref_isere$annual_load[match(i$year, ref_isere$year)])/ref_isere$annual_load[match(i$year, ref_isere$year)]*100)}) #Retourne une liste de vecteurs avec les 1000 biais par année, en valeur absolue. 
+mean_bias_camille <- as.data.frame(do.call(cbind,bias_camille)) %>% rowMeans #Calcule le biais moyen absolu par année    
+  
+return(list(load_camille = load_camille,   mean_bias_camille = mean_bias_camille))
+}  
+  
+  
+results_camille <- lapply(list_random, list_camille)
+results_camille_listdf <- lapply(results_camille, as.data.frame) %>% lapply(cbind, year = complete_years)
+results_camille_df <- bind_rows(results_camille_listdf, .id = "percent")
+
+
+ggplot(results_camille_df,aes(x=year))+geom_line(data = ref_isere, aes(y=annual_load), size = 1)+
+  geom_line(aes(y = load_camille, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "% of randomly sampled data",title = "Average DOC load by year depending on percentage of data included", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+
+ggplot()+
+  geom_line(data = ref_isere, aes(x = year, y=mean_q/6), size = 1)+
+  geom_line(data = results_camille_df, aes(x=year, y=mean_bias_camille, group = percent, col = percent))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "% of randomly \n sampled data", title = "Average absolute bias by year depending on percentage of data included", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  scale_y_continuous(sec.axis = sec_axis(~.*6, name = "Average annual discharge, L/s"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+```
+
+
+## Bias with less frequent sampling (only plain sum)
+
+### Random value picked within interval 
+
+```{r list-aggregated-df}
+library(data.table)
+setDT(isere_complete)
+isere_complete[, valid := !is.na(cmes_g.L) & !is.na(q_L.s)]
+
+# numéro de bloc: fonction pour ajouter un numéro de bloc au data table
+add_block <- function(dt, n_hours){
+  dt <- copy(dt)
+  dt[,block := as.integer(difftime(DateHeure, min(DateHeure), units = "hours")) %/% n_hours, by = year]
+  dt
+}
+
+# tirage: fonction pour faire un tirage aléatoire sur un datatable qui a déjà des blocs
+sample_dt <- function(dt)
+  {
+  all_blocks <- unique(dt[, .(year,block)]) # il y a environ 5000 blocs par an
+  
+  # Tirage vectorisé : un index aléatoire par groupe, uniquement parmi les lignes valides
+  chosen_idx <- dt[valid == TRUE, .I[sample(.N, 1)], by = .(year, block)]$V1
+  chosen <- dt[chosen_idx]
+  
+    # Blocs sans AUCUNE ligne valide -> on leur ajoute une ligne "NA"
+  empty_blocks <- fsetdiff(all_blocks, unique(chosen[, .(year, block)]))
+  
+  if (nrow(empty_blocks) > 0) {
+    placeholder <- dt[empty_blocks, on = .(year, block), mult = "first"]
+    na_cols <- setdiff(names(placeholder), c("year", "block"))
+    placeholder[, (na_cols) := lapply(.SD, function(x) NA), .SDcols = na_cols]
+    chosen <- rbindlist(list(chosen, placeholder), use.names = TRUE)
+  }
+  
+  chosen[order(year, block)][, c("block", "valid") := NULL]
+}
+  
+
+set.seed(2007)
+n_hours_vec <- c(1,2,4,8,12,24,48)
+
+
+list_aggregated <- lapply(n_hours_vec, function(n_hours) {
+  dt_bloc <- add_block(isere_complete, n_hours)
+  replicate(100, {
+    sample_dt(dt_bloc)[,periodh := n_hours][]
+    }, simplify = F)
+}) %>% setNames(paste0("h", n_hours_vec))
+```
+
+```{r annual-load-aggregated}
+list_agg_sum <- function(list_df){
+  
+list_load <- lapply(list_df, function(i) 
+  {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s*periodh*60*60, na.rm = T)*1e-6, 
+              sum_q = sum(q_L.s, na.rm = T), 
+              mean_q = mean(q_L.s, na.rm = T), 
+              slq = cov(poc_fitted*1e-2*cmes_g.L*q_L.s*periodh*60*60, q_L.s, use = "pairwise.complete.obs"))}) # génère une liste de dataframes
+
+load_aggregated <- as.data.frame(do.call(cbind,list_load)) %>% rowMeans(na.rm = T) #Calcule le load moyen par année  
+
+bias_aggregated <- lapply(list_load, function(i) 
+  {abs(
+    (i$load-ref_isere$annual_load[match(i$year, ref_isere$year)])/
+      ref_isere$annual_load[match(i$year, ref_isere$year)]*100)}) #Retourne une liste de vecteurs avec les 100 biais par année, en valeur absolue. 
+
+mean_bias_aggregated <- as.data.frame(do.call(cbind,bias_aggregated)) %>% rowMeans #Calcule le biais moyen absolu par année    
+  
+return(list(load_aggregated = load_aggregated, mean_bias_aggregated = mean_bias_aggregated))
+
+}  
+  
+results_aggregated <- lapply(list_aggregated, list_agg_sum)
+results_aggregated_listdf <- lapply(results_aggregated, as.data.frame) %>% lapply(cbind, year = complete_years)
+results_aggregated_df <- bind_rows(results_aggregated_listdf, .id = "nb_hours")
+
+results_aggregated_df$nb_hours <- factor(results_aggregated_df$nb_hours, levels = c("h1","h2","h4","h8","h12","h24","h48"))
+
+ggplot(results_aggregated_df,aes(x=year))+geom_line(data = ref_isere, aes(y=annual_load), size = 1)+
+  #geom_ribbon(aes(ymin = load_min, ymax = load_max, fill = nb_days), alpha = 0.5)+
+  geom_line(aes(y = load_aggregated, group = nb_hours, col = nb_hours))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Annual load, tons", col = "Nb days aggregated",title = "Average POC load by year depending on sampling frequency", subtitle = "Reference annual load in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+ggplot()+
+ # geom_line(data = ref_isere, aes(x = year, y=annual_load*5e-10), size = 1)+
+  geom_line(data = results_aggregated_df, aes(x=year, y=mean_bias_aggregated, group = nb_hours, col = nb_days))+
+  scale_color_viridis_d(direction = -1)+
+  labs(x= "Year", y = "Average absolute bias,%", col = "Nb days aggregated", title = "Average absolute bias by year depending on sampling frequency", subtitle = "Average annual discharge in black")+
+  scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
+ # scale_y_continuous(sec.axis = sec_axis(~.*5e10, name = "Average annual load, tons"))+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+
+```
+
+### Mean value within interval 
+
+TO DO
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Reference annual and interannual fluxes (time step: half hour)
+
+
+## Total flux
+
+```{r annual-flux-reference, cache.lazy = F}
+# create matrix of q
+q_meas <- matrix(isere_for_gnls$q_m3.s, nrow = nrow_boot, ncol = nrow_isere, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+q_noise <- matrix(rnorm(nrow_boot*nrow_isere, mean = 0, sd = q_u), nrow = nrow_boot, ncol = nrow_isere) # creates a noise in percent (proportion), between 0 and 10%
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+
+# Instant flux matrix
+flux_ton.s_mat <- pred_gnls*1e-2*mes_mat_gnls*1e-6*q_mat*1e3 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s --> flux en ton / s
+flux_ton_mat <- pred_gnls*1e-2*mes_mat_gnls*1e-6*q_mat*1e3*60*30 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. Period measured: 30 min. 
+
+
+# Get index for the columns corresponding to the same year
+index_years <- lapply(unique(isere_for_gnls$year), function(y){which(isere_for_gnls$year == y)}) # list of indices corresponding to each year
+
+# Annual flux
+annual_flux_ton.y <- lapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) %>% do.call("cbind", .) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+
+# Merge in df
+annual_flux_df <- data.frame(year = unique(isere_for_gnls$year), 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = annual_flux_sd, 
+                        annual_flux_pi_lower = annual_flux_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_pi[3,])
+
+```
+
+
+```{r interannual-flux-reference}
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_pi_lower = interannual_flux_pi[1], 
+                        annual_flux_pi_upper = interannual_flux_pi[3])
+
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", length(unique(isere_for_gnls$year))), "interannual")
+
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
+
+## Specific flux
+
+```{r specific-flux}
+
+total_sflux_df <- cbind(total_flux_df[,"year"], total_flux_df[,2:5] / bv, total_flux_df[,"group"]) %>% setNames(names(total_flux_df))
+#total_sflux_df <- rbind(annual_sflux_df, interannual_sflux_df)
+total_sflux_df$group <- c(rep("annual", nyears), "interannual")
+
+ggplot()+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
+    geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (tons/km2/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggsave(here("figures","sflux_isere.svg"))
+
+knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
+
+## Variance decomposition
+
+Comme flux = POC% * MES × Q × période, on a exactement : ln(flux) = ln(POC%) + ln(MES) + ln(Q) + ln(période)
+Et donc, sans approximation : Var(ln flux) = Var(ln DOC) + Var(ln Q) + 2·Cov(ln POC, ln Q) + 2Cov(ln POC, ln MES) + 2 cov (ln POC, ln period) + 2 cov (ln MES , ln Q) + 2 cov (ln MES, ln period) + 2 cov (ln Q ln period)
+(Claude)
+
+```{r variance}
+# part des paramètres dans la variance
+
+
+list_var <- lapply(index_years, function(idx){
+  
+lnQ <- as.vector(log(q_mat[,idx]))
+logMES <- as.vector(log(mes_mat[,idx]))
+lnPOC <- as.vector(log(pred_gnls[,idx]))
+lnp <- as.vector(log(period_mat[,idx]))
+
+mask <- complete.cases(lnPOC, lnMES, lnQ, lnT)
+
+M <- cbind(POC = lnPOC[mask], MES = lnMES[mask], Q = lnQ[mask], p = lnp[mask])
+
+cov_matrix <- cov(M)
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF_direct <- var(rowSums(M))
+
+
+
+
+var_df <- c(var_lnQ = var_lnQ,
+                    var_lnDOC = var_lnDOC,
+            var_lnp = var_lnp,
+                    cov_qdoc = cov_qdoc,
+            cov_qp = cov_qp,
+            cov_docp = cov_docp,
+                    var_lnFlux = var_lnFlux) 
+
+return(var_df)
+})
+
+
+annual_variances <- bind_rows(list_var, .id = "year")
+annual_variances$year <- complete_years
+
+
+# variance over all dataset
+lnQ <- log(q_mat)
+lnDOC <- log(doc_mat)
+lnp <- log(period_mat)
+lnFlux <- lnQ + lnDOC + lnp
+
+var_lnQ <- var(as.vector(lnQ), na.rm = T)
+var_lnDOC <- var(as.vector(lnDOC), na.rm = T)
+var_lnp <- var(as.vector(lnp), na.rm = T)
+var_lnFlux <- var(as.vector(lnFlux), na.rm = T) 
+cov_qdoc <- 2*cov(as.vector(lnQ), as.vector(lnDOC), use = "pairwise.complete.obs")
+cov_qp <- 2*cov(as.vector(lnQ), as.vector(lnp), use = "pairwise.complete.obs")
+cov_docp <- 2*cov(as.vector(lnDOC), as.vector(lnp), use = "pairwise.complete.obs")
+
+interannual_variance <- data.frame(year = "all", var_lnQ = var_lnQ,  var_lnDOC = var_lnDOC, var_lnp = var_lnp, cov_qdoc = cov_qdoc, cov_qp = cov_qp, cov_docp = cov_docp,var_lnFlux = var_lnFlux)
+
+variance_decomposition <- rbind(annual_variances, interannual_variance)  
+
+variance_decomposition <- variance_decomposition %>% 
+  mutate(part_Q = var_lnQ/var_lnFlux, part_DOC = var_lnDOC/var_lnFlux, part_p = var_lnp/var_lnFlux, 
+         part_covqdoc = cov_qdoc/var_lnFlux, part_covqp = cov_qp/var_lnFlux, part_covdocp = cov_docp/var_lnFlux, 
+         part_p_tot = part_p+part_covqp+part_covdocp, 
+         check = part_Q+part_DOC+part_p+part_covqdoc+part_covqp+part_covdocp)
+
+
+vd_long <- variance_decomposition %>%
+  select(year, part_Q, part_DOC, part_covqdoc, part_p_tot) %>%
+  tidyr::pivot_longer(cols = c(part_Q, part_DOC, part_covqdoc, part_p_tot),
+               names_to = "terme", values_to = "part")  %>%
+  mutate(terme = recode(terme,
+                         part_Q = "Débit (Q)",
+                         part_DOC = "DOC",
+                         part_covqdoc = "Covariance Q-DOC",
+                        part_p_tot = "Variance due aux intervalles de prélèvement"))
+
+ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
+  geom_col(position = "stack") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_fill_manual(values = c("Débit (Q)" = "lightblue",
+                                "DOC" = "indianred",
+                                "Covariance Q-DOC" = "darkblue",
+                               "Variance due aux intervalles de prélèvement" = "darkred")) +
+  scale_y_continuous(labels = scales::percent, breaks = c(-0.40,-0.20,0,0.20,0.40,0.60,0.80,1.00,1.2,1.4)) +
+  labs(x = "Année", y = "Part de la variance du log-flux",
+       fill = "Terme",
+       title = "Contribution de Q, DOC et de leur covariance à la variance du flux") +
+  theme_bw()
+
+vd_long_abs <- variance_decomposition %>%
+  select(year, var_lnQ, var_lnDOC, var_lnp, cov_qdoc, cov_qp, cov_docp) %>%
+  tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur")
+
+ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
+  geom_col(position = "dodge") +
+  geom_point(data = variance_decomposition, aes(x = year, y = var_lnFlux),
+             inherit.aes = FALSE, shape = 18, size = 3) +
+  #  scale_fill_manual(values = c("Débit (Q)" = ,
+  #                               "DOC" = "indianred",
+  #                               "Covariance Q-DOC" = "darkblue")) +
+  scale_fill_manual(values = c("darkblue","lightblue","darkred","indianred","palegreen4","cornsilk3"))+
+   theme_bw() +
+  labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
+
+```
+
+
+# Export données
+
+```{r exporter-valeurs-dans-csv-commun}
+
+library(readxl)
+library(writexl)
+
+
+rmd_id <- "isere"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+  nb_years = length(complete_years)
+  # ... autres colonnes
+)
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("resultats.xlsx"))) {
+  df_shared <- read_xlsx(here("resultats.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("resultats.xlsx"))
+```
+
