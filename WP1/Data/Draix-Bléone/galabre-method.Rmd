@@ -24,6 +24,11 @@ library(here)
 
 ```
 
+
+```{r to-eval, cache = F}
+to_eval <- T
+```
+
 # Data
 
 
@@ -75,7 +80,7 @@ galabre$q_L.s <- galabre$q_m3.s * 1000
 
 ## Visualisation
 
-```{r plot-by-year-q-cmes, fig.dim = c(10,15)}
+```{r plot-by-year-q-cmes, fig.dim = c(10,15), eval = to_eval}
 title <- expression(atop("Series of MES and Q by year"))
 plots <- ggarrange(
 ggplot(galabre, aes(x = commondate))+
@@ -101,7 +106,7 @@ annotate_figure(plots, top = text_grob(title))
 ```
 
 
-```{r plot-year-poc}
+```{r plot-year-poc, eval = to_eval}
 ggplot(filter(galabre, !is.na(poc_percent)), aes(x = commondate))+
   geom_point(aes(y = poc_percent, col = "POC, %"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
@@ -123,7 +128,7 @@ galabre_complete <- galabre %>% subset(year %in% complete_years)
 
 Years to use for test of methods: `r cat(complete_years)`
 
-```{r plot-complete-years, fig.dim = c(10,15)}
+```{r plot-complete-years, fig.dim = c(10,15), eval = to_eval}
 title <- expression(atop("Series of POC and Q by year"))
 plots <- ggarrange(
 ggplot(subset(galabre_complete, year %in% complete_years), aes(x = commondate))+
@@ -151,7 +156,7 @@ annotate_figure(plots, top = text_grob(title))
 
 ## Characteristics
 
-```{r summary-data}
+```{r summary-data, eval = to_eval}
 summary_galabre <- merge(
 galabre %>% subset(!is.na(cmes_g.L)) %>% group_by(year) %>% summarise("Number of CMES observations" = n(), "CMES range, g/L" = paste(quantile(cmes_g.L, probs = c(0,0.5,1), na.rm = T), collapse = " / ")),
 galabre %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise("Number of POC observations" = n(), "POC, percent" = paste(quantile(poc_percent, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>%
@@ -186,7 +191,7 @@ knitr::kable(summary_galabre, caption = "Summary table of galabre data") %>% kab
 
 
 
-```{r histograms}
+```{r histograms, eval = to_eval}
 ggarrange(
   ggplot(galabre_complete)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
   ggplot(galabre_complete)+geom_histogram(aes(cmes_g.L), fill = "palegreen4")+labs(x= "CMES, g/L", y = "")+theme_bw(),
@@ -415,7 +420,7 @@ nrow_galabre_gnls <- nrow(galabre_gnls)
 
 
 # MES matrix
-mes_meas <- matrix(galabre_gnls$mes_for_fit, nrow = nrow_boot, ncol = nrow_galabre_gnls, byrow = T) # repeats nrow_boot times the vector isere_for_gnls$q_m3.s
+mes_meas <- matrix(galabre_gnls$mes_for_fit, nrow = nrow_boot, ncol = nrow_galabre_gnls, byrow = T) # repeats nrow_boot times the vector galabre_for_gnls$q_m3.s
 mes_noise <- matrix(rnorm(nrow_boot*nrow_galabre_gnls, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_galabre_gnls) # 
 mes_mat <- mes_meas * (1 + mes_noise) # final value of q, with noise. 
 
@@ -489,7 +494,7 @@ rm(list=c("galabre_old","galabre_new","mes","debit","crues","galabre_nas_gnls"))
 galabre_complete <- galabre_gnls
 ```
 
-```{r ref-galabre}
+```{r ref-galabre, eval = to_eval}
 ref_galabre <- galabre_complete%>% group_by(year) %>% summarise(annual_load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s*period, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T), slq = cov(poc_fitted*1e-2*cmes_g.L*q_L.s*period, q_L.s, use = "pairwise.complete.obs"), n_obs = n()) 
 
 ```
@@ -499,7 +504,7 @@ ref_galabre <- galabre_complete%>% group_by(year) %>% summarise(annual_load = su
 
 ## Minimize bias on average flow, data randomly missing
 
-```{r ref-load-random-load, cache.lazy = F}
+```{r ref-load-random-load, cache.lazy = F, eval = to_eval}
 set.seed(1806)
 
 # Fonction d'échantillonnage par bloc
@@ -533,7 +538,7 @@ Known to be biaised. Compute yearly flux by:
 * Calculate annual load with ratio method for each year
 * Compare with reference load and estimate average bias
 
-```{r test-verhoff}
+```{r test-verhoff, eval = to_eval}
 list_verhoff <- function(list_df){
   
 list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load.s = sum(poc_fitted*1e-2*cmes_g.L*q_L.s, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
@@ -575,7 +580,7 @@ ggplot()+
 
 ### Beales ratio
 
-```{r test-beales}
+```{r test-beales, eval = to_eval}
 list_beales <- function(list_df){
 
   
@@ -626,7 +631,7 @@ Based on the observation that sum(Li)/sum(Qi) = sum(La)/sum(Qa)
 
 Bias = absolute bias
 
-```{r test-camille}
+```{r test-camille, eval = to_eval}
 list_camille <- function(list_df){
   
 list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s*period, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
@@ -670,7 +675,7 @@ ggplot()+
 
 
 
-```{r ref-load-block, cache.lazy = F}
+```{r ref-load-block, cache.lazy = F, eval = to_eval}
 set.seed(2606)
 
 
@@ -708,7 +713,7 @@ Known to be biaised. Compute yearly flux by:
 * Calculate annual load with ratio method for each year
 * Compare with reference load and estimate average bias
 
-```{r test-verhoff-block}
+```{r test-verhoff-block, eval = to_eval}
 list_verhoff <- function(list_df){
   
 list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
@@ -801,7 +806,7 @@ Based on the observation that sum(Li)/sum(Qi) = sum(La)/sum(Qa)
 
 Bias = absolute bias
 
-```{r test-camille-block}
+```{r test-camille-block, eval = to_eval}
 list_camille <- function(list_df){
   
 list_load <- lapply(list_df,function(i) {i %>% group_by(year) %>% summarise(load = sum(poc_fitted*1e-2*cmes_g.L*q_L.s*period, na.rm = T)*1e-6, sum_q = sum(q_L.s, na.rm = T), mean_q = mean(q_L.s, na.rm = T))}) # génère une liste de dataframes
@@ -843,7 +848,7 @@ ggplot()+
 
 ### Random value picked within interval 
 
-```{r list-aggregated-df}
+```{r list-aggregated-df, eval = to_eval}
 library(data.table)
 setDT(galabre_complete)
 galabre_complete[, valid := !is.na(cmes_g.L) & !is.na(q_L.s)]
@@ -890,7 +895,7 @@ list_aggregated <- lapply(n_hours_vec, function(n_hours) {
 }) %>% setNames(paste0("h", n_hours_vec))
 ```
 
-```{r annual-load-aggregated}
+```{r annual-load-aggregated, eval = to_eval}
 list_agg_sum <- function(list_df){
   
 list_load <- lapply(list_df, function(i) 
@@ -919,7 +924,7 @@ results_aggregated_df <- bind_rows(results_aggregated_listdf, .id = "nb_hours")
 results_aggregated_df$nb_hours <- factor(results_aggregated_df$nb_hours, levels = c("h1","h2","h4","h8","h12","h24","h48"))
 
 ggplot(results_aggregated_df,aes(x=year))+geom_line(data = ref_galabre, aes(y=annual_load), size = 1)+
-  #geom_ribbon(aes(ymin = load_min, ymax = load_max, fill = nb_days), alpha = 0.5)+
+  #geom_ribbon(aes(ymin = load_min, ymax = load_max, fill = nb_hours), alpha = 0.5)+
   geom_line(aes(y = load_aggregated, group = nb_hours, col = nb_hours))+
   scale_color_viridis_d(direction = -1)+
   labs(x= "Year", y = "Annual load, tons", col = "Nb days aggregated",title = "Average POC load by year depending on sampling frequency", subtitle = "Reference annual load in black")+
@@ -929,7 +934,7 @@ ggplot(results_aggregated_df,aes(x=year))+geom_line(data = ref_galabre, aes(y=an
 
 ggplot()+
  # geom_line(data = ref_galabre, aes(x = year, y=annual_load*5e-10), size = 1)+
-  geom_line(data = results_aggregated_df, aes(x=year, y=mean_bias_aggregated, group = nb_hours, col = nb_days))+
+  geom_line(data = results_aggregated_df, aes(x=year, y=mean_bias_aggregated, group = nb_hours, col = nb_hours))+
   scale_color_viridis_d(direction = -1)+
   labs(x= "Year", y = "Average absolute bias,%", col = "Nb days aggregated", title = "Average absolute bias by year depending on sampling frequency", subtitle = "Average annual discharge in black")+
   scale_x_continuous(breaks = complete_years, minor_breaks = NULL)+
@@ -948,7 +953,6 @@ TO DO
 
 # Annual and interannual flux 
 
-On considère que l'erreur sur DOC vient de la mesure par analyse TOC.
 
 ```{r uncertainties-annual-flux}
 nyears <- length(complete_years)
@@ -963,7 +967,7 @@ nrep <- 1000
 
 ## Total flux
 
-```{r compute-flux}
+```{r compute-flux, cache.lazy = F}
 # create matrix of q
 q_meas <- matrix(galabre_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector galabre_nas$q_m3.s
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
@@ -974,7 +978,7 @@ flux_ton.s_mat <- pred_gnls*1e-2*mes_mat*1e-6*q_mat*1e3 #pred_gnls * mes_mat : p
 flux_ton_mat <- pred_gnls*1e-2*mes_mat*1e-6*q_mat*1e3*10*60 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period, that is uniformely 10 minutes. 
 
 # Get index for the columns corresponding to the same year
-index_years <- sapply(unique(galabre_nas$year), function(y){which(galabre_nas$year == y)}) # list of indices corresponding to each year
+index_years <- sapply(unique(galabre_gnls$year), function(y){which(galabre_gnls$year == y)}) # list of indices corresponding to each year
 
 # Annual flux
 annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
@@ -983,7 +987,7 @@ annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux pe
 annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
 
 # Merge in df
-annual_flux_df <- data.frame(year = unique(galabre_nas$year), 
+annual_flux_df <- data.frame(year = unique(galabre_gnls$year), 
                         annual_flux_mean = annual_flux_mean, 
                         annual_flux_variability = annual_flux_sd, 
                         annual_flux_pi_lower = annual_flux_pi[1,], 
@@ -1077,107 +1081,134 @@ Comme flux = POC% * MES × Q × période, on a exactement : ln(flux) = ln(POC%) 
 Et donc, sans approximation : Var(ln flux) = Var(ln DOC) + Var(ln Q) + 2·Cov(ln POC, ln Q) + 2Cov(ln POC, ln MES) + 2 cov (ln POC, ln period) + 2 cov (ln MES , ln Q) + 2 cov (ln MES, ln period) + 2 cov (ln Q ln period)
 (Claude)
 
-```{r variance}
-# part des paramètres dans la variance
+```{r variance, cache.lazy = F}
 
+## Variances par année
 
 list_var <- lapply(index_years, function(idx){
   
 lnQ <- as.vector(log(q_mat[,idx]))
-logMES <- as.vector(log(mes_mat[,idx]))
+lnMES <- as.vector(log(mes_mat[,idx]))
 lnPOC <- as.vector(log(pred_gnls[,idx]))
-lnp <- as.vector(log(period_mat[,idx]))
 
-mask <- complete.cases(lnPOC, lnMES, lnQ, lnT)
+mask <- complete.cases(lnPOC, lnMES, lnQ)  &
+        is.finite(lnPOC) & is.finite(lnMES) & is.finite(lnQ) 
 
-M <- cbind(POC = lnPOC[mask], MES = lnMES[mask], Q = lnQ[mask], p = lnp[mask])
+M <- cbind(POC = lnPOC[mask], MES = lnMES[mask], Q = lnQ[mask])
 
-cov_matrix <- cov(M)
+cov_matrix <- cov(M, use = "pairwise.complete.obs") # there are -Inf in lnPOC and lnMES because of the 0 values
 
 # verif
 var_lnF_check <- sum(cov_matrix)
 var_lnF_direct <- var(rowSums(M))
 
+if(var_lnF_check != var_lnF_direct){warning("Attention : les variances ne correspondent pas")}
 
-
-
-var_df <- c(var_lnQ = var_lnQ,
-                    var_lnDOC = var_lnDOC,
-            var_lnp = var_lnp,
-                    cov_qdoc = cov_qdoc,
-            cov_qp = cov_qp,
-            cov_docp = cov_docp,
-                    var_lnFlux = var_lnFlux) 
-
-return(var_df)
+return(cov_matrix)
 })
 
+var_flux_by_year <- lapply(list_var, function(i){
+  var_flux = sum(i)
+  setNames(var_flux, "var_lnF")}) %>% bind_rows(.id = "year")
+vars_by_year <- lapply(list_var, diag) %>% bind_rows(.id = "year") # variance des paramètres par année
+cov_by_year <- lapply(list_var, function(i){
+  vals <- i[upper.tri(i)]
+  setNames(as.list(vals), c("cov_mespoc","cov_qpoc","cov_qmes"))}) %>% 
+  bind_rows(.id = "year") 
 
-annual_variances <- bind_rows(list_var, .id = "year")
+annual_variances <- merge(var_flux_by_year, vars_by_year, by = "year") %>% merge(cov_by_year, by = "year")
 annual_variances$year <- complete_years
 
 
-# variance over all dataset
-lnQ <- log(q_mat)
-lnDOC <- log(doc_mat)
-lnp <- log(period_mat)
-lnFlux <- lnQ + lnDOC + lnp
+# Variance interannuelle
 
-var_lnQ <- var(as.vector(lnQ), na.rm = T)
-var_lnDOC <- var(as.vector(lnDOC), na.rm = T)
-var_lnp <- var(as.vector(lnp), na.rm = T)
-var_lnFlux <- var(as.vector(lnFlux), na.rm = T) 
-cov_qdoc <- 2*cov(as.vector(lnQ), as.vector(lnDOC), use = "pairwise.complete.obs")
-cov_qp <- 2*cov(as.vector(lnQ), as.vector(lnp), use = "pairwise.complete.obs")
-cov_docp <- 2*cov(as.vector(lnDOC), as.vector(lnp), use = "pairwise.complete.obs")
+lnQ <- as.vector(log(q_mat))
+lnMES <- as.vector(log(mes_mat))
+lnPOC <- as.vector(log(pred_gnls))
 
-interannual_variance <- data.frame(year = "all", var_lnQ = var_lnQ,  var_lnDOC = var_lnDOC, var_lnp = var_lnp, cov_qdoc = cov_qdoc, cov_qp = cov_qp, cov_docp = cov_docp,var_lnFlux = var_lnFlux)
+mask <- complete.cases(lnPOC, lnMES, lnQ)  &
+        is.finite(lnPOC) & is.finite(lnMES) & is.finite(lnQ) 
 
-variance_decomposition <- rbind(annual_variances, interannual_variance)  
+M <- cbind(POC = lnPOC[mask], MES = lnMES[mask], Q = lnQ[mask])
 
-variance_decomposition <- variance_decomposition %>% 
-  mutate(part_Q = var_lnQ/var_lnFlux, part_DOC = var_lnDOC/var_lnFlux, part_p = var_lnp/var_lnFlux, 
-         part_covqdoc = cov_qdoc/var_lnFlux, part_covqp = cov_qp/var_lnFlux, part_covdocp = cov_docp/var_lnFlux, 
-         part_p_tot = part_p+part_covqp+part_covdocp, 
-         check = part_Q+part_DOC+part_p+part_covqdoc+part_covqp+part_covdocp)
+cov_matrix <- cov(M, use = "pairwise.complete.obs") # there are -Inf in lnPOC and lnMES because of the 0 values
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF <- var(rowSums(M))
+
+if(var_lnF_check != var_lnF){warning("Attention : les variances ne correspondent pas")}
+
+
+# put results in df
+vars_interannual <- c(var_lnF, diag(cov_matrix)) # variance des paramètres par année
+cov_interannual <- cov_matrix[upper.tri(cov_matrix)] %>%
+  setNames(c("cov_mespoc","cov_qpoc","cov_qmes")) 
+
+interannual_variances <- c(year = "Interrannuel", vars_interannual, cov_interannual)
+
+all_variances <- rbind(annual_variances, interannual_variances) %>% mutate(across(where(is.character) & !any_of("year"), as.numeric))
+
+
+
+variance_decomposition <- all_variances %>% 
+  mutate(part_Q = Q/var_lnF, part_POC = POC/var_lnF, part_MES = MES/var_lnF, 
+         part_covqpoc = 2*cov_qpoc/var_lnF, 
+          part_covqmes = 2* cov_qmes/var_lnF, 
+         part_covpocmes = 2*cov_mespoc/var_lnF,
+         check = part_Q+part_POC+part_MES+part_covqpoc+part_covqmes+part_covpocmes)
 
 
 vd_long <- variance_decomposition %>%
-  select(year, part_Q, part_DOC, part_covqdoc, part_p_tot) %>%
-  tidyr::pivot_longer(cols = c(part_Q, part_DOC, part_covqdoc, part_p_tot),
+  select(year, part_Q, part_POC, part_MES, part_covpocmes, part_covqmes, part_covqpoc) %>%
+  tidyr::pivot_longer(cols = c(part_Q, part_POC, part_MES, part_covpocmes, part_covqpoc, part_covqmes),
                names_to = "terme", values_to = "part")  %>%
   mutate(terme = recode(terme,
                          part_Q = "Débit (Q)",
-                         part_DOC = "DOC",
-                         part_covqdoc = "Covariance Q-DOC",
-                        part_p_tot = "Variance due aux intervalles de prélèvement"))
+                         part_POC = "POC",
+                        part_MES = "MES",
+                         part_covqpoc = "Covariance Q/POC",
+                        part_covpocmes = "Covariance MES/POC",
+                        part_covqmes = "Covariance MES/Q"))
 
 ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
   geom_col(position = "stack") +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
-  scale_fill_manual(values = c("Débit (Q)" = "lightblue",
-                                "DOC" = "indianred",
-                                "Covariance Q-DOC" = "darkblue",
-                               "Variance due aux intervalles de prélèvement" = "darkred")) +
+   scale_fill_manual(values = c("Débit (Q)" = "pink",
+                                "POC" = "indianred",
+                                "MES" = "palegreen4",
+                                "Covariance Q/POC" = "darkblue",
+                                "Covariance MES/POC" = "lightblue",
+                                "Covariance MES/Q" = "cornsilk4")) +
   scale_y_continuous(labels = scales::percent, breaks = c(-0.40,-0.20,0,0.20,0.40,0.60,0.80,1.00,1.2,1.4)) +
   labs(x = "Année", y = "Part de la variance du log-flux",
        fill = "Terme",
-       title = "Contribution de Q, DOC et de leur covariance à la variance du flux") +
+       title = "Contribution de Q, POC, MES et de leur covariance à la variance du flux") +
   theme_bw()
 
 vd_long_abs <- variance_decomposition %>%
-  select(year, var_lnQ, var_lnDOC, var_lnp, cov_qdoc, cov_qp, cov_docp) %>%
-  tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur")
+  select(year, part_Q, part_POC, part_MES, part_covpocmes, part_covqpoc, part_covqmes) %>%
+  tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur") %>%
+   mutate(terme = recode(terme,
+                         part_Q = "Débit (Q)",
+                         part_POC = "POC",
+                        part_MES = "MES",
+                         part_covqpoc = "Covariance Q/POC",
+                        part_covpocmes = "Covariance MES/POC",
+                        part_covqmes = "Covariance MES/Q"))
+
 
 ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
   geom_col(position = "dodge") +
-  geom_point(data = variance_decomposition, aes(x = year, y = var_lnFlux),
+  geom_point(data = variance_decomposition, aes(x = year, y = var_lnF),
              inherit.aes = FALSE, shape = 18, size = 3) +
-  #  scale_fill_manual(values = c("Débit (Q)" = ,
-  #                               "DOC" = "indianred",
-  #                               "Covariance Q-DOC" = "darkblue")) +
-  scale_fill_manual(values = c("darkblue","lightblue","darkred","indianred","palegreen4","cornsilk3"))+
-   theme_bw() +
+  scale_fill_manual(values = c("Débit (Q)" = "lightblue",
+                               "POC" = "indianred",
+                               "MES" = "palegreen4",
+                               "Covariance Q/POC" = "darkblue",
+                               "Covariance MES/POC" = "cornsilk4",
+                               "Covariance MES/Q" = "pink")) +
+   theme_bw() + theme(legend.position = "bottom")+
   labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
 
 ```

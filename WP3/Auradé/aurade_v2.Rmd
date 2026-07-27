@@ -1,12 +1,12 @@
 ---
-title: "naizin"
-output:
+title: "Auradé"
+output: 
   html_document:
+    code_folding: hide
     toc: true
     toc_float: true
-    number_sections: true
-    code_folding: hide
-date: "2025-06-06"
+    number_section: true
+date: "2025-06-30"
 ---
 
 ```{r setup, include=FALSE}
@@ -14,8 +14,9 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.alig
                       cache = T)
 ```
 
+
 ```{r libraries}
-lapply(c("dplyr"), library, character.only = T)
+lapply(c("dplyr", "data.table", "readxl"), library, character.only = T)
 lapply(c("ggplot2","ggpubr"), library, character.only = T)
 lapply(c("lubridate"), library, character.only = T)
 lapply(c("knitr","kableExtra"), library, character.only = T)
@@ -23,61 +24,76 @@ library(here)
 
 ```
 
-# Liens
 
-https://www.ozcar-ri.org/fr/agrhys/
+# Data
 
-Bassin versant:
-https://geosas.fr/geonetwork/srv/api/records/404bc60a-2943-44b5-9f35-9b13cd7895b5
+## Load data
 
-DOC et discharge:
-https://geosas.fr/agrhys/
-https://geosas.fr/stav/espace/telechargement/?config=/apps//stav/config/agrhys.json
+Données fournies par Anne Probst. 
 
-
-Autres liens
-Description du site sur CatOpidor
-https://cat.opidor.fr/index.php/AGRHYS
-
-Description du site sur GeoBretagne et accès aux jeux de données:
-https://geobretagne.fr/geonetwork/srv/api/records/5514e0c5-4406-4880-9cff-4df6f39c0f4f
-
-https://geobretagne.fr/geonetwork/srv/fre/catalog.search#/search?query_string=%7B%22linkProtocol%22:%7B%22WWW:DOWNLOAD-1.0-http--download%22:true%7D%7 https://geobretagne.fr/geonetwork/srv/fre/catalog.search#/search?query_string=%7B%22linkProtocol%22:%7B%22WWW:DOWNLOAD-1.0-http--download%22:true%7D%7D
-
- 
-
-# Load data
-
-```{r bv-area}
-bv <- 5
-```
-
-
-```{r load-data-from-excel, message = F}
-discharge <- read.csv("Données brutes/Outlet Exutoire_Rating curve_discharge.csv", sep = ";", col.names = c("DateHeure","q_L.s"))
-discharge$DateHeure <- ymd_hms(discharge$DateHeure)
-doc <- read.csv("Données brutes/Outlet Exutoire_Shimadzu TOC Analyser_dissolved organic carbon.csv", sep = ";")
-doc$DateHeure <- ymd_hms(doc$DateHeure)
-
+```{r load-data}
+debit <- read_xlsx("aurade.xlsx", sheet = "q_L.s_HF")
+doc <- read_xlsx("aurade.xlsx", sheet = "DOC", col_types = c("date","numeric","numeric"))
 ```
 
 
 ```{r merge}
-naizin <- merge(discharge,doc,by = "DateHeure")
-naizin$year <- year(naizin$DateHeure)
-naizin$commondate <- as.Date(paste0("2000-", format(naizin$DateHeure,"%j")), "%Y-%j")
-naizin$Date <- format(naizin$DateHeure, "%Y-%m-%d")
-naizin$period <- with(naizin, as.numeric(-(DateHeure - lead(DateHeure)))) # period is calculated in hours
+# data table ----
+debit_dt <- setDT(debit)
+doc_dt <- setDT(doc)
+
+debit_dt[,dhdebit := DateHeure]
+doc_dt[,dhdoc := DateHeure]
+
+doc_dt[, doc_id := .I]
+
+aurade_dt <- doc_dt[debit_dt, on = "DateHeure", roll = "nearest"
+                    ][, diff := abs(as.numeric(dhdebit - dhdoc, units = "secs"))]
+
+# Colonnes à "vider" pour les lignes non retenues
+cols_doc <- setdiff(names(doc_dt), "DateHeure")
+
+# Repérer, par groupe doc_id, la ligne à garder (diff minimal)
+aurade_dt[, keep_row := .I == .I[which.min(diff)], by = doc_id]
+
+# Mettre à NA les colonnes de doc_dt pour les lignes non gardées
+aurade_dt[keep_row == FALSE, (cols_doc) := NA]
+aurade_dt[, keep_row := NULL]
+
+
+aurade <- aurade_dt[, .(DateHeure, doc_mg.L, q_L.s)][order(DateHeure)]
+aurade[, `:=`(
+  year = year(DateHeure),
+  commondate = update(DateHeure, year = 2000),
+  period = as.numeric(difftime(shift(DateHeure, type = "lead"), DateHeure, units = "secs"))
+)]
 ```
+
+
+
+## Visualize
+
+Sur le site: https://www-sciencedirect-com.insu.bib.cnrs.fr/science/article/pii/S1470160X19308891
+
+
+Données débit totales. Données DOC: uniquement celles ayant un débit correspondant. 
+
+From OZCAR [website](https://www.ozcar-ri.org/fr/observatoire-aurade/)
+
+
+Observatoire Auradé: Contexte scientifique
+
+Cet observatoire est focalisé sur le bassin versant du Montoussé à Auradé (3,28 km²), sous-affluent de la Save. Il est situé à 40 km à l’Ouest de Toulouse, dans les coteaux de Gascogne au sud-ouest de la France. Il s’agit d’un bassin entièrement agricole, les cultures (blé/tournesol en rotation) occupant 90% de sa surface. Le climat est de type tempéré océanique (avec des températures moyennes de 13,9°C, des précipitations moyennes de 620 mm/an pour la période 1985-2018. Les périodes de crues ont lieu en hiver (décembre/janvier) et au printemps (mai/juin) avec une période d’étiage allant de fin juin à octobre, parfois accompagnée de périodes d’assèchement. Ce bassin versant est caractérisé par une forte évapotranspiration (500-600 mm/an). Le bassin est développé sur une molasse argilo-calcaire du Miocène qui provient de l’érosion des Pyrénées. Les sols appartiennent à la séquence des sols bruns calcaires-bruns calciques-bruns lessivés.
 
 
 ## Visualisation
 
 ```{r plot-by-year-doc, fig.dim = c(10,20)}
 
-title <- expression(atop("Series of DOC and Q by year"))
+title <- expression(atop("Series of Q and DOC by year"))
+
 plots <- ggarrange(
-ggplot(naizin, aes(x = commondate))+
+ggplot(aurade, aes(x = as.Date(commondate)))+
   geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("lightblue"), name = "")+
@@ -86,7 +102,7 @@ ggplot(naizin, aes(x = commondate))+
   theme_bw(base_size = 15)+
   theme(legend.position = "none"),
 
-ggplot(naizin, aes(x = commondate))+
+ggplot(aurade, aes(x = as.Date(commondate)))+
   geom_point(aes(y = doc_mg.L, col = "DOC, mg.L"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("palegreen4"), name = "")+
@@ -98,114 +114,143 @@ ggplot(naizin, aes(x = commondate))+
 
 annotate_figure(plots, top = text_grob(title))
 
-```
 
+
+```
 
 ```{r histograms}
 ggarrange(
-  ggplot(naizin)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
-  ggplot(naizin)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_bw(),
-  ggplot(naizin)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
-  ggplot(naizin)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_bw()
+  ggplot(aurade)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
+  ggplot(aurade)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_bw(),
+  ggplot(aurade)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
+  ggplot(aurade)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_bw()
 )
 ```
 
+
+
 ## Complete years
 
-Naizin is intermittent. All years can be used except 1999. 
+Echantillonage manuel toutes les semaines + crues (autosampler). Depuis 2004, mesure du débit en haute fréquence toutes les 10 min. @Ponnou-Delaffon2020. 
+
+On retire l'année 2004. Pour les autres années on suppose que les jours manquants sont des jours où le ruisseau ne coule pas ? Aurade est-il intermittent ?
 
 ```{r complete-years}
-complete_years <- unique(naizin$year)[-which(unique(naizin$year == 1999))]
-naizin_complete <- naizin %>% filter(year %in% complete_years)
+complete_years <- unique(aurade$year)[which(unique(aurade$year) != 2004)]
+aurade_complete <- aurade %>% filter(year %in% complete_years)
 ```
 
 
 ## Characteristics
 
 ```{r summary-data}
-summary_naizin <- merge(
-naizin %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / ")),
-naizin %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
-  merge(naizin %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
-  merge(naizin %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
-  merge(naizin %>% group_by(year) %>% summarise("Median sampling interval, h" = round(median(period, na.rm = T),1)), by = "year", all = T) %>%
+summary_aurade <- merge(
+aurade %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(round(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")),
+aurade %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
+  merge(aurade %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(as.Date(DateHeure)))), by = "year", all = T) %>%
+  merge(aurade %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
+  merge(aurade %>% group_by(year) %>% summarise("Median sampling interval, min" = round(median(period, na.rm = T)/60,1)), by = "year", all = T) %>%
   rbind(c("All years", 
-          dim(subset(naizin, !is.na(doc_mg.L)))[1], 
-          paste(quantile(naizin$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
-          dim(subset(naizin, !is.na(q_L.s)))[1], 
-          paste(round(quantile(naizin$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
-          length(unique(naizin$Date)),
-          round(cor(naizin$doc_mg.L, naizin$q_L.s, use = "pairwise.complete.obs" ),2),
-          round(median(naizin$period, na.rm = T),1)
-           )) %>%
-     rbind(c("Complete years", 
-           dim(subset(naizin_complete, !is.na(doc_mg.L)))[1], 
-           paste(quantile(naizin_complete$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
-           dim(subset(naizin_complete, !is.na(q_L.s)))[1], 
-           paste(round(quantile(naizin_complete$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
-           length(unique(naizin_complete$Date)),
-           round(cor(naizin_complete$doc_mg.L, naizin_complete$q_L.s, use = "pairwise.complete.obs" ),2),
-           round(median(naizin_complete$period, na.rm = T),1)
-           )
-           )
+          dim(subset(aurade, !is.na(doc_mg.L)))[1], 
+          paste(quantile(aurade$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(aurade, !is.na(q_L.s)))[1], 
+          paste(round(quantile(aurade$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+          length(unique(as.Date(aurade$DateHeure))),
+          round(cor(aurade$doc_mg.L, aurade$q_L.s, use = "pairwise.complete.obs" ),2),
+          round(median(aurade$period, na.rm = T)/60,1)
+           ))  %>%
+      rbind(c("Complete years", 
+            dim(subset(aurade_complete, !is.na(doc_mg.L)))[1], 
+            paste(quantile(aurade_complete$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+            dim(subset(aurade_complete, !is.na(q_L.s)))[1], 
+            paste(round(quantile(aurade_complete$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+            length(unique(as.Date(aurade_complete$DateHeure))),
+            round(cor(aurade_complete$doc_mg.L, aurade_complete$q_L.s, use = "pairwise.complete.obs" ),2),
+            round(median(aurade_complete$period, na.rm = T)/60,1)
+            )
+            )
 
-knitr::kable(summary_naizin, caption = "Summary table of naizin data") %>% kableExtra::kable_styling()
+knitr::kable(summary_aurade, caption = "Summary table of aurade data") %>% kableExtra::kable_styling()
 
+```
+
+Moins de 10% de données DOC par rapport aux données Q -> incertitude 25%
+
+```{r make-space}
+rm(list=c("debit","debit_dt","doc","doc_dt","doc_meas","aurade_dt"))
 ```
 
 
 # Annual and interannual flux 
 
 
-On considère que l'erreur sur DOC vient de la mesure par analyse TOC A REFAIRE.
+On considère que l'erreur sur DOC vient de la mesure par analyse. 
+
+Il y a plus de mesures de Q que de mesures de DOC. On utilise l'équivalence sum(load)/sum(q) = sum(load obs)/sum(q obs).
+No
 
 ```{r uncertainties}
 nyears <- length(complete_years)
 
 q_u <- 0.1
 
-nobs <- dim(naizin_complete)[1]
-nrep <- 1000
 ```
 
 ## total flux
 
-```{r compute-flux}
-#doc matrix
-doc_meas <- matrix(naizin_complete$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
+```{r flux-for-obs}
+aurade_doc <- aurade %>% filter(!is.na(doc_mg.L))
 
+nrep <- 1000
+nobs <- dim(aurade_doc)[1]
+
+doc_meas <- matrix(aurade_doc$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T)
 doc_cv <- 3.3*doc_meas^(-0.6) # from all data available on 29/05/2026
 doc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
 doc_noise <- doc_cv*doc_random
 doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
 
 # Q matrix
-q_meas <- matrix(naizin_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_meas <- matrix(aurade_doc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
-# period mat
-period_mat <- matrix(naizin_complete$period, nrow = nrep, ncol = nobs, byrow = T) # in hours
-
-
-
 # Flux per time step
-flux_ton_mat <- doc_mat*1e-9*q_mat*period_mat*60*60 # period_mat is in hours -> converted to s 
-flux_ton.s_mat <- doc_mat*1e-9*q_mat # without period
-
-
+load_ton.s_mat <- doc_mat*1e-9*q_mat # without period
 
 # Annual flux
-index_years <- lapply(complete_years, function(y){which(naizin_complete$year == y)}) # list of indices corresponding to each year
-annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and n_years columns 
+index_years <- lapply(complete_years, function(y){which(aurade_doc$year == y)}) # list of indices corresponding to each year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_ton.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+
+sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
+
+```
+
+```{r sum-q-tot}
+
+nrep <- 1000
+nobs <- dim(aurade_complete)[1]
+
+# Q matrix
+qtot_meas <- matrix(aurade_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+qtot_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+qtot_mat <- qtot_meas * (1 + qtot_noise) # final value of q, with noise
 
 
-# Add uncertainty on years with less frequent sampling
-less_years <- c(2003,2022,2023,2024)
-less_years_noise <- matrix(rnorm(nrep*length(less_years), mean = 0, sd = 0.07), nrow = nrep, ncol = length(less_years))
+index_years_tot <- lapply(complete_years, function(y){which(aurade_complete$year == y)}) # list of indices corresponding to each year
+sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)})
 
-less_years_index <- which(complete_years %in% less_years) # list of indices corresponding to less complete years (serves to find the columns of annual_flux_ton.y corresponding to that year)
-annual_flux_ton.y[,less_years_index] <-  annual_flux_ton.y[,less_years_index] * (1 + less_years_noise)
+
+
+```
+
+```{r compute-flux}
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
+
+# add 25% uncertainty due to method
+flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = 0.25), nrow = nrep, ncol = length(complete_years))
+
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
 
 annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
@@ -291,7 +336,7 @@ ggplot()+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
-ggsave(here("figures","sflux_naizin.svg"))
+ggsave(here("figures","sflux_aurade.svg"))
 
 knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
@@ -299,25 +344,27 @@ knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_st
 
 ## Variance decomposition
 
-Comme flux = DOC × Q × période, on a exactement : ln(flux) = ln(DOC) + ln(Q) + ln(période)
-Et donc, sans approximation : Var(ln flux) = Var(ln DOC) + Var(ln Q) + 2·Cov(ln DOC, ln Q)
-(Claude)
+Aïe aïe le flux est calculé autrement que pour les simples sommes ! 
 
-Les lignes où Q = 0 sont exclues du calcul de variance.
+LOAD = sumQ * sum(load obs) / sum(q obs)
+
+log(load) = log(sumQ) + log(sum load obs) - log(sum q obs)
+
+log(load) = log(q1)+...+log(qtot)
 
 ```{r variance}
 ## Variances par année
 
-list_var <- lapply(index_years, function(idx){
+list_var <- lapply(complete_years, function(idx){
   
-lnQ <- as.vector(log(q_mat[,idx]))
-lnDOC <- as.vector(log(doc_mat[,idx]))
-lnp <- as.vector(log(period_mat[,idx]))
+lnQtot <- as.vector(log(sum_qtot[,idx]))
+lnloadobs <- as.vector(log(sum_loadobs[,idx]))
+lnQobs <- as.vector(log(sum_qobs[,idx]))
 
-mask <- complete.cases(lnDOC, lnQ, lnp)  &
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
         is.finite(lnDOC) & is.finite(lnQ) & is.finite(lnp)
 
-M <- cbind(DOC = lnDOC[mask], Q = lnQ[mask], p = lnp[mask])
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
 
 cov_matrix <- cov(M, use = "pairwise.complete.obs") 
 
@@ -336,7 +383,7 @@ var_flux_by_year <- lapply(list_var, function(i){
 vars_by_year <- lapply(list_var, diag) %>% bind_rows(.id = "year") # variance des paramètres par année
 cov_by_year <- lapply(list_var, function(i){
   vals <- i[upper.tri(i)]
-  setNames(as.list(vals), c("cov_qdoc","cov_pdoc","cov_pq"))}) %>% 
+  setNames(as.list(vals), c("cov_qtot_","cov_pdoc","cov_pq"))}) %>% 
   bind_rows(.id = "year") 
 
 annual_variances <- merge(var_flux_by_year, vars_by_year, by = "year") %>% merge(cov_by_year, by = "year")
@@ -427,7 +474,7 @@ library(readxl)
 library(writexl)
 
 
-rmd_id <- "naizin"
+rmd_id <- "aurade"
 
 rmd_values <- data.frame(
   rmd = rmd_id,
