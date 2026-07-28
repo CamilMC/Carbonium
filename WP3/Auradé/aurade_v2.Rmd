@@ -23,6 +23,20 @@ lapply(c("knitr","kableExtra"), library, character.only = T)
 library(here)
 
 ```
+# Liens
+
+Sur le site: https://www-sciencedirect-com.insu.bib.cnrs.fr/science/article/pii/S1470160X19308891
+
+
+Données débit totales. Données DOC: uniquement celles ayant un débit correspondant. 
+
+From OZCAR [website](https://www.ozcar-ri.org/fr/observatoire-aurade/)
+
+
+Observatoire Auradé: Contexte scientifique
+
+Cet observatoire est focalisé sur le bassin versant du Montoussé à Auradé (3,28 km²), sous-affluent de la Save. Il est situé à 40 km à l’Ouest de Toulouse, dans les coteaux de Gascogne au sud-ouest de la France. Il s’agit d’un bassin entièrement agricole, les cultures (blé/tournesol en rotation) occupant 90% de sa surface. Le climat est de type tempéré océanique (avec des températures moyennes de 13,9°C, des précipitations moyennes de 620 mm/an pour la période 1985-2018. Les périodes de crues ont lieu en hiver (décembre/janvier) et au printemps (mai/juin) avec une période d’étiage allant de fin juin à octobre, parfois accompagnée de périodes d’assèchement. Ce bassin versant est caractérisé par une forte évapotranspiration (500-600 mm/an). Le bassin est développé sur une molasse argilo-calcaire du Miocène qui provient de l’érosion des Pyrénées. Les sols appartiennent à la séquence des sols bruns calcaires-bruns calciques-bruns lessivés.
+
 
 
 # Data
@@ -30,6 +44,11 @@ library(here)
 ## Load data
 
 Données fournies par Anne Probst. 
+
+```{r bv}
+bv <- 3.2
+```
+
 
 ```{r load-data}
 debit <- read_xlsx("aurade.xlsx", sheet = "q_L.s_HF")
@@ -71,19 +90,6 @@ aurade[, `:=`(
 
 
 
-## Visualize
-
-Sur le site: https://www-sciencedirect-com.insu.bib.cnrs.fr/science/article/pii/S1470160X19308891
-
-
-Données débit totales. Données DOC: uniquement celles ayant un débit correspondant. 
-
-From OZCAR [website](https://www.ozcar-ri.org/fr/observatoire-aurade/)
-
-
-Observatoire Auradé: Contexte scientifique
-
-Cet observatoire est focalisé sur le bassin versant du Montoussé à Auradé (3,28 km²), sous-affluent de la Save. Il est situé à 40 km à l’Ouest de Toulouse, dans les coteaux de Gascogne au sud-ouest de la France. Il s’agit d’un bassin entièrement agricole, les cultures (blé/tournesol en rotation) occupant 90% de sa surface. Le climat est de type tempéré océanique (avec des températures moyennes de 13,9°C, des précipitations moyennes de 620 mm/an pour la période 1985-2018. Les périodes de crues ont lieu en hiver (décembre/janvier) et au printemps (mai/juin) avec une période d’étiage allant de fin juin à octobre, parfois accompagnée de périodes d’assèchement. Ce bassin versant est caractérisé par une forte évapotranspiration (500-600 mm/an). Le bassin est développé sur une molasse argilo-calcaire du Miocène qui provient de l’érosion des Pyrénées. Les sols appartiennent à la séquence des sols bruns calcaires-bruns calciques-bruns lessivés.
 
 
 ## Visualisation
@@ -176,7 +182,7 @@ knitr::kable(summary_aurade, caption = "Summary table of aurade data") %>% kable
 
 Moins de 10% de données DOC par rapport aux données Q -> incertitude 25%
 
-```{r make-space}
+```{r make-space, eval = F}
 rm(list=c("debit","debit_dt","doc","doc_dt","doc_meas","aurade_dt"))
 ```
 
@@ -199,7 +205,7 @@ q_u <- 0.1
 ## total flux
 
 ```{r flux-for-obs}
-aurade_doc <- aurade %>% filter(!is.na(doc_mg.L))
+aurade_doc <- aurade %>% filter(!is.na(doc_mg.L) & year != 2004)
 
 nrep <- 1000
 nobs <- dim(aurade_doc)[1]
@@ -216,17 +222,17 @@ q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
 # Flux per time step
-load_ton.s_mat <- doc_mat*1e-9*q_mat # without period
+load_kg.s_mat <- doc_mat*1e-6*q_mat # without period
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(aurade_doc$year == y)}) # list of indices corresponding to each year
-sum_loadobs <- sapply(index_years, function(idx){apply(load_ton.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_kg.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
 
 sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
 
 ```
 
-```{r sum-q-tot}
+```{r sum-q-tot, cache.lazy = F}
 
 nrep <- 1000
 nobs <- dim(aurade_complete)[1]
@@ -245,16 +251,16 @@ sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, 
 ```
 
 ```{r compute-flux}
-annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
+annual_flux_kg.y <- sum_qtot*sum_loadobs/sum_qobs
 
 # add 25% uncertainty due to method
 flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = 0.25), nrow = nrep, ncol = length(complete_years))
 
-annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
+annual_flux_kg.y <- annual_flux_kg.y * (1 + flux_noise)
 
-annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
-annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+annual_flux_pi <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
 
 annual_flux_df <- data.frame(year = complete_years, 
                         annual_flux_mean = annual_flux_mean, 
@@ -263,9 +269,9 @@ annual_flux_df <- data.frame(year = complete_years,
                         annual_flux_pi_upper = annual_flux_pi[3,])
 
 # Interannual flux 
-interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
+interannual_flux_kg.y <- rowMeans(annual_flux_kg.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_kg.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_kg.y, na.rm = T) # mean interannual flux
 interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
 
 interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
@@ -301,7 +307,7 @@ ggplot()+
   geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
@@ -311,7 +317,7 @@ ggplot()+
   geom_errorbar(data = filter(q_df, year == "interannual"), aes(x = year, ymin = q_mean - q_variability, ymax = q_mean + q_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Discharge (m3/year)", fill = "")+
+   labs(x = "Year", y = "Discharge (L/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
@@ -332,7 +338,7 @@ ggplot()+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (tons/km2/year)", fill = "")+
+   labs(x = "Year", y = "Flux (kg/km2/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
@@ -355,14 +361,14 @@ log(load) = log(q1)+...+log(qtot)
 ```{r variance}
 ## Variances par année
 
-list_var <- lapply(complete_years, function(idx){
+list_var <- lapply(1:length(complete_years), function(idx){
   
 lnQtot <- as.vector(log(sum_qtot[,idx]))
 lnloadobs <- as.vector(log(sum_loadobs[,idx]))
 lnQobs <- as.vector(log(sum_qobs[,idx]))
 
 mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
-        is.finite(lnDOC) & is.finite(lnQ) & is.finite(lnp)
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
 
 M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
 
@@ -383,7 +389,312 @@ var_flux_by_year <- lapply(list_var, function(i){
 vars_by_year <- lapply(list_var, diag) %>% bind_rows(.id = "year") # variance des paramètres par année
 cov_by_year <- lapply(list_var, function(i){
   vals <- i[upper.tri(i)]
-  setNames(as.list(vals), c("cov_qtot_","cov_pdoc","cov_pq"))}) %>% 
+  setNames(as.list(vals), c("cov_loadQtot","cov_QobsQtot","cov_Qobsload"))}) %>% 
+  bind_rows(.id = "year") 
+
+annual_variances <- merge(var_flux_by_year, vars_by_year, by = "year") %>% merge(cov_by_year, by = "year")
+annual_variances$year <- complete_years
+
+
+# Variance interannuelle
+
+lnQtot <- as.vector(log(sum_qtot))
+lnloadobs <- as.vector(log(sum_loadobs))
+lnQobs <- as.vector(log(sum_qobs))
+
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
+
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
+
+cov_matrix <- cov(M, use = "pairwise.complete.obs") 
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF <- var(rowSums(M))
+
+if(var_lnF_check != var_lnF){warning("Attention : les variances ne correspondent pas")}
+
+
+# put results in df
+vars_interannual <- c(var_lnF, diag(cov_matrix)) # variance des paramètres par année
+cov_interannual <- cov_matrix[upper.tri(cov_matrix)] %>%
+  setNames(c("cov_loadQtot","cov_QobsQtot","cov_Qobsload")) 
+
+interannual_variances <- c(year = "Interrannuel", vars_interannual, cov_interannual)
+
+all_variances <- rbind(annual_variances, interannual_variances) %>% mutate(across(where(is.character) & !any_of("year"), as.numeric))
+
+
+
+variance_decomposition <- all_variances  %>% 
+  mutate(part_Qtot = Qtot/var_lnF, part_load = load/var_lnF, part_Qobs = Qobs/var_lnF, 
+         part_covloadQtot = 2*cov_loadQtot/var_lnF, 
+         part_covQobsQtot = 2*cov_QobsQtot/var_lnF, 
+         part_covQobsload = 2*cov_Qobsload/var_lnF, 
+         part_cov = part_covloadQtot + part_covQobsQtot + part_covQobsload,
+         check = part_Qtot+part_load+part_Qobs+part_covloadQtot+part_covQobsQtot+part_covQobsload)
+
+
+vd_long <- variance_decomposition %>%
+  select(year, part_Qtot, part_load, part_Qobs, part_cov) %>%
+  tidyr::pivot_longer(cols = c(part_Qtot, part_load, part_Qobs, part_cov),
+               names_to = "terme", values_to = "part")  %>%
+  mutate(terme = recode(terme,
+                         part_Qtot = "Variance Q annuel",
+                         part_load = "Variance flux instantané",
+                         part_Qobs = "Variance Q flux",
+                        part_cov = "Covariances"))
+
+ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
+  geom_col(position = "stack") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_fill_manual(values = c("Variance Q annuel" = "lightblue",
+                                "Variance flux instantané" = "indianred",
+                                "Variance Q flux" = "darkblue",
+                               "Covariances" = "darkred")) +
+  scale_y_continuous(labels = scales::percent, breaks = c(-0.40,-0.20,0,0.20,0.40,0.60,0.80,1.00,1.2,1.4)) +
+  labs(x = "Année", y = "Part de la variance du log-flux",
+       fill = "Terme",
+       title = "Décomposition de la variance du flux") +
+  theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))
+
+vd_long_abs <- variance_decomposition %>%
+  select(year, Qtot, load, Qobs, cov_loadQtot,cov_QobsQtot,cov_Qobsload) %>%
+  tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur")
+
+ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
+  geom_col(position = "dodge") +
+  geom_point(data = variance_decomposition, aes(x = year, y = var_lnF),
+             inherit.aes = FALSE, shape = 18, size = 3) +
+  scale_fill_manual(values = c("darkblue","lightblue","darkred","indianred","palegreen4","cornsilk3"))+
+   theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  scale_y_continuous(trans = "log", breaks = )+
+  labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
+
+```
+
+
+# Export données
+
+```{r exporter-valeurs-dans-csv-commun}
+
+library(readxl)
+library(writexl)
+
+
+rmd_id <- "aurade"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+  nb_years = length(complete_years)
+  # ... autres colonnes
+)
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("resultats.xlsx"))) {
+  df_shared <- read_xlsx(here("resultats.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("resultats.xlsx"))
+```
+
+# For comparison: simple sum
+
+
+```{r uncertainties-sum}
+nyears <- length(complete_years)
+aurade_doc[, period:= as.numeric(difftime(shift(DateHeure, type = "lead"), DateHeure, units = "secs"))][period > 7*24*60*60, period := 7*24*60*60]
+
+q_u <- 0.1
+
+nobs <- dim(aurade_doc)[1]
+nrep <- 1000
+```
+
+## total flux
+
+```{r compute-flux-sum}
+#doc matrix
+doc_meas <- matrix(aurade_doc$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
+
+doc_cv <- 3.3*doc_meas^(-0.6) # from all data available on 29/05/2026
+doc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
+doc_noise <- doc_cv*doc_random
+doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
+
+# Q matrix
+q_meas <- matrix(aurade_doc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+
+# period mat
+period_mat <- matrix(aurade_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in hours
+
+
+
+# Flux per time step
+flux_kg_mat <- doc_mat*1e-6*q_mat*period_mat # period_mat is in s
+flux_kg.s_mat <- doc_mat*1e-6*q_mat # without period
+
+
+
+# Annual flux
+index_years <- lapply(complete_years, function(y){which(aurade_doc$year == y)}) # list of indices corresponding to each year
+annual_flux_kg.y <- sapply(index_years, function(idx){apply(flux_kg_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and n_years columns 
+
+
+annual_flux_pi <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+
+annual_flux_df <- data.frame(year = complete_years, 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = annual_flux_sd, 
+                        annual_flux_pi_lower = annual_flux_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_pi[3,])
+
+# Interannual flux 
+interannual_flux_kg.y <- rowMeans(annual_flux_kg.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_kg.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_kg.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_pi_lower = interannual_flux_pi[1], 
+                        annual_flux_pi_upper = interannual_flux_pi[3])
+
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", nyears), "interannual")
+
+# Q df ----
+
+annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
+annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+interannual_q <- rowMeans(annual_q, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_q_pi <- quantile(interannual_q, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_q_mean <- mean(interannual_q, na.rm = T) # mean interannual flux
+interannual_q_variability <- sd(annual_q_mean, na.rm = T) # standard deviation of interannual flux per year
+
+q_df <- data.frame(year = c(complete_years, "interannual"), 
+                        q_mean = c(annual_q_mean, interannual_q_mean),
+                        q_variability = c(annual_flux_sd, interannual_q_variability), 
+                        q_pi_lower = c(annual_q_pi[1,], interannual_q_pi[1]), 
+                        q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
+                   group = c(rep("annual", nyears), "interannual"))
+
+# Plot -----
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggplot()+
+  geom_col(data = q_df, aes(x=year, y = q_mean, fill = group))+
+    geom_errorbar(data = q_df, aes(x = year, ymin = q_pi_lower, ymax = q_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(q_df, year == "interannual"), aes(x = year, ymin = q_mean - q_variability, ymax = q_mean + q_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Discharge (m3/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+```
+
+## Specific flux
+
+```{r specific-flux-sum}
+total_sflux_df <- cbind(total_flux_df[,"year"], total_flux_df[,2:5] / bv, total_flux_df[,"group"]) %>% setNames(names(total_flux_df))
+#total_sflux_df <- rbind(annual_sflux_df, interannual_sflux_df)
+total_sflux_df$group <- c(rep("annual", nyears), "interannual")
+
+ggplot()+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
+    geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (kgs/km2/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggsave(here("figures","sflux_naizin.svg"))
+
+knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
+
+## Variance decomposition
+
+Comme flux = DOC × Q × période, on a exactement : ln(flux) = ln(DOC) + ln(Q) + ln(période)
+Et donc, sans approximation : Var(ln flux) = Var(ln DOC) + Var(ln Q) + 2·Cov(ln DOC, ln Q)
+(Claude)
+
+Les lignes où Q = 0 sont exclues du calcul de variance.
+
+```{r variance-sum}
+## Variances par année
+
+list_var <- lapply(index_years, function(idx){
+  
+lnQ <- as.vector(log(q_mat[,idx]))
+lnDOC <- as.vector(log(doc_mat[,idx]))
+lnp <- as.vector(log(period_mat[,idx]))
+
+mask <- complete.cases(lnDOC, lnQ, lnp)  &
+        is.finite(lnDOC) & is.finite(lnQ) & is.finite(lnp)
+
+M <- cbind(DOC = lnDOC[mask], Q = lnQ[mask], p = lnp[mask])
+
+cov_matrix <- cov(M, use = "pairwise.complete.obs") 
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF_direct <- var(rowSums(M))
+
+if(var_lnF_check != var_lnF_direct){warning("Attention : les variances ne correspondent pas")}
+
+return(cov_matrix)
+})
+
+var_flux_by_year <- lapply(list_var, function(i){
+  var_flux = sum(i)
+  setNames(var_flux, "var_lnF")}) %>% bind_rows(.id = "year")
+vars_by_year <- lapply(list_var, diag) %>% bind_rows(.id = "year") # variance des paramètres par année
+cov_by_year <- lapply(list_var, function(i){
+  vals <- i[upper.tri(i)]
+  setNames(as.list(vals), c("cov_qdoc","cov_pdoc","cov_pq"))}) %>% 
   bind_rows(.id = "year") 
 
 annual_variances <- merge(var_flux_by_year, vars_by_year, by = "year") %>% merge(cov_by_year, by = "year")
@@ -423,7 +734,7 @@ all_variances <- rbind(annual_variances, interannual_variances) %>% mutate(acros
 
 variance_decomposition <- all_variances  %>% 
   mutate(part_Q = Q/var_lnF, part_DOC = DOC/var_lnF, part_p = p/var_lnF, 
-         part_covqdoc = cov_qdoc/var_lnF, part_covpq = cov_pq/var_lnF, part_covpdoc = cov_pdoc/var_lnF, 
+         part_covqdoc = 2*cov_qdoc/var_lnF, part_covpq = 2*cov_pq/var_lnF, part_covpdoc = 2*cov_pdoc/var_lnF, 
          part_p_tot = part_p+part_covpq+part_covpdoc, 
          check = part_Q+part_DOC+part_p+part_covqdoc+part_covpq+part_covpdoc)
 
@@ -465,49 +776,4 @@ ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
 
 ```
 
-
-# Export données
-
-```{r exporter-valeurs-dans-csv-commun}
-
-library(readxl)
-library(writexl)
-
-
-rmd_id <- "aurade"
-
-rmd_values <- data.frame(
-  rmd = rmd_id,
-  carbon  = "DOC",
-  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"],
-    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"],
-    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
-    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
-    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"],
-   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"],
-   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
-   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
-  nb_years = length(complete_years)
-  # ... autres colonnes
-)
-
-# Lire le fichier existant ou créer un dataframe vide
-if (file.exists(here("resultats.xlsx"))) {
-  df_shared <- read_xlsx(here("resultats.xlsx"))
-} else {
-  df_shared <- data.frame()
-}
-
-# Mettre à jour la ligne du Rmd ou l'ajouter si absente
-if (rmd_id %in% df_shared$rmd) {
-  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
-} else {
-  df_shared <- rbind(df_shared, rmd_values)            # ajout
-}
-
-
-
-# Réécrire
-write_xlsx(df_shared, here("resultats.xlsx"))
-```
 

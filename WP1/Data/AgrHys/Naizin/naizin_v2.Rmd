@@ -157,7 +157,7 @@ knitr::kable(summary_naizin, caption = "Summary table of naizin data") %>% kable
 # Annual and interannual flux 
 
 
-On considère que l'erreur sur DOC vient de la mesure par analyse TOC A REFAIRE.
+On considère que l'erreur sur DOC vient de la mesure par analyse TOC.
 
 ```{r uncertainties}
 nyears <- length(complete_years)
@@ -376,7 +376,7 @@ all_variances <- rbind(annual_variances, interannual_variances) %>% mutate(acros
 
 variance_decomposition <- all_variances  %>% 
   mutate(part_Q = Q/var_lnF, part_DOC = DOC/var_lnF, part_p = p/var_lnF, 
-         part_covqdoc = cov_qdoc/var_lnF, part_covpq = cov_pq/var_lnF, part_covpdoc = cov_pdoc/var_lnF, 
+         part_covqdoc = 2*cov_qdoc/var_lnF, part_covpq = 2*cov_pq/var_lnF, part_covpdoc = 2*cov_pdoc/var_lnF, 
          part_p_tot = part_p+part_covpq+part_covpdoc, 
          check = part_Q+part_DOC+part_p+part_covqdoc+part_covpq+part_covpdoc)
 
