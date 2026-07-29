@@ -36,6 +36,7 @@ bv <- 95590
 
 
 ```{r prepare-data}
+
 arles <- read_xlsx("arles.xlsx", sheet = "clean_data", col_types = c("date","text",rep("numeric",18))) 
 arles$year <- year(arles$Date)
 arles$month <- month(arles$Date)
@@ -61,10 +62,10 @@ arles$q_L.s <- arles$q_m3.s * 1e3
 ```{r plot-by-year-doc, fig.dim = c(10,15)}
 
 
-title <- expression(atop("Series of DOC and Q by year"))
+title <- expression(atop("Series of Q and DOC by year"))
 plots <- ggarrange(
 ggplot(arles, aes(x = commondate))+
-  geom_point(aes(y = q_m3.s, col = "Débit, L/s"), alpha = 0.5)+
+  geom_point(aes(y = q_m3.s, col = "Débit, m3/s"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("lightblue"), name = "")+
   facet_grid(rows = vars(year))+
