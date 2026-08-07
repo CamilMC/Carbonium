@@ -37,6 +37,7 @@ cite data: https://catalogue.theia.data-terra.org/meta/TheiaOZCAR.KARS_DAT_LOUE-
 
 ```{r bv}
 bv <- 37 #from shapefile, 35 sur le site
+unit_flux <- "ton"
 ```
 
 
@@ -51,7 +52,7 @@ lods <- merge(oc, debit, by = "DateHeure", all = T)
 
 lods <- lods %>% mutate(
   year = year(lods$DateHeure),
-  commondate = as.Date(paste0("2000-", format(lods$DateHeure,"%j")), "%Y-%j"),
+  commondate = update(DateHeure, year = 2000),
   period = as.numeric(difftime(shift(DateHeure, type = "lead"), DateHeure, units = "secs")),
   q_L.s = q_m3.s*1e3
   )
@@ -86,8 +87,6 @@ ggplot(lods, aes(x = as.Date(commondate)))+
 )
 
 annotate_figure(plots, top = text_grob(title))
-
-
 
 ```
 
@@ -416,6 +415,7 @@ library(writexl)
 
 rmd_id <- "lods"
 
+if(unit_flux == "ton"){
 rmd_values <- data.frame(
   rmd = rmd_id,
   carbon  = "DOC",
@@ -428,8 +428,23 @@ rmd_values <- data.frame(
    flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
    flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
   nb_years = length(complete_years)
-  # ... autres colonnes
 )
+} else if(unit_flux == "kg"){
+  rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+  nb_years = length(complete_years)
+  )
+}
+
 
 # Lire le fichier existant ou créer un dataframe vide
 if (file.exists(here("resultats.xlsx"))) {
@@ -452,4 +467,288 @@ write_xlsx(df_shared, here("resultats.xlsx"))
 ```
 
 
+```{r exit}
+knitr::knit_exit()
+```
 
+
+**************
+
+# Previous code
+
+```{r plot, fig.dim = c(10, 10)}
+n <- 2
+
+ggplot(data = subset(lods, !year %in% c(1991, 1992, 1994, 1996)), aes(x=commondate))+ 
+  geom_point(aes(y= TOC*n, col = "TOC, m3/L"), alpha = 0.5, size = 1) +
+  geom_point(aes(y= q_m3.s, col = "Discharge, m3/s"), alpha = 0.5, size = 1) +
+  scale_x_date(labels = function(x) format(x, "%d %B"), date_minor_breaks = "1 month")+
+  #scale_y_continuous(sec.axis = sec_axis(~./n, name = "TOC, mg/L"))+
+  scale_color_manual(values = c("palegreen4","lightblue","firebrick"))+
+  facet_grid(rows = vars(year), scales = "free")+
+  labs(title = "Discharge (m3/s) and TOC (mg/L)", x = "", y = "Discharge, m3/s", col = "")+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+```
+
+```{r debit-toc}
+ggplot(lods, aes(x = q_m3.s))+
+  geom_point(aes(y=TOC), size = 1)+
+  scale_color_viridis_d()+
+  theme_minimal()
+```
+
+```{r toc-pred}
+
+lmtoc <- lm(TOC~q_m3.s, data = lods)
+summary(lmtoc)
+
+lods$toc_pred <- predict(lmtoc, newdata = lods)
+
+
+ggplot(lods, aes(x = q_m3.s))+
+  geom_point(aes(y=TOC, col = "TOC measured"), size = 1)+
+  geom_point(aes(y=toc_pred, col = "TOC pred"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+
+
+pltoc <- lm(log(TOC)~log(q_m3.s), data = subset(lods, TOC != 0 & q_m3.s != 0))
+summary(pltoc)
+
+lods$toc_pred2 <- predict(pltoc, newdata = lods) %>% exp()
+
+
+ggplot(lods, aes(x = q_m3.s))+
+  geom_point(aes(y=TOC, col = "TOC measured"), size = 1)+
+  geom_point(aes(y=toc_pred2, col = "TOC pred"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+
+```
+
+```{r nb-toc-values}
+
+print(paste("pred = ", dim(subset(lods, !is.na(toc_pred)))[1]))
+print(paste("measured = ", dim(subset(lods, !is.na(TOC)))[1]))
+```
+
+# Flux TOC
+
+```{r step-fluxes-measured-toc, eval = T}
+lods$ftoc_kg.s <- with(lods, TOC * 1e-6/1e-3 * q_m3.s) # mg/L converted to kg/m3
+```
+
+
+https://sokarst.org/en/9-observatories-in-france/jurassic-karst-en/
+
+```{r calcul-yearly-flux-measured-toc, eval = T} 
+
+yearly_fluxes <- lods %>%
+                  group_by(year) %>% 
+                    summarise(ftoc_kg.year = sum(ftoc_kg.s * periodj * 24 * 60 * 60, na.rm = T), # period in days  -> we get kg, for each year 
+                              ftoc_kg.s_sum = sum(ftoc_kg.s, na.rm = T), # sum of kg/s in kg/s
+                              percent_poc_included = sum(!is.na(ftoc_kg.s))/n()*100,
+                              nb_days_sampled = length(unique(Date)),
+                              nb_days_sampled_toc = length(unique(Date[!is.na(TOC)])),
+                              sum_discharge.year = sum(q_m3.s[!is.na(ftoc_kg.s)], na.rm = T),  # faut-il inclure les débits correspondants à des heures où le POC n'est pas mesuré?
+                              mean_discharge.year = mean(q_m3.s[!is.na(ftoc_kg.s)], na.rm = T), 
+                              sd_discharge.year = sd(q_m3.s[!is.na(ftoc_kg.s)], na.rm = T)) 
+bv <- 35 
+
+# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$ftoc_kg.year.km2 <- yearly_fluxes$ftoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+#yearly_fluxes$ftoc_ww_kg.year <- with(yearly_fluxes, ftoc_kg.s_sum/sum_discharge.year*mean_discharge.year) * 60 * 60 * 24 * 365
+yearly_fluxes$ftoc_ww_kg.year.km2 <- with(yearly_fluxes, ftoc_kg.s_sum/sum_discharge.year*mean_discharge.year) * 60 * 60 * 24 * 365 / bv
+```
+
+the weight method works if all discharge values are included not only those with a poc value??
+
+```{r figures-flux-measured-toc, eval = F} 
+yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable() %>% kableExtra::kable_styling()
+```
+
+```{r compare-fluxes-measured-toc}
+yearly_fluxes$label <- paste(round(yearly_fluxes$nb_days_sampled,2), "d Q\n", round(yearly_fluxes$nb_days_sampled_toc,2), " d toc")
+
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = ftoc_kg.year.km2, fill = "TOC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = ftoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = ftoc_ww_kg.year.km2, label = label), nudge_y = 2, label.size = 0.1, size = 2)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+ggplot(subset(yearly_fluxes, !year %in% c(2013, 2014)), aes(x = as.character(year)))+
+  geom_col(aes(y = ftoc_kg.year.km2, fill = "TOC flux as sum"), position = position_nudge(-0.2), width = 0.4)+ 
+  geom_col(aes(y = ftoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = as.character(year), y = ftoc_ww_kg.year.km2, label = label), nudge_y = 10, label.size = 0.1, size = 2)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+```{r interrannual-fluxes-measured-toc}
+yf <- yearly_fluxes %>% subset(!year %in% c(2013,2014))
+
+mixedfluxes_mean <- with(yf, ifelse(nb_days_sampled_toc < 200, ftoc_ww_kg.year.km2, ftoc_kg.year.km2)) %>% mean(na.rm = T)
+mixedfluxes_sd <- with(yf, ifelse(nb_days_sampled_toc < 200, ftoc_ww_kg.year.km2, ftoc_kg.year.km2)) %>% sd(na.rm = T)
+
+means <- data.frame(
+  "Mean fdoc sum, kg/year" = mean(yf$ftoc_kg.year.km2, na.rm = T),
+  "Sd fdoc sum" = sd(yf$ftoc_kg.year.km2, na.rm = T),
+  "Mean fdoc weighted, kg/year" = mean(yf$ftoc_ww_kg.year.km2, na.rm = T),
+  "Sd fdoc weighted" = sd(yf$ftoc_ww_kg.year.km2, na.rm = T),
+    "Mean fdoc mixed" = mixedfluxes_mean,
+  "Sd fdoc mixed" = mixedfluxes_sd
+)
+
+knitr::kable(t(means), digits = 3) %>% kableExtra::kable_styling()
+```
+
+
+# DOC
+
+```{r plot-doc, fig.dim = c(10, 10)}
+n <- 2
+
+ggplot(data = subset(lods, !year %in% c(1991, 1992, 1994, 1996)), aes(x=commondate))+ 
+  geom_point(aes(y= DOC*n, col = "DOC, m3/L"), alpha = 0.5, size = 1) +
+  geom_point(aes(y= q_m3.s, col = "Discharge, m3/s"), alpha = 0.5, size = 1) +
+  scale_x_date(labels = function(x) format(x, "%d %B"), date_minor_breaks = "1 month")+
+  #scale_y_continuous(sec.axis = sec_axis(~./n, name = "DOC, mg/L"))+
+  scale_color_manual(values = c("palegreen4","lightblue","firebrick"))+
+  facet_grid(rows = vars(year), scales = "free")+
+  labs(title = "Discharge (m3/s) and DOC (mg/L)", x = "", y = "Discharge, m3/s", col = "")+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+```
+
+```{r debit-doc}
+ggplot(lods, aes(x = q_m3.s))+
+  geom_point(aes(y=DOC), size = 1)+
+  scale_color_viridis_d()+
+  theme_minimal()
+```
+
+```{r doc-pred}
+
+lmdoc <- lm(DOC~q_m3.s, data = lods)
+summary(lmdoc)
+
+lods$doc_pred <- predict(lmdoc, newdata = lods)
+
+
+ggplot(lods, aes(x = q_m3.s))+
+  geom_point(aes(y=DOC, col = "DOC measured"), size = 1)+
+  geom_point(aes(y=doc_pred, col = "DOC pred"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+
+
+pldoc <- lm(log(DOC)~log(q_m3.s), data = subset(lods, DOC != 0 & q_m3.s != 0))
+summary(pldoc)
+
+lods$doc_pred2 <- predict(pldoc, newdata = lods) %>% exp()
+
+
+ggplot(lods, aes(x = q_m3.s))+
+  geom_point(aes(y=DOC, col = "TOC measured"), size = 1)+
+  geom_point(aes(y=doc_pred2, col = "TOC pred"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+
+```
+
+```{r nb-doc-values}
+
+print(paste("pred = ", dim(subset(lods, !is.na(doc_pred)))[1]))
+print(paste("measured = ", dim(subset(lods, !is.na(DOC)))[1]))
+```
+
+# Flux DOC
+
+```{r step-fluxes-measured-doc, eval = T}
+lods$fdoc_kg.s <- with(lods, DOC * 1e-6/1e-3 * q_m3.s) # mg/L converted to kg/m3
+```
+
+
+https://sokarst.org/en/9-observatories-in-france/jurassic-karst-en/
+
+```{r calcul-yearly-flux-measured-doc, eval = T} 
+
+yearly_fluxes <- lods %>%
+                  group_by(year) %>% 
+                    summarise(fdoc_kg.year = sum(fdoc_kg.s * periodj * 24 * 60 * 60, na.rm = T), # period in days  -> we get kg, for each year 
+                              fdoc_kg.s_sum = sum(fdoc_kg.s, na.rm = T), # sum of kg/s in kg/s
+                              percent_poc_included = sum(!is.na(fdoc_kg.s))/n()*100,
+                              nb_days_sampled = length(unique(Date)),
+                              nb_days_sampled_doc = length(unique(Date[!is.na(DOC)])),
+                              sum_discharge.year = sum(q_m3.s[!is.na(fdoc_kg.s)], na.rm = T),  # faut-il inclure les débits correspondants à des heures où le POC n'est pas mesuré?
+                              mean_discharge.year = mean(q_m3.s[!is.na(fdoc_kg.s)], na.rm = T), 
+                              sd_discharge.year = sd(q_m3.s[!is.na(fdoc_kg.s)], na.rm = T)) 
+bv <- 35 
+
+# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$fdoc_kg.year.km2 <- yearly_fluxes$fdoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+#yearly_fluxes$fdoc_ww_kg.year <- with(yearly_fluxes, fdoc_kg.s_sum/sum_discharge.year*mean_discharge.year) * 60 * 60 * 24 * 365
+yearly_fluxes$fdoc_ww_kg.year.km2 <- with(yearly_fluxes, fdoc_kg.s_sum/sum_discharge.year*mean_discharge.year) * 60 * 60 * 24 * 365 / bv
+```
+
+the weight method works if all discharge values are included not only those with a poc value??
+
+```{r figures-flux-measured-doc, eval = F} 
+yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable() %>% kableExtra::kable_styling()
+```
+
+```{r compare-fluxes-measured-doc}
+yearly_fluxes$label <- paste(round(yearly_fluxes$nb_days_sampled,2), "d Q\n", round(yearly_fluxes$nb_days_sampled_doc,2), " d doc")
+
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fdoc_kg.year.km2, fill = "DOC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fdoc_ww_kg.year.km2, fill = "DOC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fdoc_ww_kg.year.km2, label = label), nudge_y = 2, label.size = 0.1, size = 2)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+ggplot(subset(yearly_fluxes, year %in% c(2000, 2001)), aes(x = as.character(year)))+
+  geom_col(aes(y = fdoc_kg.year.km2, fill = "DOC flux as sum"), position = position_nudge(-0.2), width = 0.4)+ 
+  geom_col(aes(y = fdoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = as.character(year), y = fdoc_ww_kg.year.km2, label = label), nudge_y = 10, label.size = 0.1, size = 2)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+```{r interrannual-fluxes-measured-doc}
+yf <- yearly_fluxes %>% subset(!year %in% c(2013,2014))
+
+mixedfluxes_mean <- with(yf, ifelse(nb_days_sampled_doc < 200, fdoc_ww_kg.year.km2, fdoc_kg.year.km2)) %>% mean(na.rm = T)
+mixedfluxes_sd <- with(yf, ifelse(nb_days_sampled_doc < 200, fdoc_ww_kg.year.km2, fdoc_kg.year.km2)) %>% sd(na.rm = T)
+
+means <- data.frame(
+  "Mean fdoc sum, kg/year" = mean(yf$fdoc_kg.year.km2, na.rm = T),
+  "Sd fdoc sum" = sd(yf$fdoc_kg.year.km2, na.rm = T),
+  "Mean fdoc weighted, kg/year" = mean(yf$fdoc_ww_kg.year.km2, na.rm = T),
+  "Sd fdoc weighted" = sd(yf$fdoc_ww_kg.year.km2, na.rm = T),
+    "Mean fdoc mixed" = mixedfluxes_mean,
+  "Sd fdoc mixed" = mixedfluxes_sd
+)
+
+knitr::kable(t(means), digits = 3) %>% kableExtra::kable_styling()
+```

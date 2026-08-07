@@ -47,6 +47,7 @@ Données fournies par Anne Probst.
 
 ```{r bv}
 bv <- 3.2
+unit_flux = "kg"
 ```
 
 
@@ -485,7 +486,22 @@ library(writexl)
 
 rmd_id <- "aurade"
 
+if(unit_flux == "ton"){
 rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+  nb_years = length(complete_years)
+)
+} else if(unit_flux == "kg"){
+  rmd_values <- data.frame(
   rmd = rmd_id,
   carbon  = "DOC",
   flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
@@ -497,8 +513,9 @@ rmd_values <- data.frame(
    flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
    flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
   nb_years = length(complete_years)
-  # ... autres colonnes
-)
+  )
+}
+
 
 # Lire le fichier existant ou créer un dataframe vide
 if (file.exists(here("resultats.xlsx"))) {
@@ -775,5 +792,4 @@ ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
   labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
 
 ```
-
 

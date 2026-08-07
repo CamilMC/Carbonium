@@ -38,20 +38,14 @@ bv <- 95590
 ```{r prepare-data}
 
 arles <- read_xlsx("arles.xlsx", sheet = "clean_data", col_types = c("date","text",rep("numeric",18))) 
-arles$year <- year(arles$Date)
-arles$month <- month(arles$Date)
-arles$week <- week(arles$Date)
 
-arles$Date <- as.Date(arles$Date)
-arles$commondate <- as.Date(paste0("2000-", format(arles$Date,"%j")), "%Y-%j")
-arles$periodj <- with(arles, end-start) # donne la périod en heure
-arles$periods <- arles$periodj*60*60
-
-arles$poc_mg.L <- with(arles, poc_umol.L*1e-3/12.011)
-arles$poc_percent <- with(arles, poc_mg.L/mes_mg.L)
-arles$doc_mg.L <- with(arles, doc_umol.L*1e-3/12.011)
-
-arles$q_L.s <- arles$q_m3.s * 1e3
+arles <- arles %>% mutate(
+  year = year(Date),
+  commondate = as.Date(update(Date, year = 2000)),
+  periodj = end-start, # donne la périod en heure
+  periods = periodj*60*60,
+  doc_mg.L = doc_umol.L*1e-3/12.011,
+  q_L.s = arles$q_m3.s * 1e3)
 
 
 ```
@@ -89,6 +83,9 @@ annotate_figure(plots, top = text_grob(title))
 
 
 
+
+## Complete years
+
 ```{r arles-complete-years, fig.dim = c(10,15)}
 complete_years <- c(2007,2008,2009,2010)
 arles_complete <- arles %>% subset(year %in% complete_years) %>% filter(!is.na(doc_mg.L) & !is.na(q_L.s))
@@ -96,7 +93,7 @@ arles_complete <- arles %>% subset(year %in% complete_years) %>% filter(!is.na(d
 
 Years to use for test of methods: `r cat(complete_years)`
 
-```{r plot-complete-years, fig.dim = c(10,15)}
+```{r plot-complete-years, fig.dim = c(10,10)}
 title <- expression(atop("Series of DOC and Q by year"))
 plots <- ggarrange(
 ggplot(subset(arles_complete, year %in% complete_years), aes(x = commondate))+
@@ -121,6 +118,11 @@ ggplot(subset(arles, year %in% complete_years), aes(x = commondate))+
 annotate_figure(plots, top = text_grob(title))
 
 ```
+
+
+
+
+## Characteristics
 
 ```{r summary-data}
 summary_arles <- merge(
@@ -149,11 +151,6 @@ arles %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise("Number of Q o
 knitr::kable(summary_arles, caption = "Summary table of arles data") %>% kableExtra::kable_styling()
 
 ```
-
-
-
-
-## Characteristics
 
 
 
@@ -367,6 +364,12 @@ ggplot()+
   scale_y_continuous(sec.axis = sec_axis(~.*1e8, name = "Total annual discharge, L/s"))+
   theme_minimal()+
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+
+results_camille_df %>% group_by(percent) %>% summarise(mean_biais = round(mean(mean_bias_camille),1)) %>% filter(percent != "p100") %>% knitr::kable()
+
+results_camille_df$percentnb <- results_camille_df$percent %>% substring(2) %>% as.numeric()
+
+lm(mean_bias_camille~percentnb, data = results_camille_df) %>% summary()
 ```
 
 
@@ -567,6 +570,11 @@ ggplot()+
   theme_minimal()+
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
 
+results_camille_df %>% group_by(percent) %>% summarise(mean_biais = round(mean(mean_bias_camille),1)) %>% filter(percent != "p100") %>% knitr::kable()
+
+results_camille_df$percentnb <- results_camille_df$percent %>% substring(2) %>% as.numeric()
+
+lm(mean_bias_camille~percentnb, data = results_camille_df) %>% summary()
 ```
 
 
@@ -647,6 +655,14 @@ ggplot()+
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
 
 
+```
+
+```{r summary-biais-less-sampling}
+results_aggregated_df %>% group_by(nb_days) %>% summarise(mean_biais = round(mean(mean_bias_aggregated),1)) %>% knitr::kable()
+
+results_aggregated_df$daysnb <- results_aggregated_df$nb_days %>% substring(2) %>% as.numeric()
+
+lm(mean_bias_aggregated~daysnb, data = results_aggregated_df) %>% summary()
 ```
 
 
