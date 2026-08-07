@@ -1,0 +1,42 @@
+---
+title: "guidel"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+date: "2025-06-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = F)
+```
+
+```{r libraries}
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(imputeTS)
+```
+
+# Get data
+
+https://bdoh.inrae.fr/SITE-ATELIER-ARDIERES-MORCILLE/ 
+
+https://onlinelibrary.wiley.com/doi/10.1002/hyp.14384
+
+
+```{r load-data-from-excel, message = F}
+
+toc <- readxl::read_xlsx(path = "guidel.xlsx", sheet = "TOC")
+
+debit <- readxl::read_xlsx(path = "guidel.xlsx", sheet = "debit")
+
+
+guidel <- merge(toc, debit, by = "DateHeure", all = T)
+```

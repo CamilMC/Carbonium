@@ -1,0 +1,259 @@
+---
+title: "choqueuse"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+date: "2025-06-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = F)
+```
+
+```{r libraries}
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(imputeTS)
+```
+
+# Get data
+
+https://bdoh.inrae.fr/SITE-ATELIER-ARDIERES-MORCILLE/ 
+
+https://onlinelibrary.wiley.com/doi/10.1002/hyp.14384
+
+
+```{r load-data-from-excel, message = F}
+
+choqueuse <- readxl::read_xlsx(path = "Data_Choqueuse_DOC_DIC_Debit.xlsx", sheet = "Data_Choqueuse_DOC_DIC_Debit", col_types = c("date","numeric", "text","numeric","text","numeric","text","text","numeric")) %>%  mutate(Site = NULL, bv_km2 = NULL) %>% unique()
+
+```
+
+```{r merge}
+
+#choqueuse$q_L.s <- imputeTS::na_interpolation(choqueuse$q_L.s) # fill empty Q
+
+choqueuse$year <- year(choqueuse$DateHeure)
+choqueuse$commondate <- as.Date(paste0("2000-", format(choqueuse$DateHeure,"%j")), "%Y-%j")
+choqueuse$Date <- format(choqueuse$DateHeure, "%Y-%m-%d")
+
+choqueuse$period <- with(choqueuse, as.numeric(-(DateHeure - lead(DateHeure)))) # period is calculated in hours
+choqueuse$periodj <- round(choqueuse$period / 24, 1)
+  
+strange_periods_dates <- choqueuse %>% subset(periodj > 2) %>% pull(Date) 
+
+```
+
+
+```{r plot, fig.dim = c(10, 10)}
+n <- 2
+  
+ggplot(data = subset(choqueuse, !is.na(year)), aes(x=commondate))+ 
+  geom_point(aes(y= q_L.s, col = "Discharge, L/s"), alpha = 0.5, size = 0.5) +
+   geom_point(aes(y= doc_mg.L/n, col = "DOC, mg/L"), alpha = 0.5, size = 1) +
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  scale_y_continuous(sec.axis = sec_axis(~.*n, name = "DOC, mg/L"))+
+  scale_color_manual(values = c("palegreen4","lightblue","firebrick"))+
+  facet_grid(rows = vars(year), scales = "free")+
+  labs(title = "Discharge (L/s) and DOC (mg/L)", x = "", y = "Débit, L/s", col = "")+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+```
+
+
+```{r view-discharge}
+ggplot(choqueuse)+ 
+  geom_point(aes(x = DateHeure, y= q_L.s, col = "Discharge, L/s"),
+  alpha = 0.5, size = 0.5) +
+  scale_color_manual(values = c("palegreen4","lightblue"))+
+  labs(title = " ", x = "", y = "Q, L/s", col = "")+
+  theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))
+
+```
+
+```{r mean-q}
+meanQcommondate <- choqueuse %>% group_by(commondate) %>% summarise(meanQ = mean(q_L.s, na.rm = T))
+
+ggplot()+geom_line(data = choqueuse, aes(x=commondate, y = q_L.s, group = year, col = as.character(year)), alpha = 0.2)+
+  geom_line(data = meanQcommondate, aes(x=commondate, y = meanQ), col = "black")+
+  scale_color_viridis_d(option = "G", end = 0.8)+
+  labs(x = "", y = "Débit, L/s", col = "")+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+
+```{r debit-doc}
+ggplot(choqueuse, aes(x = q_L.s))+
+  geom_point(aes(y=doc_mg.L, col = "DOC measured"), size = 1)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+```
+
+```{r doc-pred}
+
+lm_doc <- lm(doc_mg.L~q_L.s, data = choqueuse) 
+summary(lm_doc)
+
+choqueuse$doc_pred <- predict(lm_doc, newdata = choqueuse)
+choqueuse$doc_pred_se <- predict(lm_doc, newdata = choqueuse, se.fit = T)$se.fit
+
+ggplot(choqueuse, aes(x = q_L.s))+
+  geom_point(aes(y=doc_mg.L, col = "DOC measured"), size = 1)+
+  geom_point(aes(y=doc_pred, col = "DOC pred"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+
+pl_doc <- lm(log(doc_mg.L)~log(q_L.s), data = subset(choqueuse, q_L.s != 0 & doc_mg.L != 0))
+summary(pl_doc)
+
+choqueuse$doc_pred2 <- predict(pl_doc, newdata = choqueuse) %>% exp()
+choqueuse$doc_pred2_se <- predict(pl_doc, newdata = choqueuse, se.fit = T)$se.fit %>% exp() 
+
+ggplot(choqueuse, aes(x = q_L.s))+
+  geom_point(aes(y=doc_mg.L, col = "DOC measured"), size = 1)+
+  geom_point(aes(y=doc_pred2, col = "DOC pred"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+```
+
+```{r doc-pred-par-date, fig.dim = c(10,10)}
+
+ggplot(choqueuse, aes(x = commondate))+
+  geom_point(aes(y=doc_mg.L, col = "DOC measured"), size = 1)+
+  geom_point(aes(y=doc_pred2, col = "DOC pred, powerlaw"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  labs(x = "", col = "") +
+  facet_grid(rows = vars(year), scales = "free_y")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+```
+
+
+```{r doc-interpol}
+choqueuse$doc_interpol <- imputeTS::na_interpolation(choqueuse$doc_mg.L, maxgap = 24*60*12) # débit toutes les 5 min, gap de 1 jour
+
+ggplot(choqueuse, aes(x = q_L.s))+
+  geom_point(aes(y=doc_mg.L, col = "DOC measured"), size = 1)+
+  geom_point(aes(y=doc_interpol, col = "DOC interpol"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+  theme_minimal()
+```
+
+```{r doc-interpol-par-date, fig.dim = c(10,10)}
+ggplot(choqueuse, aes(x = commondate))+
+  geom_point(aes(y=doc_mg.L, col = "DOC measured"), size = 1)+
+  geom_point(aes(y=doc_interpol, col = "DOC interpol"), size = 0.5)+
+  scale_color_manual(values = c("lightblue","palegreen4")) +
+   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month")+
+  labs(x = "", col = "") +
+  facet_grid(rows = vars(year), scales = "free_y")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+# fluxes with doc measured
+
+
+```{r nb-doc-values}
+print(paste("interpol = ", dim(subset(choqueuse, !is.na(doc_interpol)))[1]))
+print(paste("pred = ", dim(subset(choqueuse, !is.na(doc_pred)))[1]))
+print(paste("measured = ", dim(subset(choqueuse, !is.na(doc_mg.L)))[1]))
+```
+
+```{r step-fluxes-measured}
+choqueuse$fdoc_kg.s <- with(choqueuse, doc_mg.L * 1e-6 * q_L.s) # mg/L converted to kg/L
+```
+
+```{r calcul-yearly-flux-measured} 
+yearly_fluxes <- choqueuse %>% 
+                  group_by(year) %>% 
+                    summarise(fdoc_kg.year = sum(fdoc_kg.s * period * 60 * 60, na.rm = T), # period in h converted in s  -> we get kg, for each year 
+                              fdoc_kg.s_sum = sum(fdoc_kg.s, na.rm = T), # sum of kg/s in kg/s
+                              percent_poc_included = sum(!is.na(fdoc_kg.s))/n()*100,
+                              nb_days_sampled = length(unique(Date)),
+                              nb_days_sampled_doc = length(unique(Date[!is.na(doc_mg.L)])),
+                              sum_discharge.year = sum(q_L.s[!is.na(fdoc_kg.s)], na.rm = T),  # faut-il inclure les débits correspondants à des heures où le POC n'est pas mesuré?
+                              mean_discharge.year = mean(q_L.s[!is.na(fdoc_kg.s)], na.rm = T), 
+                              sd_discharge.year = sd(q_L.s[!is.na(fdoc_kg.s)], na.rm = T)) 
+# discharge is converted from m3/s to L/h before being summed, as in the formula for fdoc
+
+bv <- 1
+  
+# fluxes by adding all hourly fluxes, with uncertainty depending on the nb of observations per year
+yearly_fluxes$fdoc_kg.year.km2 <- yearly_fluxes$fdoc_kg.year/bv
+
+# fluxes with ponderation method @Nemery2013 citing Walling and Webb 1985
+yearly_fluxes$fdoc_ww_kg.year.km2 <- with(yearly_fluxes, fdoc_kg.s_sum/sum_discharge.year*mean_discharge.year) * 60 * 60 * 24 * 365 / bv
+```
+
+the weight method works if all discharge values are included not only those with a poc value??
+
+```{r figures-flux-measured} 
+yearly_fluxes %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>% knitr::kable() %>% kableExtra::kable_styling()
+```
+
+```{r compare-fluxes-measured}
+yearly_fluxes$label <- paste(round(yearly_fluxes$nb_days_sampled,2), "days q\n", round(yearly_fluxes$nb_days_sampled_doc,2), " days doc")
+
+ggplot(yearly_fluxes, aes(x = year))+
+  geom_col(aes(y = fdoc_kg.year.km2, fill = "POC flux as sum"), position = position_nudge(-0.2), width = 0.4)+
+  geom_col(aes(y = fdoc_ww_kg.year.km2, fill = "POC flux as weigthed"), position = position_nudge(0.2), width = 0.4)+
+  geom_label(aes(x = year, y = fdoc_ww_kg.year.km2, label = label), nudge_y = 200, label.size = 0.1)+
+  scale_x_continuous(breaks = c(unique(yearly_fluxes$year)), minor_breaks = NULL)+
+  scale_size_continuous(range = c(0.1,10))+
+  scale_fill_manual(values = c("palegreen4", "lightblue"))+
+  labs(x = "", fill = "", y = "Flux de POC, kg/year/km2")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+```{r test-2008}
+test2008 <- choqueuse %>% subset(year == 2008)
+
+print(paste("Sum DOC 2008 = ", sum(test2008$doc_mg.L, na.rm = T)))
+print(paste("FDOC 2008 kg/s = ", sum(test2008$doc_mg.L*1e-6*test2008$q_L.s, na.rm = T)))
+
+print(paste("Sum Q 2008 = ", sum(test2008$q_L.s, na.rm = T)))
+print(paste("Mean Q 2008 = ", mean(test2008$q_L.s, na.rm = T)))
+print(paste("Mean/sum Q 2008 = ", mean(test2008$q_L.s, na.rm = T)/sum(test2008$q_L.s, na.rm = T)))
+
+print(paste("FDOC kg/s * Mean/sum Q 2008 = ", sum(test2008$doc_mg.L*1e-6*test2008$q_L.s, na.rm = T)*mean(test2008$q_L.s, na.rm = T)/sum(test2008$q_L.s, na.rm = T)))
+print(paste("FDOC kg/y weighted = ", sum(test2008$doc_mg.L*1e-6*test2008$q_L.s, na.rm = T)*mean(test2008$q_L.s, na.rm = T)/sum(test2008$q_L.s, na.rm = T)*60*60*24*365))
+
+print(paste("FDOC 2008 kg/year measured = ", sum(test2008$doc_mg.L*1e-6*test2008$q_L.s*test2008$period, na.rm = T)))
+
+print(paste("sum period 2008 s = ", sum(test2008$period, na.rm = T)))
+
+print(paste("sum period 2008 j = ", sum(test2008$period, na.rm = T)/60/60/24))
+
+```
+
+```{r interrannual-fluxes-measured}
+yf <- yearly_fluxes
+
+mixedfluxes_mean <- with(yf, ifelse(nb_days_sampled_doc < 200, fdoc_ww_kg.year.km2, fdoc_kg.year.km2)) %>% mean(na.rm = T)
+mixedfluxes_sd <- with(yf, ifelse(nb_days_sampled_doc < 200, fdoc_ww_kg.year.km2, fdoc_kg.year.km2)) %>% sd(na.rm = T)
+
+means <- data.frame(
+  "Mean fdoc sum, kg/year/m2" = mean(yf$fdoc_kg.year.km2),
+  "Sd fdoc sum" = sd(yf$fdoc_kg.year.km2),
+  "Mean fdoc weighted, kg/m2/year" = mean(yf$fdoc_ww_kg.year.km2, na.rm = T),
+  "Sd fdoc weighted" = sd(yf$fdoc_ww_kg.year.km2, na.rm = T),
+    "Mean fdoc mixed" = mixedfluxes_mean,
+  "Sd fdoc mixed" = mixedfluxes_sd
+)
+
+knitr::kable(t(means), digits = 3) %>% kableExtra::kable_styling()
+```
