@@ -228,6 +228,14 @@ reticulate::py_install("fabdem", pip = TRUE)
 
 ```
 
+```{r check-epsg-cameroun-tunisie}
+bbox <- st_bbox(bassins_hors_france[3,])
+lon_moyenne <- (bbox["xmin"] + bbox["xmax"]) / 2
+zone_utm <- floor((lon_moyenne + 180) / 6) + 1
+zone_utm
+```
+
+
 ```{r crs-territoires}
 library(sf); library(terra); library(exactextractr); library(dplyr); library(happign); library(reticulate)
 
@@ -368,15 +376,157 @@ resultats_bassins_guadeloupe <- bind_rows(resultats_bassins_guadeloupe) %>% cbin
 bassins_hors_france <- filter(bassins_wgs84_valid, territoire == "hors_France")
 
 
+
 library(elevatr)
 mnt_srtm <- get_elev_raster(bassins_hors_france, z = 12, src = "aws")  # SRTM/AW3D via AWS # 15 is maximum zoom
 
-res_hors_france <- extraire_stats(mnt_srtm, bassins_hors_france) %>% cbind(bassins_hors_france[,c("Name", "Station","Obs")])
+res_hors_france <- extraire_stats(mnt_srtm, bassins_hors_france) %>% mutate(resolution_utilisee = 30, source = "elevatr") %>% cbind(bassins_hors_france[,c("Name", "Station","Obs")])
 
 ```
 
 ```{r fusion}
 dem_wp1 <- bind_rows(resultats_bassins, resultats_bassins_guadeloupe,res_hors_france)
-write.csv(dem_wp1, "dem_wp1.csv", row.names = FALSE)
+write.csv(dem_wp1, "DEM/dem_wp1.csv", row.names = FALSE)
 ```
+
+# Pédologie
+
+## Préparation des données 
+
+```{r metadata-hwsd}
+sf::st_layers("Pédologie/HWSD2_DB/HWSD2.mdb")
+
+smu_table <- st_read("Pédologie/HWSD2_DB/HWSD2.mdb", layer = "HWSD2_SMU")       # à ajuster selon le nom exact
+symbol_table <- st_read("Pédologie/HWSD2_DB/HWSD2.mdb", layer = "D_FAO90")   # idem
+
+# Convertir en data.frame classique (pas de géométrie dans ces tables attributaires)
+smu_table <- as.data.frame(smu_table)
+
+
+correspondance_fao <- smu_table %>%
+  distinct(FAO90) %>%
+  arrange(FAO90) %>%
+  mutate(code_fao90 = row_number())
+
+smu_table <- smu_table %>%
+  left_join(correspondance_fao, by = "FAO90")
+
+hwsd <- rast("Pédologie/HWSD2_RASTER/HWSD2.bil")
+
+m <- as.matrix(smu_table[, c("HWSD2_SMU_ID", "code_fao90")])
+hwsd_fao <- classify(hwsd, m)
+saveRDS(hwsd_fao, "Pédologie/hwsd_fao.rds")
+```
+
+```{r extraction}
+resultats_sol <- tibble::tibble(
+  Name = bassins_wgs84_valid$Name,
+  Station = bassins_wgs84_valid$Station,
+  Obs = bassins_wgs84_valid$Obs,
+  code_fao90_dominant = exact_extract(hwsd_fao, bassins_wgs84_valid, "majority")
+)
+
+resultats_sol <- resultats_sol %>%
+  merge(correspondance_fao, by.x = "code_fao90_dominant", by.y = "code_fao90")
+write.csv(resultats_sol, "Pédologie/resultat_sols.csv")
+```
+
+# Lithologie
+
+```{r read-shp-lith}
+LiMW <- st_read("Lithologie/LiMW_Carbonium.shp")
+
+# Metropole
+geol_france <- st_read("Lithologie/geol_france_metro.shp") %>% st_transform(st_crs(bassins_france_proj))
+intersection_france <- st_intersection(bassins_france_proj, geol_france)
+
+# 2. Calcul de la surface de chaque morceau d'intersection
+intersection_france$surface_part <- st_area(intersection_france)
+
+# 3. Pour chaque bassin, sommer la surface par classe, puis garder la classe majoritaire
+litho_france_1 <- intersection_france %>%
+  st_drop_geometry() %>%
+  group_by(Name, Station, Obs, xx) %>%
+  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
+  group_by(Name, Station, Obs) %>%
+  slice_max(surface_totale, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(Name, Station, Obs, classe_dominante = xx)
+
+litho_france_2 <- intersection_france %>%
+  st_drop_geometry() %>%
+  group_by(Name, Station, Obs, xx) %>%
+  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
+  group_by(Name, Station, Obs) %>%
+  slice_max(surface_totale, n = 2, with_ties = FALSE) %>%
+  slice(2) %>%              # garde uniquement la 2e ligne (2e rang) de chaque groupe
+  ungroup() %>%
+  select(Name, Station, Obs, classe_2 = xx)
+
+litho_france <- merge(litho_france_1, litho_france_2, by = c("Name","Station","Obs"), all.x =T)
+
+
+# Guadeloupe
+geol_guadeloupe <- st_read("Lithologie/geol_guadeloupe.shp") %>% st_transform(st_crs(bassins_guadeloupe_proj))
+intersection_guadeloupe <- st_intersection(bassins_guadeloupe_proj, geol_guadeloupe)
+
+# 2. Calcul de la surface de chaque morceau d'intersection
+intersection_guadeloupe$surface_part <- st_area(intersection_guadeloupe)
+
+# 3. Pour chaque bassin, sommer la surface par classe, puis garder la classe majoritaire
+litho_guadeloupe_1 <- intersection_guadeloupe %>%
+  st_drop_geometry() %>%
+  group_by(Name, Station, Obs, xx) %>%
+  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
+  group_by(Name, Station, Obs) %>%
+  slice_max(surface_totale, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(Name, Station, Obs, classe_dominante = xx)
+
+litho_guadeloupe_2 <- intersection_guadeloupe %>%
+  st_drop_geometry() %>%
+  group_by(Name, Station, Obs, xx) %>%
+  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
+  group_by(Name, Station, Obs) %>%
+  slice_max(surface_totale, n = 2, with_ties = FALSE) %>%
+  slice(2) %>%              # garde uniquement la 2e ligne (2e rang) de chaque groupe
+  ungroup() %>%
+  select(Name, Station, Obs, classe_2 = xx)
+
+litho_guadeloupe <- merge(litho_guadeloupe_1, litho_guadeloupe_2, by = c("Name","Station","Obs"), all.x = T)
+
+
+# Cameroun
+geol_cameroun <- st_read("Lithologie/geol_cameroun.shp") %>% st_transform(st_crs(bassins_hors_france_proj))
+intersection_cameroun <- st_intersection(bassins_hors_france_proj, geol_cameroun)
+
+# 2. Calcul de la surface de chaque morceau d'intersection
+intersection_cameroun$surface_part <- st_area(intersection_cameroun)
+
+# 3. Pour chaque bassin, sommer la surface par classe, puis garder la classe majoritaire
+litho_cameroun_1 <- intersection_cameroun %>%
+  st_drop_geometry() %>%
+  group_by(Name, Station, Obs, xx) %>%
+  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
+  group_by(Name, Station, Obs) %>%
+  slice_max(surface_totale, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(Name, Station, Obs, classe_dominante = xx)
+
+litho_cameroun_2 <- intersection_cameroun %>%
+  st_drop_geometry() %>%
+  group_by(Name, Station, Obs, xx) %>%
+  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
+  group_by(Name, Station, Obs) %>%
+  slice_max(surface_totale, n = 2, with_ties = FALSE) %>%
+  slice(2) %>%              # garde uniquement la 2e ligne (2e rang) de chaque groupe
+  ungroup() %>%
+  select(Name, Station, Obs, classe_2 = xx)
+
+litho_cameroun <- merge(litho_cameroun_1, litho_cameroun_2, by = c("Name","Station","Obs"), all.x = T)
+
+litho_wp1 <- rbind(litho_france, litho_guadeloupe) %>% rbind(litho_cameroun)
+
+```
+
 
