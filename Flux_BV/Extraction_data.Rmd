@@ -1,0 +1,382 @@
+---
+title: "Extraction données bassins versants"
+author: "CamilMC"
+date: "2026-07-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, eval = F}
+install.packages(c("terra", "sf", "exactextractr", "dplyr", "tidyr"))
+```
+
+```{r libraries}
+library(terra)
+library(ncdf4)
+library(sf)
+library(exactextractr)
+library(dplyr)
+library(tidyr)
+library(happign)
+library(reticulate)
+library(readxl)
+
+```
+
+# Bassins versants
+
+```{r load-bassins}
+bassins <- st_read("BV/BV_WP1_v1.shp")   # ou .shp
+
+info <- read_xlsx("../Etat_des_lieux_260506.xlsx", sheet = "Export_bv") %>% unique()
+
+parse_annees <- function(chaine) {
+  # Séparer sur la virgule
+  elements <- strsplit(chaine, ",")[[1]]
+  elements <- trimws(elements)  # enlever espaces éventuels
+  
+  # Pour chaque élément, dérouler si ":" présent, sinon garder tel quel
+  vecteur <- unlist(lapply(elements, function(e) {
+    if (grepl(":", e)) {
+      bornes <- as.numeric(strsplit(e, ":")[[1]])
+      seq(bornes[1], bornes[2])
+    } else {
+      as.numeric(e)
+    }
+  }))
+  
+  return(vecteur)
+}
+
+
+info$years <- lapply(info$years, parse_annees)
+
+```
+
+
+# ERA 5 
+
+Données téléchargées depuis https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels-monthly-means?tab=overview
+
+A comparer avec données pluvio Isère / Galabre et moyennes de BV Fabien Seve.
+
+## Precip
+
+
+```{r data-precip}
+# --- 1. Charger le NetCDF ERA5 ---
+sds(rast("ERA5/aec7517ff65614f8b538ee000cfe3eb2/data_stream-moda_stepType-avgad.nc"))  # liste les variables disponibles
+
+# Charger la variable de précipitation
+r <- rast("ERA5/aec7517ff65614f8b538ee000cfe3eb2/data_stream-moda_stepType-avgad.nc", subds = "tp")
+
+library(ncdf4)
+nc <- nc_open("ERA5/aec7517ff65614f8b538ee000cfe3eb2/data_stream-moda_stepType-avgad.nc")
+vt <- ncvar_get(nc, "valid_time")
+dates <- as.POSIXct(vt, origin = "1970-01-01", tz = "UTC")
+nc_close(nc)
+
+
+# Associer les dates du ncdf au raster
+time(r) <- dates
+names(r) <- format(dates, "%Y-%m-%d") 
+
+
+# Transform le crs des bassins pour l'adapter au raster
+
+bassins <- st_transform(bassins, crs(r))       # aligner les CRS
+
+bassins_shifted <- st_shift_longitude(bassins)
+
+bassins_vect <- vect(bassins_shifted)
+
+# Vérifier que l'étendue coïncide (ERA5 est parfois en longitudes 0-360)
+
+ext(bassins_vect)
+ext(r)
+
+ # Extract
+
+result <- terra::extract(r, bassins_shifted, fun = mean, na.rm = TRUE) # moyenne sur le polygone, 1 valeur par mois
+result$Name <- bassins_shifted$Name
+result$Station <- bassins_shifted$Station
+```
+
+
+```{r mean-precip}
+
+all_precip <- merge(result, info, by = c("Name","Station"))
+
+
+# fonction pour calculer la moyenne sur les années concernées
+all_precip$mean_selected <- lapply(seq(nrow(all_precip)), function(i){
+  years_i <- all_precip$years[[i]]
+  cols_to_use <- lapply(years_i, grep,colnames(all_precip)) %>% unlist()
+  mean_precip <- rowMeans(all_precip[i,cols_to_use], na.rm = T)
+  return(mean_precip)
+}) %>% unlist()
+
+all_precip$mean_30y <- lapply(seq(nrow(all_precip)), function(i){
+  years_i <- c(max(all_precip$years[[i]])-30, max(all_precip$years[[i]]))
+  cols_to_use <- lapply(years_i, grep,colnames(all_precip)) %>% unlist()
+  mean_precip <- rowMeans(all_precip[i,cols_to_use], na.rm = T)
+  return(mean_precip)
+}) %>% unlist()
+
+
+bassins_precip <- all_precip %>% select(c("Name","Station","Obs","years","mean_selected","mean_30y"))
+
+ggplot(bassins_precip, aes(x=mean_selected,y = mean_30y))+
+  geom_label(aes(label = Name, col = Name), size = 2)+
+  geom_abline(slope = 1, intercept = 0, linetype = 2) + theme_bw()+
+  theme(legend.position = "none")
+```
+
+
+Regarder le nombre de jours de pluie ? Définies par Gérémy et Nathan comme jours avec > 1mm de pluie (il faudrait prendre la réanalyse journalière et compter les jours)
+
+
+## temp
+
+
+```{r data-temp}
+# --- 1. Charger le NetCDF ERA5 ---
+sds(rast("ERA5/aec7517ff65614f8b538ee000cfe3eb2/data_stream-moda_stepType-avgua.nc"))  # liste les variables disponibles
+
+# Charger la variable de précipitation
+r_temp <- rast("ERA5/aec7517ff65614f8b538ee000cfe3eb2/data_stream-moda_stepType-avgua.nc", subds = "t2m")
+
+
+nc_temp <- nc_open("ERA5/aec7517ff65614f8b538ee000cfe3eb2/data_stream-moda_stepType-avgad.nc")
+vt_temp <- ncvar_get(nc_temp, "valid_time")
+dates_temp <- as.POSIXct(vt_temp, origin = "1970-01-01", tz = "UTC")
+nc_close(nc_temp)
+
+
+# Associer les dates du ncdf au raster
+time(r_temp) <- dates
+names(r_temp) <- format(dates_temp, "%Y-%m-%d") 
+
+
+# Transform le crs des bassins pour l'adapter au raster
+
+bassins_temp <- st_transform(bassins, crs(r_temp))       # aligner les CRS
+
+bassins_temp_shifted <- st_shift_longitude(bassins_temp)
+
+bassins_temp_vect <- vect(bassins_temp_shifted)
+
+# Vérifier que l'étendue coïncide (ERA5 est parfois en longitudes 0-360)
+
+ext(bassins_temp_vect)
+ext(r_temp)
+
+ # Extract
+
+result_temp <- terra::extract(r_temp, bassins_temp_shifted, fun = mean, na.rm = TRUE) # moyenne sur le polygone, 1 valeur par mois
+result_temp$Name <- bassins_temp_shifted$Name
+result_temp$Station <- bassins_temp_shifted$Station
+```
+
+
+```{r mean-temp}
+
+all_temp <- merge(result_temp, info, by = c("Name","Station"))
+
+
+# fonction pour calculer la moyenne sur les années concernées
+all_temp$mean_selected <- lapply(seq(nrow(all_temp)), function(i){
+  years_i <- all_temp$years[[i]]
+  cols_to_use <- lapply(years_i, grep,colnames(all_temp)) %>% unlist()
+  mean_temp <- rowMeans(all_temp[i,cols_to_use], na.rm = T)
+  return(mean_temp)
+}) %>% unlist()
+
+all_temp$mean_30y <- lapply(seq(nrow(all_temp)), function(i){
+  years_i <- c(max(all_temp$years[[i]])-30, max(all_temp$years[[i]]))
+  cols_to_use <- lapply(years_i, grep,colnames(all_temp)) %>% unlist()
+  mean_temp <- rowMeans(all_temp[i,cols_to_use], na.rm = T)
+  return(mean_temp)
+}) %>% unlist()
+
+
+bassins_temp <- all_temp %>% select(c("Name","Station","Obs","years","mean_selected","mean_30y"))
+
+ggplot(bassins_temp, aes(x=mean_selected,y = mean_30y))+
+  geom_label(aes(label = Name, col = Name), size = 2)+
+  geom_abline(slope = 1, intercept = 0, linetype = 2) + theme_bw() +
+  theme(legend.position = "none")
+```
+
+
+
+
+# Code pour pente et altitude à partir de Copernicus GLO-30 et Happign
+
+https://portal.opentopography.org/raster?opentopoID=OTSDEM.032021.4326.3
+
+https://paul-carteron.github.io/happign/
+
+https://gee-community-catalog.org/projects/fabdem/ GLO-30 sans les arbres
+
+```{r fabdem, eval = F}
+# Pour FABDEM (une seule fois)
+reticulate::py_install("fabdem", pip = TRUE)
+
+```
+
+```{r crs-territoires}
+library(sf); library(terra); library(exactextractr); library(dplyr); library(happign); library(reticulate)
+
+# CRS légaux par territoire (nécessaires pour happign/RGE ALTI)
+territoires <- tibble::tribble(
+  ~territoire,   ~epsg, ~lon_min, ~lon_max, ~lat_min, ~lat_max,
+  "metropole",    2154,     -5.5,     10.0,     41.0,     51.5,
+  "guadeloupe",   5490,    -61.9,    -60.9,     15.8,     16.6,
+  "martinique",   5490,    -61.3,    -60.7,     14.3,     15.0,
+  "guyane",       2972,    -54.6,    -51.5,      2.0,      5.9,
+  "reunion",      2975,     55.1,     55.9,    -21.5,    -20.8,
+  "mayotte",      4471,     45.0,     45.4,    -13.1,    -12.5
+)
+
+# Fonction d'assignation par centroïde (WGS84)
+assigner_territoire <- function(centroids_wgs84) {
+  lon <- st_coordinates(centroids_wgs84)[,1]
+  lat <- st_coordinates(centroids_wgs84)[,2]
+  terr <- rep(NA_character_, length(lon))
+  for (i in seq_len(nrow(territoires))) {
+    t <- territoires[i, ]
+    idx <- lon >= t$lon_min & lon <= t$lon_max & lat >= t$lat_min & lat <= t$lat_max
+    terr[idx] <- t$territoire
+  }
+  terr[is.na(terr)] <- "hors_France"
+  terr
+}
+
+
+```
+
+```{r bassins}
+
+bassins_wgs84 <- st_transform(bassins, 4326)
+bassins_wgs84_valid <- st_make_valid(bassins_wgs84)
+bassins_wgs84_centroid <- st_centroid(bassins_wgs84_valid)
+bassins_wgs84_valid$territoire <- assigner_territoire(bassins_wgs84_centroid)
+
+table(bassins_wgs84_valid$territoire)  # vérifier la répartition
+```
+
+
+```{r extraction-pente-altitude}
+extraire_stats <- function(mnt, polygones, id_col = "nom_bassin") {
+  pente <- terrain(mnt, v = "slope", unit = "degrees", neighbors = 8)
+  tibble::tibble(
+    !!id_col := polygones[[id_col]],
+    altitude_moyenne = exact_extract(mnt,   polygones, "mean"),
+    altitude_max      = exact_extract(mnt,   polygones, "max"),
+    pente_moyenne     = exact_extract(pente, polygones, "mean"),
+    pente_max         = exact_extract(pente, polygones, "max")
+  )
+}
+
+calc_res_adaptee <- function(bbox, max_pixels = 4000) {
+  largeur <- bbox["xmax"] - bbox["xmin"]
+  hauteur <- bbox["ymax"] - bbox["ymin"]
+  res_min <- max(largeur, hauteur) / max_pixels
+  ceiling(res_min)   # arrondi au mètre supérieur
+}
+
+```
+
+```{r traitement}
+layers_metadata <- get_layers_metadata("wms-r", "altimetrie")
+dem_layer <- "ELEVATION.ELEVATIONGRIDCOVERAGE"
+```
+
+```{r essai-resolution-adaptee-france}
+bassins_france <- filter(bassins_wgs84_valid, territoire == "metropole")
+
+epsg_france <- 2154
+bassins_france_proj <- st_transform(bassins_france, epsg_france)
+
+### tout intégré
+resultats_bassins <- list()
+
+for (i in seq_len(nrow(bassins_france_proj))) {
+  bassin_i <- bassins_france_proj[i, ]
+  bbox_i <- st_bbox(bassin_i)
+  res_i <- calc_res_adaptee(bbox_i, max_pixels = 3000)
+  
+  mnt_i <- get_wms_raster(
+    x     = bassin_i,
+    layer = dem_layer,
+    res   = res_i,
+    crs   = epsg_france,
+    rgb   = FALSE
+  )
+  
+  res <- extraire_stats(mnt_i, bassin_i) %>%
+    mutate(resolution_utilisee = res_i, source = "IGN_RGE_ALTI")
+  
+  resultats_bassins[[i]] <- res
+}
+
+resultats_bassins <- bind_rows(resultats_bassins) %>% cbind(bassins_france[,c("Name", "Station","Obs")])
+
+```
+
+```{r resolution-adaptee-guadeloupe}
+bassins_guadeloupe <- filter(bassins_wgs84_valid, territoire == "guadeloupe")
+
+epsg_guadeloupe <- 5490
+bassins_guadeloupe_proj <- st_transform(bassins_guadeloupe, epsg_guadeloupe)
+
+### tout intégré
+resultats_bassins_guadeloupe <- list()
+
+for (i in seq_len(nrow(bassins_guadeloupe_proj))) {
+  bassin_i <- bassins_guadeloupe_proj[i, ]
+  bbox_i <- st_bbox(bassin_i)
+  res_i <- calc_res_adaptee(bbox_i, max_pixels = 3000)
+  
+  mnt_i <- get_wms_raster(
+    x     = bassin_i,
+    layer = dem_layer,
+    res   = res_i,
+    crs   = epsg_guadeloupe,
+    rgb   = FALSE
+  )
+  
+  res <- extraire_stats(mnt_i, bassin_i) %>%
+    mutate(resolution_utilisee = res_i, source = "IGN_RGE_ALTI")
+  
+  resultats_bassins_guadeloupe[[i]] <- res
+}
+
+resultats_bassins_guadeloupe <- bind_rows(resultats_bassins_guadeloupe) %>% cbind(bassins_guadeloupe[,c("Name", "Station","Obs")])
+
+```
+
+
+
+
+```{r essai-elevatr-bassins-hors-france}
+
+bassins_hors_france <- filter(bassins_wgs84_valid, territoire == "hors_France")
+
+
+library(elevatr)
+mnt_srtm <- get_elev_raster(bassins_hors_france, z = 12, src = "aws")  # SRTM/AW3D via AWS # 15 is maximum zoom
+
+res_hors_france <- extraire_stats(mnt_srtm, bassins_hors_france) %>% cbind(bassins_hors_france[,c("Name", "Station","Obs")])
+
+```
+
+```{r fusion}
+dem_wp1 <- bind_rows(resultats_bassins, resultats_bassins_guadeloupe,res_hors_france)
+write.csv(dem_wp1, "dem_wp1.csv", row.names = FALSE)
+```
+

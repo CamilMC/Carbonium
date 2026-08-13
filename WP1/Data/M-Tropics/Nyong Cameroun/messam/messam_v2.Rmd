@@ -46,7 +46,7 @@ messam <- merge(debit, chimie, by = "Date", all = T) %>%
   mutate(
     year = year(Date),
     commondate = as.Date(update(Date, year = 2000)),
-  period = as.numeric(difftime(lead(Date), Date, units = "days")),
+  period = as.numeric(difftime(lead(Date), Date, units = "secs")),
   q_L.s = q_m3.s * 1e3
   )
 

@@ -31,7 +31,7 @@ library(here)
 
 ```{r bv}
 bv <- 11.1 # in Justin
-unit_flux = "kg"
+unit_flux = "ton"
 ```
 
 
@@ -46,10 +46,11 @@ brasdavid <- merge(debit, chimie, by = "DateHeure", all = T) %>%
     year = year(DateHeure),
     Date = as.Date(DateHeure),
     commondate = as.Date(update(DateHeure, year = 2000)),
-  period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "days")),
+  period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
   q_L.s = q_m3.s * 1e3
   )
 
+brasdavid$period[which(brasdavid$period > 300)] <- 300
 
 ```
 
@@ -92,7 +93,7 @@ brasdavid_complete <- brasdavid %>% subset(year %in% complete_years)
 
 Years to use for test of methods: `r cat(complete_years)`
 
-```{r plot-complete-years, fig.dim = c(10,15)}
+```{r plot-complete-years, fig.dim = c(10,10)}
 title <- expression(atop("Series of DOC and Q by year"))
 plots <- ggarrange(
 ggplot(subset(brasdavid_complete, year %in% complete_years), aes(x = commondate))+
@@ -191,12 +192,14 @@ q_meas <- matrix(brasdavid_doc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # rep
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
+period_mat <- matrix(brasdavid_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
+
 # Flux per time step
-load_kg.s_mat <- doc_mat*1e-6*q_mat # without period
+load_ton.s_mat <- doc_mat*1e-9*q_mat*period_mat
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(brasdavid_doc$year == y)}) # list of indices corresponding to each year
-sum_loadobs <- sapply(index_years, function(idx){apply(load_kg.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_ton.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
 
 sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
 
@@ -219,7 +222,7 @@ sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, 
 ```
 
 ```{r compute-flux-doc}
-annual_flux_kg.y <- sum_qtot*sum_loadobs/sum_qobs
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
 
 u_method <- (20-0.20*(summary_brasdavid$`DOCobs/Qobs, %`*100))/100 # déterminé dans avenelles_method 
 # add uncertainty due to method, based on % POCobs/Qobs and results 
@@ -228,11 +231,11 @@ print(u_method)
 
 flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = sd_by_year), nrow = nrep, ncol = length(complete_years))
 
-annual_flux_kg.y <- annual_flux_kg.y * (1 + flux_noise)
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
 
-annual_flux_pi <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
-annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
 
 annual_flux_df <- data.frame(year = complete_years, 
                         annual_flux_mean = annual_flux_mean, 
@@ -241,9 +244,9 @@ annual_flux_df <- data.frame(year = complete_years,
                         annual_flux_pi_upper = annual_flux_pi[3,])
 
 # Interannual flux 
-interannual_flux_kg.y <- rowMeans(annual_flux_kg.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_pi <- quantile(interannual_flux_kg.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean <- mean(interannual_flux_kg.y, na.rm = T) # mean interannual flux
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
 interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
 
 interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
@@ -282,7 +285,7 @@ ggplot()+
   geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
@@ -300,6 +303,11 @@ knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_sty
 
 ```
 
+```{r check-sum-load-doc}
+check <- brasdavid_complete %>% mutate(load = doc_mg.L*q_L.s*period) %>% group_by(year) %>% summarise(flux = sum(load, na.rm = T)*1e-9) %>% cbind(DOC.Q = filter(summary_brasdavid, year %in% complete_years)$`DOCobs/Qobs`) %>% mutate(average_flux = flux*(1/DOC.Q))
+
+knitr::kable(check, digits = 2, caption = "Check DOC flux with sum") %>% kable_styling()
+```
 
 ## Specific flux
 
@@ -314,7 +322,7 @@ ggplot()+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/km2/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/km2/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 

@@ -1,0 +1,46 @@
+---
+title: "Uncertainty on DOC"
+author: "CamilMC"
+date: "2026-05-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+```
+
+# DOC data
+
+```{r read-data}
+doc <- read_xlsx("TOC_cv.xlsx")
+```
+
+```{r model-cv}
+cv_lm <- lm(CV~Mean_TOC, data = subset(doc, CV > 0)) %>% summary()
+
+print(cv_lm)
+
+cv_fit <- nls(
+  CV ~ a*Mean_TOC^b,
+  data = subset(doc, CV >0),
+  start = list(a = coef(cv_lm)[[2]], b = coef(cv_lm)[[1]]), # on utilise les valeurs de pocfit comme coefficients initiaux
+)
+
+summary(cv_fit) %>% print()
+
+doc$cv_fitted <- predict(cv_fit,doc)
+
+ggplot(doc, aes(x = Mean_TOC))+
+  geom_point(aes(y = CV, col = "CV"))+geom_point(aes(y=cv_fitted, col = "fitted"))+
+  scale_color_viridis_d(end = 0.8)+
+  theme_minimal()
+```
+
+

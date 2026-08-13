@@ -46,7 +46,7 @@ digue <- merge(debit, chimie, by = "DateHeure", all = T) %>%
     year = year(DateHeure),
     Date = as.Date(DateHeure),
     commondate = as.Date(update(DateHeure, year = 2000)),
-  period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "days")),
+  period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
   q_L.s = q_m3.s * 1e3
   )
 
@@ -126,15 +126,15 @@ annotate_figure(plots, top = text_grob(title))
 
 ```{r summary-data}
 summary_digue <- merge(
-digue %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(round(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / ")),
-digue %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, m3/s" = paste(quantile(q_m3.s, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>% 
+digue %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(round(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / ")),
+digue %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, m3/s" = paste(round(quantile(q_m3.s, probs = c(0,0.5,1), na.rm = T),2), collapse = " / ")), by = "year", all = T) %>% 
   merge(digue %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
-  merge(digue %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_m3.s, use = "pairwise.complete.obs")),2), by = "year", all = T) %>%
+  merge(digue %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_m3.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
   rbind(c("All years", 
           dim(subset(digue, !is.na(doc_mg.L)))[1], 
-          paste(round(quantile(digue$doc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / "), 
+          paste(round(quantile(digue$doc_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
           dim(subset(digue, !is.na(q_m3.s)))[1], 
-          paste(quantile(digue$q_m3.s, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          paste(round(quantile(digue$q_m3.s, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
           length(unique(digue$Date)),
           round(cor(digue$doc_mg.L, digue$q_m3.s, use = "pairwise.complete.obs" ),2)
           )) %>%
@@ -142,7 +142,7 @@ digue %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% summarise("Number of Q o
           dim(subset(digue_complete, !is.na(doc_mg.L)))[1],
           paste(quantile(digue_complete$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "),
           dim(subset(digue_complete, !is.na(q_m3.s)))[1],
-          paste(quantile(digue_complete$q_m3.s, probs = c(0,0.5,1), na.rm = T), collapse = " / "),
+          paste(round(quantile(digue_complete$q_m3.s, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "),
           length(unique(digue_complete$Date)),
           round(cor(digue_complete$doc_mg.L, digue_complete$q_m3.s, use = "pairwise.complete.obs" ),2)
           )
@@ -192,8 +192,10 @@ q_meas <- matrix(digue_doc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
+  period_mat <- matrix(digue_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
+
 # Flux per time step
-load_kg.s_mat <- doc_mat*1e-6*q_mat # without period
+load_kg.s_mat <- doc_mat*1e-6*q_mat*period_mat
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(digue_doc$year == y)}) # list of indices corresponding to each year
@@ -302,7 +304,11 @@ ggplot()+
 knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 
 ```
+```{r check-sum-load-doc}
+check <- digue_complete %>% mutate(load = doc_mg.L*q_L.s*period) %>% group_by(year) %>% summarise(flux = sum(load, na.rm = T)*1e-6) %>% cbind(DOC.Q = filter(summary_digue, year %in% complete_years)$`DOCobs/Qobs`) %>% mutate(average_flux = flux*(1/DOC.Q))
 
+knitr::kable(check, digits = 2, caption = "Check DOC flux with sum") %>% kable_styling()
+```
 
 ## Specific flux
 

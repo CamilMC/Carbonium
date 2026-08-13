@@ -190,8 +190,10 @@ q_meas <- matrix(versaud_doc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repea
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
+period_mat <- matrix(versaud_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
+
 # Flux per time step
-load_kg.s_mat <- doc_mat*1e-6*q_mat # without period
+load_kg.s_mat <- doc_mat*1e-6*q_mat*period_mat
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(versaud_doc$year == y)}) # list of indices corresponding to each year
@@ -296,6 +298,12 @@ ggplot()+
 
 knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 
+```
+
+```{r check-sum-load-doc}
+check <- versaud_complete %>% mutate(load = doc_mg.L*q_L.s*period) %>% group_by(year) %>% summarise(flux = sum(load, na.rm = T)*1e-6) %>% cbind(DOC.Q = filter(summary_versaud, year %in% complete_years)$`DOCobs/Qobs`) %>% mutate(average_flux = flux*(1/DOC.Q))
+
+knitr::kable(check, digits = 2, caption ="Check flux with sum") %>% kable_styling()
 ```
 
 ## Specific flux doc

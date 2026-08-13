@@ -1,5 +1,5 @@
 ---
-title: "isere"
+title: "Isere à Beaumont"
 output:
   html_document:
     toc: true
@@ -14,14 +14,62 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.alig
                       cache = F)
 ```
 
+
 ```{r libraries}
-library(ggplot2)
-library(dplyr)
-library(readxl)
-library(lubridate)
-library(knitr)
-library(kableExtra)
-library(imputeTS)
+lapply(c("dplyr"), library, character.only = T)
+lapply(c("ggplot2","ggpubr"), library, character.only = T)
+lapply(c("lubridate"), library, character.only = T)
+lapply(c("knitr","kableExtra"), library, character.only = T)
+lapply(c("readxl","writexl"), library, character.only = T)
+library(here)
+
+```
+
+
+# Data
+
+## Get data
+
+```{r bv-km2}
+bv <- 11800
+unit_flux = "t"
+```
+
+
+```{r prepare-data}
+
+cmes <- readxl::read_xlsx(path = "isere.xlsx", sheet = "CMES", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+poc <- readxl::read_xlsx(path = "isere.xlsx", sheet = "POC") %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
+
+poc$poc_timeinterval <- poc$Debut %--% poc$Fin
+poc$poc_g.kg <- as.numeric(poc$poc_g.kg)
+
+debit <- readxl::read_xlsx(path = "isere.xlsx", sheet = "Débit") %>% 
+        mutate(Statut = NULL, Méthode = NULL, Continuité = NULL) %>% 
+        setNames(c("DateHeure","q_m3.s", "Qualification")) 
+
+na_interval <- poc$Fin[85] %--% poc$Debut[1]  %>% as.character()
+
+debit_timeinterval <- sapply(debit$DateHeure, FUN = function (x){as.character(poc$poc_timeinterval[x >= poc$Debut & x <= poc$Fin])}, simplify = T)
+na_timeinterval <- which(lengths(debit_timeinterval) == 0)
+debit_timeinterval[na_timeinterval] <- na_interval
+
+debit$poc_timeinterval <- do.call(c, (debit_timeinterval))
+
+isere <- merge(debit, cmes, by = "DateHeure", all = T) %>% merge(poc, by = "poc_timeinterval", all = T) %>% unique()
+
+
+
+isere <- isere %>% mutate(
+  year = year(Date),
+  commondate = as.Date(update(DateHeure, year = 2000)),
+  periodj = end-start, # donne la périod en heure
+  periods = periodj*60*60,
+  poc_mg.L = poc_umol.L*1e-3/12.011,
+  poc_percent = poc_mg.L/mes_mg.L,
+  q_L.s <- arles$q_m3.s * 1e3)
+
 ```
 
 # Get data
