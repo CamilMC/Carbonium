@@ -9,10 +9,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r packages, eval = F}
-install.packages(c("terra", "sf", "exactextractr", "dplyr", "tidyr"))
-```
-
 ```{r libraries}
 library(terra)
 library(ncdf4)
@@ -24,6 +20,7 @@ library(happign)
 library(reticulate)
 library(readxl)
 
+library(ggplot2)
 ```
 
 # Bassins versants
@@ -55,7 +52,65 @@ parse_annees <- function(chaine) {
 info$years <- lapply(info$years, parse_annees)
 
 ```
+```{r crs-territoires}
+library(sf); library(terra); library(exactextractr); library(dplyr); library(happign); library(reticulate)
 
+# CRS légaux par territoire (nécessaires pour happign/RGE ALTI)
+territoires <- tibble::tribble(
+  ~territoire,   ~epsg, ~lon_min, ~lon_max, ~lat_min, ~lat_max,
+  "metropole",    2154,     -5.5,     10.0,     41.0,     51.5,
+  "guadeloupe",   5490,    -61.9,    -60.9,     15.8,     16.6,
+  "martinique",   5490,    -61.3,    -60.7,     14.3,     15.0,
+  "guyane",       2972,    -54.6,    -51.5,      2.0,      5.9,
+  "reunion",      2975,     55.1,     55.9,    -21.5,    -20.8,
+  "mayotte",      4471,     45.0,     45.4,    -13.1,    -12.5
+)
+
+# Fonction d'assignation par centroïde (WGS84)
+assigner_territoire <- function(centroids_wgs84) {
+  lon <- st_coordinates(centroids_wgs84)[,1]
+  lat <- st_coordinates(centroids_wgs84)[,2]
+  terr <- rep(NA_character_, length(lon))
+  for (i in seq_len(nrow(territoires))) {
+    t <- territoires[i, ]
+    idx <- lon >= t$lon_min & lon <= t$lon_max & lat >= t$lat_min & lat <= t$lat_max
+    terr[idx] <- t$territoire
+  }
+  terr[is.na(terr)] <- "hors_France"
+  terr
+}
+
+
+```
+
+```{r bassins}
+
+bassins_wgs84 <- st_transform(bassins, 4326)
+bassins_wgs84_valid <- st_make_valid(bassins_wgs84)
+bassins_wgs84_centroid <- st_centroid(bassins_wgs84_valid)
+bassins_wgs84_valid$territoire <- assigner_territoire(bassins_wgs84_centroid)
+
+bassins_france <- filter(bassins_wgs84_valid, territoire == "metropole")
+epsg_france <- 2154
+bassins_france_proj <- st_transform(bassins_france, epsg_france)
+
+bassins_guadeloupe <- filter(bassins_wgs84_valid, territoire == "guadeloupe")
+epsg_guadeloupe <- 5490
+bassins_guadeloupe_proj <- st_transform(bassins_guadeloupe, epsg_guadeloupe)
+
+bassins_hors_france <- filter(bassins_wgs84_valid, territoire == "hors_France")
+
+
+
+
+table(bassins_wgs84_valid$territoire)  # vérifier la répartition
+```
+```{r check-epsg-cameroun-tunisie}
+bbox <- st_bbox(bassins_hors_france[3,])
+lon_moyenne <- (bbox["xmin"] + bbox["xmax"]) / 2
+zone_utm <- floor((lon_moyenne + 180) / 6) + 1
+zone_utm
+```
 
 # ERA 5 
 
@@ -228,55 +283,6 @@ reticulate::py_install("fabdem", pip = TRUE)
 
 ```
 
-```{r check-epsg-cameroun-tunisie}
-bbox <- st_bbox(bassins_hors_france[3,])
-lon_moyenne <- (bbox["xmin"] + bbox["xmax"]) / 2
-zone_utm <- floor((lon_moyenne + 180) / 6) + 1
-zone_utm
-```
-
-
-```{r crs-territoires}
-library(sf); library(terra); library(exactextractr); library(dplyr); library(happign); library(reticulate)
-
-# CRS légaux par territoire (nécessaires pour happign/RGE ALTI)
-territoires <- tibble::tribble(
-  ~territoire,   ~epsg, ~lon_min, ~lon_max, ~lat_min, ~lat_max,
-  "metropole",    2154,     -5.5,     10.0,     41.0,     51.5,
-  "guadeloupe",   5490,    -61.9,    -60.9,     15.8,     16.6,
-  "martinique",   5490,    -61.3,    -60.7,     14.3,     15.0,
-  "guyane",       2972,    -54.6,    -51.5,      2.0,      5.9,
-  "reunion",      2975,     55.1,     55.9,    -21.5,    -20.8,
-  "mayotte",      4471,     45.0,     45.4,    -13.1,    -12.5
-)
-
-# Fonction d'assignation par centroïde (WGS84)
-assigner_territoire <- function(centroids_wgs84) {
-  lon <- st_coordinates(centroids_wgs84)[,1]
-  lat <- st_coordinates(centroids_wgs84)[,2]
-  terr <- rep(NA_character_, length(lon))
-  for (i in seq_len(nrow(territoires))) {
-    t <- territoires[i, ]
-    idx <- lon >= t$lon_min & lon <= t$lon_max & lat >= t$lat_min & lat <= t$lat_max
-    terr[idx] <- t$territoire
-  }
-  terr[is.na(terr)] <- "hors_France"
-  terr
-}
-
-
-```
-
-```{r bassins}
-
-bassins_wgs84 <- st_transform(bassins, 4326)
-bassins_wgs84_valid <- st_make_valid(bassins_wgs84)
-bassins_wgs84_centroid <- st_centroid(bassins_wgs84_valid)
-bassins_wgs84_valid$territoire <- assigner_territoire(bassins_wgs84_centroid)
-
-table(bassins_wgs84_valid$territoire)  # vérifier la répartition
-```
-
 
 ```{r extraction-pente-altitude}
 extraire_stats <- function(mnt, polygones, id_col = "nom_bassin") {
@@ -305,10 +311,7 @@ dem_layer <- "ELEVATION.ELEVATIONGRIDCOVERAGE"
 ```
 
 ```{r essai-resolution-adaptee-france}
-bassins_france <- filter(bassins_wgs84_valid, territoire == "metropole")
 
-epsg_france <- 2154
-bassins_france_proj <- st_transform(bassins_france, epsg_france)
 
 ### tout intégré
 resultats_bassins <- list()
@@ -337,10 +340,6 @@ resultats_bassins <- bind_rows(resultats_bassins) %>% cbind(bassins_france[,c("N
 ```
 
 ```{r resolution-adaptee-guadeloupe}
-bassins_guadeloupe <- filter(bassins_wgs84_valid, territoire == "guadeloupe")
-
-epsg_guadeloupe <- 5490
-bassins_guadeloupe_proj <- st_transform(bassins_guadeloupe, epsg_guadeloupe)
 
 ### tout intégré
 resultats_bassins_guadeloupe <- list()
@@ -372,11 +371,6 @@ resultats_bassins_guadeloupe <- bind_rows(resultats_bassins_guadeloupe) %>% cbin
 
 
 ```{r essai-elevatr-bassins-hors-france}
-
-bassins_hors_france <- filter(bassins_wgs84_valid, territoire == "hors_France")
-
-
-
 library(elevatr)
 mnt_srtm <- get_elev_raster(bassins_hors_france, z = 12, src = "aws")  # SRTM/AW3D via AWS # 15 is maximum zoom
 
@@ -410,7 +404,10 @@ correspondance_fao <- smu_table %>%
 
 smu_table <- smu_table %>%
   left_join(correspondance_fao, by = "FAO90")
+```
 
+
+```{r raster-hwsd}
 hwsd <- rast("Pédologie/HWSD2_RASTER/HWSD2.bil")
 
 m <- as.matrix(smu_table[, c("HWSD2_SMU_ID", "code_fao90")])
@@ -419,6 +416,8 @@ saveRDS(hwsd_fao, "Pédologie/hwsd_fao.rds")
 ```
 
 ```{r extraction}
+
+hwsd_fao <- readRDS("Pédologie/hwsd_fao.rds")
 resultats_sol <- tibble::tibble(
   Name = bassins_wgs84_valid$Name,
   Station = bassins_wgs84_valid$Station,
@@ -529,4 +528,540 @@ litho_wp1 <- rbind(litho_france, litho_guadeloupe) %>% rbind(litho_cameroun)
 
 ```
 
+# Land cover
 
+## Corine Land Cover (France métropolitaine)
+
+```{r get-corine}
+clc <- st_read("Land Cover/Corine Land Cover/U2006_CLC2000_V2020_20u1.gpkg")
+```
+
+
+```{r clc-francemetro}
+st_crs(bassins_france_proj)
+
+clc_france_proj <- st_transform(clc, st_crs(bassins_france_proj))
+
+bbox_bassins <- st_as_sfc(st_bbox(bassins_france_proj))
+clc_reduit <- st_filter(clc_france_proj, bbox_bassins, .predicate = st_intersects)
+clc_france <- st_intersection(clc_reduit, bassins_france_proj)
+
+clc_france$surface <- st_area(clc_france)
+
+landcover_francemetro <- clc_france |>
+  st_drop_geometry() |>
+  group_by(Name, Station, Obs, code_00) |>   # adaptez aux vrais noms de colonnes
+  summarise(surface_totale = sum(Area_Ha)) |>
+  group_by(Name,Station,Obs) |>
+  mutate(part = surface_totale / sum(surface_totale))
+
+
+clc_legend <- read_xlsx("Land Cover/Corine Land Cover/legend_clc.xlsx")
+
+landcover_francemetro$clc_category <- clc_legend$clc_category[match(landcover_francemetro$code_00, clc_legend$Code)]
+
+clc_wide <- landcover_francemetro %>% select(-c("surface_totale", "code_00")) %>%
+  group_by(Name,Station,Obs,clc_category) %>%
+  summarize(part = sum(part)) %>% pivot_wider(names_from = clc_category, values_from = part)
+
+clc_long <- pivot_longer(clc_wide, cols = unique(clc_legend$clc_category), names_to = "clc_category")
+
+clc_long$fullName <- with(clc_long, paste(Station, Name, sep = " , "))
+
+ggplot(clc_long) + geom_col(aes(x=fullName, y=value, fill=clc_category))+
+  scale_fill_manual(values= c("Agriculture" = "goldenrod2",
+                             "Bare" = "peachpuff4", 
+                             "Forest" = "springgreen4", 
+                             "Glaciers and snow" = "lightcyan3",
+                             "Grassland" = "darkolivegreen3",
+                             "Inland water" = "steelblue",
+                             "Marshes and bogs" = "navajowhite" ,
+                             "Urban" = "grey"))+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, h = 1 , v = 1))
+
+
+```
+
+```{r clc-francemetro}
+st_crs(bassins_france_proj)
+
+clc_france_proj <- st_transform(clc, st_crs(bassins_france_proj))
+
+bbox_bassins <- st_as_sfc(st_bbox(bassins_france_proj))
+clc_reduit <- st_filter(clc_france_proj, bbox_bassins, .predicate = st_intersects)
+clc_france <- st_intersection(clc_reduit, bassins_france_proj)
+
+clc_france$surface <- st_area(clc_france)
+
+landcover_francemetro <- clc_france |>
+  st_drop_geometry() |>
+  group_by(Name, Station, Obs, code_00) |>   # adaptez aux vrais noms de colonnes
+  summarise(surface_totale = sum(Area_Ha)) |>
+  group_by(Name,Station,Obs) |>
+  mutate(part = surface_totale / sum(surface_totale))
+
+
+clc_legend <- read_xlsx("Land Cover/Corine Land Cover/legend_clc.xlsx")
+
+landcover_francemetro$clc_category <- clc_legend$clc_category[match(landcover_francemetro$code_00, clc_legend$Code)]
+
+clc_francemetro_wide <- landcover_francemetro %>% select(-c("surface_totale", "code_00")) %>%
+  group_by(Name,Station,Obs,clc_category) %>%
+  summarize(part = sum(part)) %>% pivot_wider(names_from = clc_category, values_from = part)
+
+clc_francemetro_long <- pivot_longer(clc_francemetro_wide, cols = unique(clc_legend$clc_category), names_to = "clc_category")
+
+clc_francemetro_long$fullName <- with(clc_francemetro_long, paste(Name, Station, sep = " , "))
+
+ggplot(clc_francemetro_long) + geom_col(aes(x=fullName, y=value, fill=clc_category))+
+  scale_fill_manual(values= c("Agriculture" = "goldenrod2",
+                             "Bare" = "peachpuff4", 
+                             "Forest" = "springgreen4", 
+                             "Glaciers and snow" = "lightcyan3",
+                             "Grassland" = "darkolivegreen3",
+                             "Inland water" = "steelblue",
+                             "Marshes and bogs" = "navajowhite" ,
+                             "Urban" = "grey"))+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, h = 1 , v = 1))
+
+
+```
+
+```{r clc-guadeloupe}
+st_crs(bassins_guadeloupe_proj)
+
+clc_guadeloupe_proj <- st_transform(clc, st_crs(bassins_guadeloupe_proj))
+
+bbox_bassins_guadeloupe <- st_as_sfc(st_bbox(bassins_guadeloupe_proj))
+clc_reduit <- st_filter(clc_guadeloupe_proj, bbox_bassins_guadeloupe, .predicate = st_intersects)
+clc_guadeloupe <- st_intersection(clc_reduit, bassins_guadeloupe_proj)
+
+clc_guadeloupe$surface <- st_area(clc_guadeloupe)
+
+landcover_guadeloupe <- clc_guadeloupe |>
+  st_drop_geometry() |>
+  group_by(Name, Station, Obs, code_00) |>   # adaptez aux vrais noms de colonnes
+  summarise(surface_totale = sum(Area_Ha)) |>
+  group_by(Name,Station,Obs) |>
+  mutate(part = surface_totale / sum(surface_totale))
+
+
+clc_legend <- read_xlsx("Land Cover/Corine Land Cover/legend_clc.xlsx")
+
+landcover_guadeloupe$clc_category <- clc_legend$clc_category[match(landcover_guadeloupe$code_00, clc_legend$Code)]
+
+clc_wide <- landcover_guadeloupe %>% select(-c("surface_totale", "code_00")) %>%
+  group_by(Name,Station,Obs,clc_category) %>%
+  summarize(part = sum(part)) %>% pivot_wider(names_from = clc_category, values_from = part, values_fill = 0)
+
+clc_long <- pivot_longer(clc_wide, cols = unique(clc_legend$clc_category), names_to = "clc_category")
+
+clc_long$fullName <- with(clc_long, paste(Station, Name, sep = " , "))
+
+ggplot(clc_long) + geom_col(aes(x=fullName, y=value, fill=clc_category))+
+  scale_fill_manual(values= c("Agriculture" = "goldenrod2",
+                             "Bare" = "peachpuff4", 
+                             "Forest" = "springgreen4", 
+                             "Glaciers and snow" = "lightcyan3",
+                             "Grassland" = "darkolivegreen3",
+                             "Inland water" = "steelblue",
+                             "Marshes and bogs" = "navajowhite" ,
+                             "Urban" = "grey"))+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, h = 1 , v = 1))
+
+
+```
+
+
+
+## ESA WC
+
+### france metro
+
+```{r extraction-esa-francemetro}
+esawc_francemetro <- rast("Land Cover/World Cover ESA/esawc_francemetro.vrt")
+
+bassins_france_esa <- st_transform(bassins_france_proj, crs(esawc_francemetro))
+
+```
+
+```{r boucle-esa-francemetro-1-to-5}
+
+# Liste pour stocker uniquement les résumés (légers)
+resultats_wide <- vector("list", 5)
+
+for (i in seq_len(5)) {
+  
+  poly_i <- bassins_france_esa[i, ]
+  
+  resultats_wide[[i]] <- tryCatch({
+    
+    # Découpe + extraction pixel par pixel
+    r_crop <- crop(esawc_francemetro, poly_i)
+    extrait_i <- exact_extract(r_crop, poly_i, fun = NULL)[[1]]
+    
+    # Agrégation immédiate : surface totale par code d'occupation du sol
+    resume_i <- extrait_i |>
+      group_by(value) |>
+      summarise(surface_totale = sum(coverage_fraction), .groups = "drop") |>
+      mutate(
+        part_pct = surface_totale / sum(surface_totale) * 100,
+        Name = poly_i$Name,
+        Station = poly_i$Station,
+        Obs = poly_i$Obs
+      ) |>
+      select(Name, Station, Obs, value, part_pct) |>
+      pivot_wider(names_from = value, values_from = part_pct, values_fill = 0)
+    
+    # Nettoyage mémoire avant de passer au bassin suivant
+    rm(r_crop, extrait_i)
+    gc()
+    
+    cat("Bassin", i, "/", nrow(bassins_france_esa), 
+        "-", poly_i$Name, poly_i$Station, "OK\n")
+    
+    resume_i
+    
+  }, error = function(e) {
+    cat("Erreur bassin", i, poly_i$Name, ":", conditionMessage(e), "\n")
+    NULL
+  })
+}
+
+# Fusion finale : une ligne par bassin, une colonne par code d'occupation du sol
+esa_france_wide <- bind_rows(resultats_wide)
+```
+```{r boucle-esa-francemetro-6-to-10}
+
+# Liste pour stocker uniquement les résumés (légers)
+resultats_wide_4 <- vector("list", 1)
+
+for (i in 4) {
+  
+  poly_i <- bassins_france_esa[i, ]
+  
+  resultats_wide_4[[i]] <- tryCatch({
+    
+    # Découpe + extraction pixel par pixel
+    r_crop <- terra::crop(esawc_francemetro, poly_i)
+    extrait_i <- exact_extract(r_crop, poly_i, fun = NULL)[[1]]
+    
+    # Agrégation immédiate : surface totale par code d'occupation du sol
+    resume_i <- extrait_i |>
+      group_by(value) |>
+      summarise(surface_totale = sum(coverage_fraction), .groups = "drop") |>
+      mutate(
+        part_pct = surface_totale / sum(surface_totale) * 100,
+        Name = poly_i$Name,
+        Station = poly_i$Station,
+        Obs = poly_i$Obs
+      ) |>
+      select(Name, Station, Obs, value, part_pct) |>
+      pivot_wider(names_from = value, values_from = part_pct, values_fill = 0)
+    
+    # Nettoyage mémoire avant de passer au bassin suivant
+    rm(r_crop, extrait_i)
+    gc()
+    
+    cat("Bassin", i, "/", nrow(bassins_france_esa), 
+        "-", poly_i$Name, poly_i$Station, "OK\n")
+    
+    resume_i
+    
+  }, error = function(e) {
+    cat("Erreur bassin", i, poly_i$Name, ":", conditionMessage(e), "\n")
+    NULL
+  })
+}
+
+# Fusion finale : une ligne par bassin, une colonne par code d'occupation du sol
+esa_france_wide_6 <- bind_rows(resultats_wide_6)
+```
+
+```{r boucle-esa-francemetro-11-to-15}
+
+# Liste pour stocker uniquement les résumés (légers)
+resultats_wide_11 <- vector("list", 5)
+
+for (i in c(11:14)) {
+  
+  poly_i <- bassins_france_esa[i, ]
+  
+  resultats_wide_11[[i]] <- tryCatch({
+    
+    # Découpe + extraction pixel par pixel
+    r_crop <- crop(esawc_francemetro, poly_i)
+    extrait_i <- exact_extract(r_crop, poly_i, fun = NULL)[[1]]
+    
+    # Agrégation immédiate : surface totale par code d'occupation du sol
+    resume_i <- extrait_i |>
+      group_by(value) |>
+      summarise(surface_totale = sum(coverage_fraction), .groups = "drop") |>
+      mutate(
+        part_pct = surface_totale / sum(surface_totale) * 100,
+        Name = poly_i$Name,
+        Station = poly_i$Station,
+        Obs = poly_i$Obs
+      ) |>
+      select(Name, Station, Obs, value, part_pct) |>
+      pivot_wider(names_from = value, values_from = part_pct, values_fill = 0)
+    
+    # Nettoyage mémoire avant de passer au bassin suivant
+    rm(r_crop, extrait_i)
+    gc()
+    
+    cat("Bassin", i, "/", nrow(bassins_france_esa), 
+        "-", poly_i$Name, poly_i$Station, "OK\n")
+    
+    resume_i
+    
+  }, error = function(e) {
+    cat("Erreur bassin", i, poly_i$Name, ":", conditionMessage(e), "\n")
+    NULL
+  })
+}
+
+# Fusion finale : une ligne par bassin, une colonne par code d'occupation du sol
+esa_france_wide_11 <- bind_rows(resultats_wide_11)
+```
+
+```{r boucle-esa-francemetro-16-to-20}
+
+# Liste pour stocker uniquement les résumés (légers)
+resultats_wide_16 <- vector("list", 5)
+
+for (i in c(16:20)) {
+  
+  poly_i <- bassins_france_esa[i, ]
+  
+  resultats_wide_16[[i]] <- tryCatch({
+    
+    # Découpe + extraction pixel par pixel
+    r_crop <- crop(esawc_francemetro, poly_i)
+    extrait_i <- exact_extract(r_crop, poly_i, fun = NULL)[[1]]
+    
+    # Agrégation immédiate : surface totale par code d'occupation du sol
+    resume_i <- extrait_i |>
+      group_by(value) |>
+      summarise(surface_totale = sum(coverage_fraction), .groups = "drop") |>
+      mutate(
+        part_pct = surface_totale / sum(surface_totale) * 100,
+        Name = poly_i$Name,
+        Station = poly_i$Station,
+        Obs = poly_i$Obs
+      ) |>
+      select(Name, Station, Obs, value, part_pct) |>
+      pivot_wider(names_from = value, values_from = part_pct, values_fill = 0)
+    
+    # Nettoyage mémoire avant de passer au bassin suivant
+    rm(r_crop, extrait_i)
+    gc()
+    
+    cat("Bassin", i, "/", nrow(bassins_france_esa), 
+        "-", poly_i$Name, poly_i$Station, "OK\n")
+    
+    resume_i
+    
+  }, error = function(e) {
+    cat("Erreur bassin", i, poly_i$Name, ":", conditionMessage(e), "\n")
+    NULL
+  })
+}
+
+# Fusion finale : une ligne par bassin, une colonne par code d'occupation du sol
+esa_france_wide_16 <- bind_rows(resultats_wide_16)
+```
+
+```{r boucle-esa-francemetro-20-to-22}
+
+# Liste pour stocker uniquement les résumés (légers)
+resultats_wide_21 <- vector("list", 5)
+
+for (i in c(21:22)) {
+  
+  poly_i <- bassins_france_esa[i, ]
+  
+  resultats_wide[[i]] <- tryCatch({
+    
+    # Découpe + extraction pixel par pixel
+    r_crop <- crop(esawc_francemetro, poly_i)
+    extrait_i <- exact_extract(r_crop, poly_i, fun = NULL)[[1]]
+    
+    # Agrégation immédiate : surface totale par code d'occupation du sol
+    resume_i <- extrait_i |>
+      group_by(value) |>
+      summarise(surface_totale = sum(coverage_fraction), .groups = "drop") |>
+      mutate(
+        part_pct = surface_totale / sum(surface_totale) * 100,
+        Name = poly_i$Name,
+        Station = poly_i$Station,
+        Obs = poly_i$Obs
+      ) |>
+      select(Name, Station, Obs, value, part_pct) |>
+      pivot_wider(names_from = value, values_from = part_pct, values_fill = 0)
+    
+    # Nettoyage mémoire avant de passer au bassin suivant
+    rm(r_crop, extrait_i)
+    gc()
+    
+    cat("Bassin", i, "/", nrow(bassins_france_esa), 
+        "-", poly_i$Name, poly_i$Station, "OK\n")
+    
+    resume_i
+    
+  }, error = function(e) {
+    cat("Erreur bassin", i, poly_i$Name, ":", conditionMessage(e), "\n")
+    NULL
+  })
+}
+
+# Fusion finale : une ligne par bassin, une colonne par code d'occupation du sol
+esa_france_wide_21 <- bind_rows(resultats_wide_21)
+```
+
+Manque bassin 4 et 15
+
+
+### Guadeloupe
+
+```{r extraction-esa-guadeloupe}
+esawc_guadeloupe <- rast("Land Cover/World Cover ESA/esawc_guadeloupe.vrt")
+
+bassins_guadeloupe_esa <- st_transform(bassins_guadeloupe_proj, crs(esawc_guadeloupe))
+
+```
+
+```{r boucle-esa-guadeloupe}
+
+# Liste pour stocker uniquement les résumés (légers)
+resultats_wide <- vector("list", nrow(bassins_france_esa))
+
+for (i in seq_len(nrow(bassins_france_esa))) {
+  
+  poly_i <- bassins_france_esa[i, ]
+  
+  resultats_wide[[i]] <- tryCatch({
+    
+    # Découpe + extraction pixel par pixel
+    r_crop <- crop(esawc_guadeloupe, poly_i)
+    extrait_i <- exact_extract(r_crop, poly_i, fun = NULL)[[1]]
+    
+    # Agrégation immédiate : surface totale par code d'occupation du sol
+    resume_i <- extrait_i |>
+      group_by(value) |>
+      summarise(surface_totale = sum(coverage_fraction), .groups = "drop") |>
+      mutate(
+        part_pct = surface_totale / sum(surface_totale) * 100,
+        Name = poly_i$Name,
+        Station = poly_i$Station,
+        Obs = poly_i$Obs
+      ) |>
+      select(Name, Station, Obs, value, part_pct) |>
+      pivot_wider(names_from = value, values_from = part_pct, values_fill = 0)
+    
+    # Nettoyage mémoire avant de passer au bassin suivant
+    rm(r_crop, extrait_i)
+    gc()
+    
+    cat("Bassin", i, "/", nrow(bassins_guadeloupe_esa), 
+        "-", poly_i$Name, poly_i$Station, "OK\n")
+    
+    resume_i
+    
+  }, error = function(e) {
+    cat("Erreur bassin", i, poly_i$Name, ":", conditionMessage(e), "\n")
+    NULL
+  })
+}
+
+# Fusion finale : une ligne par bassin, une colonne par code d'occupation du sol
+esa_guadeloupe_wide <- bind_rows(resultats_wide)
+```
+
+### Faster ?
+
+```{r fonction}
+traiter_bassin <- function(poly_i, raster, degree = 0.5) {
+  # Si le bassin est petit, traitement direct
+  surface_km2 <- as.numeric(st_area(poly_i)) / 1e6
+  
+  if (surface_km2 < 5000) {
+    r_crop <- crop(raster, poly_i)
+    res <- exact_extract(r_crop, poly_i, fun = function(v, cf) tapply(cf, v, sum))
+    return(res)
+  }
+  
+  # Sinon, découpage en grille de tuiles
+  grille <- st_make_grid(poly_i, cellsize = degree)
+  grille <- st_intersection(st_as_sf(grille), poly_i)
+  # Extraire uniquement la composante polygonale de chaque géométrie
+  grille <- st_collection_extract(grille, "POLYGON")
+  # Retirer les géométries vides ou invalides résiduelles
+  grille <- grille[!st_is_empty(grille), ]
+  grille <- grille[st_area(grille) > units::set_units(0, "m^2"), ]  # retirer tuiles vides
+  
+  resultats_tuiles <- lapply(seq_len(nrow(grille)), function(j) {
+    tuile_j <- grille[j, ]
+    r_j <- crop(raster, tuile_j)
+    exact_extract(r_j, tuile_j, fun = function(v, cf) tapply(cf, v, sum))
+  })
+  
+  # Sommer toutes les tuiles (fusion des tapply results)
+  Reduce(function(a, b) {
+    codes <- union(names(a), names(b))
+    setNames(sapply(codes, function(c) 
+      (if (c %in% names(a)) a[[c]] else 0) + (if (c %in% names(b)) b[[c]] else 0)
+    ), codes)
+  }, resultats_tuiles)
+}
+```
+
+```{r boucle-esa-francemetro}
+
+# Liste pour stocker uniquement les résumés (légers)
+resultats_wide <- vector("list", nrow(bassins_france_esa))
+
+for (i in seq_len(nrow(bassins_france_esa))) {
+  
+  poly_i <- bassins_france_esa[i, ]
+  
+ resultats_wide[[i]] <- tryCatch({
+    
+    # Découpe + extraction pixel par pixel
+    r_crop <- crop(esawc_francemetro, poly_i)
+    extrait_i <- traiter_bassin(poly_i, r_crop)
+    
+    # Agrégation immédiate : surface totale par code d'occupation du sol
+    resume_i <- extrait_i |>
+      group_by(value) |>
+      summarise(surface_totale = sum(coverage_fraction), .groups = "drop") |>
+      mutate(
+        part_pct = surface_totale / sum(surface_totale) * 100,
+        Name = poly_i$Name,
+        Station = poly_i$Station,
+        Obs = poly_i$Obs
+      ) |>
+      select(Name, Station, Obs, value, part_pct) |>
+      pivot_wider(names_from = value, values_from = part_pct, values_fill = 0)
+    
+    # Nettoyage mémoire avant de passer au bassin suivant
+    rm(r_crop, extrait_i)
+    gc()
+    
+    cat("Bassin", i, "/", nrow(bassins_france_esa), 
+        "-", poly_i$Name, poly_i$Station, "OK\n")
+    
+    resume_i
+    
+  }, error = function(e) {
+    cat("Erreur bassin", i, poly_i$Name, ":", conditionMessage(e), "\n")
+    NULL
+  })
+}
+
+# Fusion finale : une ligne par bassin, une colonne par code d'occupation du sol
+esa_france_wide <- bind_rows(resultats_wide)
+```
