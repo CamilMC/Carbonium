@@ -616,6 +616,7 @@ write.csv(litho_wp1_long, "Lithologie/litho_wp1_long.csv")
 
 ```
 
+
 # Land cover
 
 ## Corine Land Cover (France métropolitaine)
