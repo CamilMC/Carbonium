@@ -22,12 +22,13 @@ library(readxl)
 library(writexl)
 
 library(ggplot2)
+library(corrplot)
 ```
 
 # Bassins versants
 
 ```{r load-bassins}
-bassins <- st_read("BV/BV_WP1_v2.shp")   # ou .shp
+bassins <- st_read("BV/BV_WP1_v3.shp")   # ou .shp
 
 info <- read_xlsx("../Etat_des_lieux_260506.xlsx", sheet = "Export_bv") %>% unique()
 
@@ -178,7 +179,7 @@ all_precip$mean.precip_selected <- lapply(seq(nrow(all_precip)), function(i){
 }) %>% unlist()
 
 all_precip$mean.precip_30y <- lapply(seq(nrow(all_precip)), function(i){
-  years_i <- c(max(all_precip$years[[i]])-30, max(all_precip$years[[i]]))
+  years_i <- seq(max(all_precip$years[[i]])-30 , max(all_precip$years[[i]]))
   cols_to_use <- lapply(years_i, grep,colnames(all_precip)) %>% unlist()
   mean_precip <- sum(all_precip[i,cols_to_use]*30.4, na.rm = T) / 30
   return(mean_precip)
@@ -192,7 +193,7 @@ all_precip$max.precip_selected <- lapply(seq(nrow(all_precip)), function(i){
 }) %>% unlist()
 
 all_precip$max.precip_30y <- lapply(seq(nrow(all_precip)), function(i){
-  years_i <- c(max(all_precip$years[[i]])-30, max(all_precip$years[[i]]))
+  years_i <- seq(max(all_precip$years[[i]])-30, max(all_precip$years[[i]]))
   cols_to_use <- lapply(years_i, grep,colnames(all_precip)) %>% unlist()
   mean_precip <- max(all_precip[i,cols_to_use]*30.4, na.rm = T)
   return(mean_precip)
@@ -206,14 +207,7 @@ write.csv(bassins_precip, "ERA5/bassins_precip.csv")
 ```
 
 
-```{r mean-precip-plot}
-bassins_precip <- read.csv("ERA5/bassins_precip.csv")
 
-ggplot(bassins_precip, aes(x=mean.precip_selected,y = mean.precip_30y))+
-  geom_label(aes(label = Name, col = Name), size = 2)+
-  geom_abline(slope = 1, intercept = 0, linetype = 2) + theme_bw()+
-  theme(legend.position = "none")
-```
 
 
 Regarder le nombre de jours de pluie ? Définies par Gérémy et Nathan comme jours avec > 1mm de pluie (il faudrait prendre la réanalyse journalière et compter les jours)
@@ -274,14 +268,27 @@ all_temp$mean.temp_selected <- lapply(seq(nrow(all_temp)), function(i){
 }) %>% unlist()
 
 all_temp$mean.temp_30y <- lapply(seq(nrow(all_temp)), function(i){
-  years_i <- c(max(all_temp$years[[i]])-30, max(all_temp$years[[i]]))
+  years_i <- seq(max(all_temp$years[[i]])-30, max(all_temp$years[[i]]))
   cols_to_use <- lapply(years_i, grep,colnames(all_temp)) %>% unlist()
   mean_temp <- rowMeans(all_temp[i,cols_to_use], na.rm = T)
   return(mean_temp)
 }) %>% unlist()
 
+all_temp$max.temp_selected <- lapply(seq(nrow(all_temp)), function(i){
+  years_i <- all_temp$years[[i]]
+  cols_to_use <- lapply(years_i, grep,colnames(all_temp)) %>% unlist()
+  mean_temp <- max(all_temp[i,cols_to_use]*30.4, na.rm = T)
+  return(mean_temp)
+}) %>% unlist()
 
-bassins_temp <- all_temp %>% select(c("Name","Station","Obs","years","mean.temp_selected","mean.temp_30y"))
+all_temp$max.temp_30y <- lapply(seq(nrow(all_temp)), function(i){
+  years_i <- seq(max(all_temp$years[[i]])-30, max(all_temp$years[[i]]))
+  cols_to_use <- lapply(years_i, grep,colnames(all_temp)) %>% unlist()
+  mean_temp <- max(all_temp[i,cols_to_use]*30.4, na.rm = T)
+  return(mean_temp)
+}) %>% unlist()
+
+bassins_temp <- all_temp %>% select(c("Name","Station","Obs","years","mean.temp_selected","mean.temp_30y","max.temp_selected","max.temp_30y")) %>% unique()
 bassins_temp$year_vec <- bassins_temp$years %>% paste()
 bassins_temp$years <- NULL
 
@@ -289,7 +296,7 @@ write.csv(bassins_temp, "ERA5/bassins_temp.csv")
 ```
 
 
-```{r mean-temp, eval = T}
+```{r mean-temp-visu, eval = T}
 bassins_temp <- read.csv("ERA5/bassins_temp.csv")
 
 ggplot(bassins_temp, aes(x=mean.temp_selected,y = mean.temp_30y))+
@@ -521,28 +528,23 @@ intersection_france <- st_intersection(bassins_france_proj, geol_france)
 # 2. Calcul de la surface de chaque morceau d'intersection
 intersection_france$surface_part <- st_area(intersection_france)
 
-# 3. Pour chaque bassin, sommer la surface par classe, puis garder la classe majoritaire
-litho_france_1 <- intersection_france %>%
+#3. litho en pourcentage par classe
+litho_france_pct <- intersection_france %>%
   st_drop_geometry() %>%
   group_by(Name, Station, Obs, xx) %>%
   summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
   group_by(Name, Station, Obs) %>%
-  slice_max(surface_totale, n = 1, with_ties = FALSE) %>%
+  mutate(surface_bv = sum(surface_totale),
+         pct_classe = as.numeric(surface_totale / surface_bv * 100)) %>%
   ungroup() %>%
-  select(Name, Station, Obs, classe_dominante = xx)
+  select(Name, Station, Obs, classe = xx, pct_classe)
 
-litho_france_2 <- intersection_france %>%
-  st_drop_geometry() %>%
-  group_by(Name, Station, Obs, xx) %>%
-  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
-  group_by(Name, Station, Obs) %>%
-  slice_max(surface_totale, n = 2, with_ties = FALSE) %>%
-  slice(2) %>%              # garde uniquement la 2e ligne (2e rang) de chaque groupe
-  ungroup() %>%
-  select(Name, Station, Obs, classe_2 = xx)
-
-litho_france <- merge(litho_france_1, litho_france_2, by = c("Name","Station","Obs"), all.x =T)
-
+litho_france_wide <- litho_france_pct %>%
+  pivot_wider(
+    names_from = classe,
+    values_from = pct_classe,
+    values_fill = 0
+  )
 
 # Guadeloupe
 geol_guadeloupe <- st_read("Lithologie/geol_guadeloupe.shp") %>% st_transform(st_crs(bassins_guadeloupe_proj))
@@ -551,27 +553,23 @@ intersection_guadeloupe <- st_intersection(bassins_guadeloupe_proj, geol_guadelo
 # 2. Calcul de la surface de chaque morceau d'intersection
 intersection_guadeloupe$surface_part <- st_area(intersection_guadeloupe)
 
-# 3. Pour chaque bassin, sommer la surface par classe, puis garder la classe majoritaire
-litho_guadeloupe_1 <- intersection_guadeloupe %>%
+#3. litho en pourcentage par classe
+litho_guadeloupe_pct <- intersection_guadeloupe %>%
   st_drop_geometry() %>%
   group_by(Name, Station, Obs, xx) %>%
   summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
   group_by(Name, Station, Obs) %>%
-  slice_max(surface_totale, n = 1, with_ties = FALSE) %>%
+  mutate(surface_bv = sum(surface_totale),
+         pct_classe = as.numeric(surface_totale / surface_bv * 100)) %>%
   ungroup() %>%
-  select(Name, Station, Obs, classe_dominante = xx)
+  select(Name, Station, Obs, classe = xx, pct_classe)
 
-litho_guadeloupe_2 <- intersection_guadeloupe %>%
-  st_drop_geometry() %>%
-  group_by(Name, Station, Obs, xx) %>%
-  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
-  group_by(Name, Station, Obs) %>%
-  slice_max(surface_totale, n = 2, with_ties = FALSE) %>%
-  slice(2) %>%              # garde uniquement la 2e ligne (2e rang) de chaque groupe
-  ungroup() %>%
-  select(Name, Station, Obs, classe_2 = xx)
-
-litho_guadeloupe <- merge(litho_guadeloupe_1, litho_guadeloupe_2, by = c("Name","Station","Obs"), all.x = T)
+litho_guadeloupe_wide <- litho_guadeloupe_pct %>%
+  pivot_wider(
+    names_from = classe,
+    values_from = pct_classe,
+    values_fill = 0
+  )
 
 
 # Cameroun
@@ -582,31 +580,39 @@ intersection_cameroun <- st_intersection(bassins_hors_france_proj, geol_cameroun
 # 2. Calcul de la surface de chaque morceau d'intersection
 intersection_cameroun$surface_part <- st_area(intersection_cameroun)
 
-# 3. Pour chaque bassin, sommer la surface par classe, puis garder la classe majoritaire
-litho_cameroun_1 <- intersection_cameroun %>%
+#3. litho en pourcentage par classe
+litho_cameroun_pct <- intersection_cameroun %>%
   st_drop_geometry() %>%
   group_by(Name, Station, Obs, xx) %>%
   summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
   group_by(Name, Station, Obs) %>%
-  slice_max(surface_totale, n = 1, with_ties = FALSE) %>%
+  mutate(surface_bv = sum(surface_totale),
+         pct_classe = as.numeric(surface_totale / surface_bv * 100)) %>%
   ungroup() %>%
-  select(Name, Station, Obs, classe_dominante = xx)
+  select(Name, Station, Obs, classe = xx, pct_classe)
 
-litho_cameroun_2 <- intersection_cameroun %>%
-  st_drop_geometry() %>%
-  group_by(Name, Station, Obs, xx) %>%
-  summarise(surface_totale = sum(surface_part), .groups = "drop") %>%
-  group_by(Name, Station, Obs) %>%
-  slice_max(surface_totale, n = 2, with_ties = FALSE) %>%
-  slice(2) %>%              # garde uniquement la 2e ligne (2e rang) de chaque groupe
-  ungroup() %>%
-  select(Name, Station, Obs, classe_2 = xx)
+litho_cameroun_wide <- litho_cameroun_pct %>%
+  pivot_wider(
+    names_from = classe,
+    values_from = pct_classe,
+    values_fill = 0
+  )
 
-litho_cameroun <- merge(litho_cameroun_1, litho_cameroun_2, by = c("Name","Station","Obs"), all.x = T)
 
-litho_wp1 <- rbind(litho_france, litho_guadeloupe) %>% rbind(litho_cameroun)
+# uniformisation des noms
+names(litho_france_wide)
 
-write.csv(litho_wp1, "Lithologie/litho_wp1.csv")
+litho_wp1_long <- rbind(litho_france_pct, litho_guadeloupe_pct) %>% rbind(litho_cameroun_pct)
+litho_wp1_wide <- litho_wp1_long %>%
+  pivot_wider(
+    names_from = classe,
+    values_from = pct_classe,
+    values_fill = 0
+  )
+
+
+write.csv(litho_wp1_wide, "Lithologie/litho_wp1_wide.csv")
+write.csv(litho_wp1_long, "Lithologie/litho_wp1_long.csv")
 
 ```
 
@@ -637,6 +643,13 @@ landcover_francemetro <- clc_france |>
   group_by(Name,Station,Obs) |>
   mutate(part = surface_totale / sum(surface_totale))
 
+
+write.csv(landcover_francemetro, "Land Cover/Corine Land Cover/landcover_francemetro.csv")
+```
+
+
+```{r clc-francemetro, eval = F}
+landcover_francemetro <- read.csv("Land Cover/Corine Land Cover/landcover_francemetro.csv")
 
 clc_legend <- read_xlsx("Land Cover/Corine Land Cover/legend_clc.xlsx")
 
@@ -1081,7 +1094,7 @@ write.csv(esa_guadeloupe_wide, "Land Cover/World Cover ESA/esa_guadeloupe_wide.c
 
 ### Cameroun
 
-```{r extraction-esa-cameroun}
+```{r extraction-esa-cameroun, eval = F}
 esawc_cameroun <- rast("Land Cover/World Cover ESA/esawc_cameroun.vrt")
 
 bassins_cameroun_esa <- st_transform(bassins_hors_france, crs(esawc_cameroun))
@@ -1089,7 +1102,7 @@ bassins_cameroun_esa <- st_transform(bassins_hors_france, crs(esawc_cameroun))
 ```
 
 
-```{r esa-cameroun}
+```{r esa-cameroun, eval = F}
 
 # Messam
 poly_messam <- bassins_cameroun_esa[2, ]
@@ -1190,7 +1203,7 @@ write.csv(esa_cameroun_wide, "Land Cover/World Cover ESA/esa_cameroun_wide.csv")
 
 ### All
 
-```{r join-df}
+```{r join-df, eval = F}
 esa_france <-   read.csv("Land Cover/World Cover ESA/esa_france_wide.csv")
 dim(esa_france)
 esa_rhone <-   read.csv("Land Cover/World Cover ESA/esa_france.rhone_wide.csv")
@@ -1226,94 +1239,5 @@ write.csv(esa_wp1, "Land Cover/World Cover ESA/esa_wp1.csv")
 
 ```
 
-# Merge all characteristics
 
-```{r read-merge-df}
-precip_wp1 <- read.csv("ERA5/bassins_precip.csv") %>% mutate(X = NULL)
-temp_wp1 <- read.csv("ERA5/bassins_temp.csv") %>% mutate(X = NULL, year_vec = NULL)
-dem_wp1 <- read.csv("DEM/dem_wp1_v2.csv") # Pb: geometrie enregistrée en csv avec trop de colonnes. supprimer la geom du df
-litho_wp1 <- read.csv("Lithologie/litho_wp1.csv") # n'existe pas lol car je dois le rerun dès qu'ai le EPSG pour reprojeter le cameroun
-pedo_wp1 <- read_xlsx("Pédologie/resultat_sol_wide.xlsx") 
-esawc_wp1 <- read.csv("Land Cover/World Cover ESA/esa_wp1.csv") %>% mutate(X = NULL)
-clc_wp1 <- read.csv("Land Cover/Corine Land Cover/clc_wide_francemetro.csv") %>% mutate(X = NULL)
-
-flux <- read_xlsx("Flux/resultats_260903.xlsx")
-
-
-flux_bv <- precip_wp1 %>% merge(temp_wp1, by = c("Name","Station","Obs")) %>%
-  merge(dem_wp1, by = c("Name","Station","Obs")) %>%
-  merge(pedo_wp1, by = c("Name","Station","Obs")) %>%
-  merge(litho_wp1, by = c("Name","Station","Obs")) %>%
-  merge(esawc_wp1, by = c("Name","Station","Obs")) %>%
-  merge(flux, by = c("Name","Station","Obs"))
-  
-  
-esawc_classes <- c("X10" = "Tree Cover",
-                   "X20" = "Shrubland",
-                   "X30" = "Grassland",
-                   "X40" = "Cropland",
-                   "X50" = "Built up",
-                   "X60" = "Bare",
-                   "X70" = "Snow and ice",
-                   "X80" = "Permanent water bodies",
-                   "X90" = "Herbaceous wetland",
-                   "X100" = "Mangroves",
-                   "X11" = "Moss and lichen")
-
-names_esa <- esawc_classes[names(flux_bv)]
-names(flux_bv) <- ifelse(is.na(names_esa), names(flux_bv), names_esa)
-
-```
-
-# Comparaison-clc-esa
-
-```{r comparaiso-clc-esa}
-
-flux_lc <- flux %>% merge(clc_wp1, by = c("Name","Station","Obs")) %>% merge(esawc_wp1, by = c("Name","Station","Obs"))
-
-  
-esawc_classes <- c("X10" = "Tree Cover",
-                   "X20" = "Shrubland",
-                   "X30" = "Grassland_esa",
-                   "X40" = "Cropland",
-                   "X50" = "Built up",
-                   "X60" = "Bare_esa",
-                   "X70" = "Snow and ice",
-                   "X80" = "Permanent water bodies",
-                   "X90" = "Herbaceous wetland",
-                   "X100" = "Mangroves",
-                   "X11" = "Moss and lichen")
-
-names_esa <- esawc_classes[names(flux_lc)]
-names(flux_lc) <- ifelse(is.na(names_esa), names(flux_lc), names_esa)
-
-ggplot(data = flux_lc)+
-  geom_point(aes(x = Agriculture, y = Cropland, col = "Agriculture/Cropland"))+
-  geom_point(aes(x = Forest, y = `Tree Cover`, col = "Forest/Tree Cover"))+
-  geom_point(aes(x = Grassland, y = Grassland_esa, col = "Grassland")) +
-  geom_point(aes(x = Urban, y = `Built up`, col = "Urban/Built up")) +
-  geom_point(aes(x= Bare, y = Bare_esa, col = "Bare"))+
-  geom_abline(slope = 100, intercept = 0)+
-  labs(x = "CLC", y = "ESA")+
-  theme_bw()
-
-
-mat <- flux_lc %>% filter(carbon == "POC") %>% select(!c("Name","Station","Obs","carbon", "flux_ton","flux_ton_sd","flux_ton_pil","flux_ton_piu","flux_ton_km2_sd","flux_ton_km2_pil","flux_ton_km2_piu","nb_years"))    
-corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = F, tl.cex = 0.5, number.cex = 0.5)
-
-
-```
-
-# Correlation
-
-```{r matrice-de-correlations}
-library(corrplot)
-mat <- flux_bv %>% select(c("flux_ton_km2","mean.precip_30y", "mean.temp_30y", "altitude_moyenne", "altitude_max","pente_moyenne","pente_max","Tree Cover","Shrubland","Grassland_esa", "Cropland" , "Built up")) 
-corrplot(mat %>% cor(use = "pairwise.complete.obs"))
-corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = F)
-
-
-mat <- flux_bv %>% select(c("flux_ton","mean.precip_30y", "mean.temp_30y", "altitude_moyenne", "altitude_max","pente_moyenne","pente_max","Tree Cover","Shrubland","Grassland_esa", "Cropland" , "Built up","Bare","Herbaceous Wetland")) 
-corrplot(mat %>% cor(use = "pairwise.complete.obs"))
-```
 
