@@ -1075,8 +1075,8 @@ q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
 # Instant flux matrix
-flux_ton.s_mat <- pred_gnls*1e-2*mes_mat*1e-6*q_mat*1e3 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period, that is uniformely 10 minutes. 
-flux_ton_mat <- pred_gnls*1e-2*mes_mat*1e-6*q_mat*1e3*10*60 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat converted from m3/s to L/s. We consider no uncertainty on period, that is uniformely 10 minutes. 
+flux_ton.s_mat <- pred_gnls*1e-2*mes_mat*1e-6*q_mat #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat in to L/s. We consider no uncertainty on period, that is uniformely 10 minutes. 
+flux_ton_mat <- pred_gnls*1e-2*mes_mat*1e-6*q_mat*10*60 #pred_gnls * mes_mat : poc in g/L converted to ton/L; q_mat in L/s. We consider no uncertainty on period, that is uniformely 10 minutes. 
 
 # Get index for the columns corresponding to the same year
 index_years <- sapply(unique(galabre_gnls$year), function(y){which(galabre_gnls$year == y)}) # list of indices corresponding to each year
@@ -1327,7 +1327,7 @@ rmd_id <- "galabre"
 
 rmd_values <- data.frame(
   rmd = rmd_id,
-  carbon  = "DOC",
+  carbon  = "POC",
   flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"],
     flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"],
     flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],

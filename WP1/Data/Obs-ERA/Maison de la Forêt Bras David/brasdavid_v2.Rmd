@@ -30,7 +30,7 @@ library(here)
 # Get data
 
 ```{r bv}
-bv <- 11.1 # in Justin
+bv <- 11.37 # QGIS
 unit_flux = "ton"
 ```
 

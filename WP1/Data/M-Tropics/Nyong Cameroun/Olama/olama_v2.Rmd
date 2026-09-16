@@ -11,7 +11,7 @@ date: "2025-06-06"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 
@@ -31,7 +31,7 @@ library(here)
 # Get data
 
 ```{r bv}
-bv <- 206 # in Justin
+bv <- 19316 # QGIS
 unit_flux = "kg"
 ```
 

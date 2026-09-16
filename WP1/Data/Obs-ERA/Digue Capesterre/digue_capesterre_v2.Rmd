@@ -10,7 +10,7 @@ date: "2026-07-30"
 ---
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 
@@ -87,7 +87,7 @@ annotate_figure(plots, top = text_grob(title))
 
 
 ```{r digue-complete-years}
-complete_years <- c(2016,2018:2022)
+complete_years <- c(2016,2018, 2019, 2021)
 digue_complete <- digue %>% subset(year %in% complete_years)
 ```
 

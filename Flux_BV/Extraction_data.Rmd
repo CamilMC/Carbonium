@@ -368,6 +368,8 @@ for (i in seq_len(nrow(bassins_france_proj))) {
     rgb   = FALSE
   )
   
+   NAflag(mnt_i) <- -99999
+   
   res <- extraire_stats(mnt_i, bassin_i) %>%
     mutate(resolution_utilisee = res_i, source = "IGN_RGE_ALTI")
   
@@ -378,6 +380,7 @@ for (i in seq_len(nrow(bassins_france_proj))) {
   rm(mnt_i)
   gc()
   terra::tmpFiles(remove = TRUE)
+  Sys.sleep(2)
 }
 
 resultats_bassins <- bind_rows(resultats_bassins) %>% cbind(bassins_france[,c("Name", "Station","Obs")])
@@ -402,6 +405,8 @@ for (i in seq_len(nrow(bassins_guadeloupe_proj))) {
     rgb   = FALSE
   )
   
+   NAflag(mnt_i) <- -99999
+   
   res <- extraire_stats(mnt_i, bassin_i) %>%
     mutate(resolution_utilisee = res_i, source = "IGN_RGE_ALTI")
   
@@ -424,6 +429,36 @@ res_hors_france <- extraire_stats(mnt_srtm, bassins_hors_france) %>% mutate(reso
 dem_wp1 <- bind_rows(resultats_bassins, resultats_bassins_guadeloupe,res_hors_france) %>% mutate(geometry = NULL)
 write.csv(dem_wp1, "DEM/dem_wp1_v2.csv", row.names = FALSE)
 ```
+
+## Extraction Arles suite erreur
+
+```{r dem-arles}
+calc_res_adaptee <- function(bbox, max_pixels = 1500) {
+  largeur <- bbox["xmax"] - bbox["xmin"]
+  hauteur <- bbox["ymax"] - bbox["ymin"]
+  res_min <- max(largeur, hauteur) / max_pixels
+  ceiling(res_min)   # arrondi au mètre supérieur
+}
+
+  bassin_i <- bassins_france_proj[19, ]
+  bbox_i <- st_bbox(bassin_i)
+  res_i <- calc_res_adaptee(bbox_i)
+  
+  mnt_i <- get_wms_raster(
+    x     = bassin_i,
+    layer = dem_layer,
+    res   = res_i,
+    rgb   = FALSE
+  )
+  
+  NAflag(mnt_i) <- -99999
+  
+  res <- extraire_stats(mnt_i, bassin_i) %>%
+    mutate(resolution_utilisee = res_i, source = "IGN_RGE_ALTI")
+  
+  
+```
+
 
 # Pédologie
 
