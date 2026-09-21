@@ -656,6 +656,8 @@ write.csv(litho_wp1_long, "Lithologie/litho_wp1_long.csv")
 
 ## Corine Land Cover (France métropolitaine)
 
+https://land.copernicus.eu/en/products/corine-land-cover/clc2018
+
 ```{r get-corine, eval = F}
 clc <- st_read("Land Cover/Corine Land Cover/U2006_CLC2000_V2020_20u1.gpkg")
 ```
@@ -724,6 +726,9 @@ ggplot(clc_long_francemetro) + geom_col(aes(x=fullName, y=value, fill=clc_catego
 
 
 ## ESA WC
+
+https://viewer.esa-worldcover.org/worldcover/?language=en&bbox=-225,-75.27541260821627,225,75.2754126082163&overlay=false&bgLayer=OSM&date=2026-09-17&layer=esa-worldcover-map-10m-2021-v2_map
+
 
 ```{r fonction-extraction-esa, eval = F}
 extraction_esa <- function(poly_i, raster, degree = 0.5) {

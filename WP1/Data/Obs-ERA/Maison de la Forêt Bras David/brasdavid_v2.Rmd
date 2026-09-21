@@ -10,7 +10,7 @@ date: "2026-07-30"
 ---
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 
@@ -21,6 +21,7 @@ lapply(c("lubridate"), library, character.only = T)
 lapply(c("knitr","kableExtra"), library, character.only = T)
 lapply(c("readxl","writexl"), library, character.only = T)
 library(here)
+library(data.table)
 ```
 
 
@@ -41,15 +42,48 @@ debit <- read_xlsx("brasdavid.xlsx", sheet = "debit_simple")
 chimie <- read_xlsx("brasdavid.xlsx", sheet = "doc_simple", col_type = c("date",rep("numeric", 2)))
 
 
-brasdavid <- merge(debit, chimie, by = "DateHeure", all = T) %>% 
-  mutate(
-    year = year(DateHeure),
-    Date = as.Date(DateHeure),
-    commondate = as.Date(update(DateHeure, year = 2000)),
-  period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
-  q_L.s = q_m3.s * 1e3
-  )
+debit_dt <- setDT(debit)
+chimie_dt <- setDT(chimie)
 
+debit_dt[,dhdebit := DateHeure]
+chimie_dt[,dhdoc := DateHeure]
+
+chimie_dt[, doc_id := .I]
+
+brasdavid_dt <- chimie_dt[debit_dt, on = "DateHeure", roll = "nearest"
+                    ][, diff := abs(as.numeric(dhdebit - dhdoc, units = "secs"))]
+
+# Colonnes à "vider" pour les lignes non retenues
+cols_doc <- setdiff(names(chimie_dt), "DateHeure")
+
+# Repérer, par groupe doc_id, la ligne à garder (diff minimal)
+brasdavid_dt[, keep_row := .I == .I[which.min(diff)], by = doc_id]
+
+# Mettre à NA les colonnes de chimie_dt pour les lignes non gardées
+brasdavid_dt[keep_row == FALSE, (cols_doc) := NA]
+brasdavid_dt[, keep_row := NULL]
+
+
+brasdavid <- brasdavid_dt[, .(DateHeure, doc_mg.L, q_m3.s)][order(DateHeure)]
+
+brasdavid[, `:=`(
+  year = year(DateHeure),
+  Date = as.Date(DateHeure),
+  commondate = as.Date(update(DateHeure, year = 2000)),
+  q_L.s = q_m3.s * 1e3,
+  period = as.numeric(difftime(shift(DateHeure, type = "lead"), DateHeure, units = "secs"))
+)]
+
+
+# brasdavid <- merge(debit, chimie, by = "DateHeure", all = T) %>% 
+#   mutate(
+#     year = year(DateHeure),
+#     Date = as.Date(DateHeure),
+#     commondate = as.Date(update(DateHeure, year = 2000)),
+#   period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
+#   q_L.s = q_m3.s * 1e3
+#   )
+# 
 brasdavid$period[which(brasdavid$period > 300)] <- 300
 
 ```
@@ -101,7 +135,7 @@ ggplot(subset(brasdavid_complete, year %in% complete_years), aes(x = commondate)
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("lightblue"), name = "")+
   facet_grid(rows = vars(year))+
-  labs(y = "Débit, L/s", col = "")+
+  labs(y = "Débit, m3/s", col = "")+
   theme_bw(base_size = 15)+
   theme(legend.position = "none"),
 
@@ -156,13 +190,30 @@ knitr::kable(summary_brasdavid, caption = "Summary table of brasdavid data") %>%
 
 ```{r histograms}
 ggarrange(
-  ggplot(brasdavid_complete)+geom_histogram(aes(q_m3.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
+  ggplot(brasdavid_complete)+geom_histogram(aes(q_m3.s),fill = "lightblue")+labs(x= "Débit", "m3/s", y = "")+theme_bw(),
   ggplot(brasdavid_complete)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_bw(),
-  ggplot(brasdavid_complete)+geom_histogram(aes(log10(q_m3.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
+  ggplot(brasdavid_complete)+geom_histogram(aes(log10(q_m3.s)),fill = "lightblue")+labs(x= "Débit (log10), "m3/s", y = "")+theme_bw(),
   ggplot(brasdavid_complete)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_bw()
 )
 ```
+## Check flux no u
 
+```{r flux-doc-direct}
+digue_direct <- digue_complete %>% mutate(f_doc = doc_mg.L*1e-9*q_L.s, load = f_doc*period)
+digue_direct$qobs <- with(digue_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
+
+annual_flux_direct <- digue_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+                                                                    mean_q = mean(q_L.s, na.rm = T),
+                                                                    mean_qobs = mean(qobs, na.rm = T),
+                                                                    mean_doc = mean(doc_mg.L, na.rm = T), 
+                                                                    sum_loadobs = sum(load, na.rm = T), 
+                                                                    sum_qobs = sum(qobs, na.rm = T), 
+                                                                    sum_q = sum(q_L.s, na.rm = T)) %>%
+  mutate(annual_fdoc = sum_loadobs*sum_q/sum_qobs)
+
+annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 2) %>% kable_styling()
+
+```
 
 
 # Annual and interannual fluxes
@@ -225,7 +276,7 @@ sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, 
 annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
 
 u_method <- (20-0.20*(summary_brasdavid$`DOCobs/Qobs, %`*100))/100 # déterminé dans avenelles_method 
-# add uncertainty due to method, based on % POCobs/Qobs and results 
+# add uncertainty due to method, based on % DOCobs/Qobs and results 
 sd_by_year <- rep(u_method[match(complete_years, summary_brasdavid$year)], each = nrep)
 print(u_method)
 
@@ -259,7 +310,7 @@ total_flux_df$group <- c(rep("annual", nyears), "interannual")
 
 # Q df ----
 
-annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q <- sapply(index_years_tot, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
 annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
