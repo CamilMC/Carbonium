@@ -190,19 +190,19 @@ knitr::kable(summary_brasdavid, caption = "Summary table of brasdavid data") %>%
 
 ```{r histograms}
 ggarrange(
-  ggplot(brasdavid_complete)+geom_histogram(aes(q_m3.s),fill = "lightblue")+labs(x= "Débit", "m3/s", y = "")+theme_bw(),
+  ggplot(brasdavid_complete)+geom_histogram(aes(q_m3.s),fill = "lightblue")+labs(x= "Débit, m3/s", y = "")+theme_bw(),
   ggplot(brasdavid_complete)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_bw(),
-  ggplot(brasdavid_complete)+geom_histogram(aes(log10(q_m3.s)),fill = "lightblue")+labs(x= "Débit (log10), "m3/s", y = "")+theme_bw(),
+  ggplot(brasdavid_complete)+geom_histogram(aes(log10(q_m3.s)),fill = "lightblue")+labs(x= "Débit (log10), m3/s", y = "")+theme_bw(),
   ggplot(brasdavid_complete)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_bw()
 )
 ```
 ## Check flux no u
 
 ```{r flux-doc-direct}
-digue_direct <- digue_complete %>% mutate(f_doc = doc_mg.L*1e-9*q_L.s, load = f_doc*period)
-digue_direct$qobs <- with(digue_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
+brasdavid_direct <- brasdavid_complete %>% mutate(f_doc = doc_mg.L*1e-9*q_L.s, load = f_doc*period)
+brasdavid_direct$qobs <- with(brasdavid_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
 
-annual_flux_direct <- digue_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+annual_flux_direct <- brasdavid_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
                                                                     mean_q = mean(q_L.s, na.rm = T),
                                                                     mean_qobs = mean(qobs, na.rm = T),
                                                                     mean_doc = mean(doc_mg.L, na.rm = T), 
@@ -310,7 +310,7 @@ total_flux_df$group <- c(rep("annual", nyears), "interannual")
 
 # Q df ----
 
-annual_q <- sapply(index_years_tot, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
 annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
