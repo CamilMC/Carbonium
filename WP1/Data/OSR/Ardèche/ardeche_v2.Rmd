@@ -36,7 +36,7 @@ Why so low fluxes in 2022-2023?
 # Get data
 
 ```{r bv-km2}
-bv <- 2258
+bv <- 2266
 unit_flux = "ton"
 ```
 
@@ -142,7 +142,7 @@ annotate_figure(plots, top = text_grob(title))
 
 
 ```{r ardeche-complete-years, fig.dim = c(10,15)}
-complete_years <- c(2016:2022)
+complete_years <- c(2016:2021)
 ardeche_complete <- ardeche %>% subset(year %in% complete_years) %>% filter(!is.na(q_L.s))
 ```
 
@@ -153,7 +153,7 @@ ardeche_complete <- ardeche %>% subset(year %in% complete_years) %>% filter(!is.
 summary_ardeche <- merge(
   ardeche %>% subset(!is.na(mes_mg.L)) %>% group_by(year) %>% 
             summarise("Number of MES observations" = n(), 
-                      "MES range, mg/L" = paste(round(quantile(mes_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / ")),
+                      "MES, mg/L" = paste(round(quantile(mes_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / ")),
   ardeche %>% subset(!is.na(poc_mg.L)) %>% group_by(year) %>% 
             summarise("Number of POC observations" = n(), 
             "POC, mg/L" = paste(round(quantile(poc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / ")), by = "year", all = T) %>%
@@ -199,6 +199,46 @@ knitr::kable(summary_ardeche, digits = 2, caption = "Summary table of ardeche da
 
 
 
+```{r exporter-summary}
+
+rmd_id <- "ardeche"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "POC",
+  annees_debit = setdiff(unique(filter(summary_ardeche, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_ardeche[nrow(summary_ardeche) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(ardeche$period, na.rm = T),
+  range_debit = summary_ardeche[nrow(summary_ardeche) - 1, ] %>% select(`Q range, m3/s`) %>% paste(),
+  annees_mes = setdiff(unique(filter(summary_ardeche, !is.na(`Number of MES observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_mes = summary_ardeche[nrow(summary_ardeche) - 1, ] %>% select(`Number of MES observations`) %>% pull(),
+  range_mes = summary_ardeche[nrow(summary_ardeche) - 1, ] %>% select(`MES, mg/L`) %>% paste(),
+  annees_oc = setdiff(unique(filter(summary_ardeche, !is.na(`Number of POC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(ardeche$poc_timeinterval) %>% length(),
+  range_oc = summary_ardeche[nrow(summary_ardeche) - 1, ] %>% select(`POC, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "time interval, 1 mois")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
+```
 
  Méthode choisie pour le calcul de flux: ratio. 
 
@@ -259,7 +299,7 @@ q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 period_mat <- matrix(ardeche_poc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
 
 # Flux per time step
-load_ton.s_mat <- poc_mat*1e-9*q_mat * period_mat # without period
+load_ton.s_mat <- poc_mat*1e-9*q_mat * period_mat 
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(ardeche_poc$year == y)}) # list of indices corresponding to each year

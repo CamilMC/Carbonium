@@ -12,7 +12,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 ```{r libraries}
@@ -44,7 +44,7 @@ arles <- arles %>% mutate(
   commondate = as.Date(update(Date, year = 2000)),
   periodj = end-start, # donne la périod en heure
   periods = periodj*60*60,
-  doc_mg.L = doc_umol.L*1e-3/12.011,
+  doc_mg.L = doc_umol.L*1e-3*12.011,
   q_L.s = arles$q_m3.s * 1e3)
 
 

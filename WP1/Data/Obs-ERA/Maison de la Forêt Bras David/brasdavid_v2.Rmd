@@ -74,15 +74,6 @@ brasdavid[, `:=`(
   period = as.numeric(difftime(shift(DateHeure, type = "lead"), DateHeure, units = "secs"))
 )]
 
-
-# brasdavid <- merge(debit, chimie, by = "DateHeure", all = T) %>% 
-#   mutate(
-#     year = year(DateHeure),
-#     Date = as.Date(DateHeure),
-#     commondate = as.Date(update(DateHeure, year = 2000)),
-#   period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
-#   q_L.s = q_m3.s * 1e3
-#   )
 # 
 brasdavid$period[which(brasdavid$period > 300)] <- 300
 

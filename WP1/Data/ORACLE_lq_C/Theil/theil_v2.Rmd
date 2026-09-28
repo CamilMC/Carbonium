@@ -13,6 +13,7 @@ date: "2025-06-06"
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
                       cache = F)
 ```
+
 ```{r libraries}
 lapply(c("dplyr"), library, character.only = T)
 lapply(c("ggplot2","ggpubr"), library, character.only = T)
@@ -158,6 +159,23 @@ ggarrange(
 ```
 
 
+```{r flux-doc-direct}
+theil_direct <- theil_complete %>% mutate(f_doc = doc_mg.L*1e-9*q_L.s, load = f_doc*period)
+theil_direct$qobs <- with(theil_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
+
+annual_flux_direct <- theil_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+                                                                    mean_q = mean(q_L.s * 1e-3, na.rm = T),
+                                                                    mean_qobs = mean(qobs, na.rm = T),
+                                                                    mean_doc = mean(doc_mg.L, na.rm = T), 
+                                                                    sum_loadobs = sum(load, na.rm = T), 
+                                                                    sum_qobs = sum(qobs, na.rm = T), 
+                                                                    sum_q = sum(q_L.s, na.rm = T)) %>%
+  mutate(annual_fdoc = sum_loadobs*sum_q/sum_qobs)
+
+annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 5) %>% kable_styling()
+
+```
+
 
 # Annual and interannual fluxes
 
@@ -186,8 +204,11 @@ q_meas <- matrix(theil_doc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
+# Period
+period_mat <- matrix(theil_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
+
 # Flux per time step
-load_kg.s_mat <- doc_mat*1e-6*q_mat # without period
+load_kg.s_mat <- doc_mat*1e-9*q_mat*period_mat # without period
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(theil_doc$year == y)}) # list of indices corresponding to each year
@@ -252,7 +273,7 @@ total_flux_df$group <- c(rep("annual", nyears), "interannual")
 
 # Q df ----
 
-annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
 annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 

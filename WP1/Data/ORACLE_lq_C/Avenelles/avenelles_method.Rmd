@@ -34,7 +34,7 @@ Description du site (https://www.ozcar-ri.org/fr/observatoire-oracle/): L’obse
 ## Get data
 
 ```{r bv-area}
-bv <- 45
+bv <- 45.5
 ```
 
 
@@ -167,7 +167,47 @@ ggarrange(
 )
 ```
 
+```{r exporter-summary}
 
+rmd_id <- "avenelles"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  annees_debit = setdiff(unique(filter(summary_avenelles, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_avenelles[nrow(summary_avenelles) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(avenelles$period, na.rm = T),
+  range_debit = summary_avenelles[nrow(summary_avenelles) - 1, ] %>% select(`Q range, L/s`) %>% paste(),
+  unit_debit = "L/s",
+  annees_mes = NA,
+  nb_obs_mes = NA,
+  range_mes = NA,
+  annees_oc = setdiff(unique(filter(summary_avenelles, !is.na(`Number of DOC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(avenelles$poc_timeinterval) %>% length(),
+  range_oc = summary_avenelles[nrow(summary_avenelles) - 1, ] %>% select(`DOC range, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "ponctuel")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
+```
 
 
 # Test of methods for estimating fluxes when data is missing

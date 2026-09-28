@@ -11,7 +11,7 @@ date: "2025-06-06"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
-                      cache = T)
+                      cache = F)
 ```
 
 ```{r libraries}
@@ -30,7 +30,7 @@ library(here)
 # Get data
 
 ```{r bv}
-bv <- 1360 # in Justin
+bv <- 1388 # QGIS
 unit_flux = "kg"
 ```
 
@@ -45,8 +45,8 @@ tet <- tet %>% mutate(
                         format = "%Y-%m-%d %H:%M:%S"),
   commondate = update(DateHeure, year = 2000),
   period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
-  poc_mg.L = poc_umol.L*1e-3/12.011,
-  doc_mg.L = doc_umol.L*1e-3/12.011,
+  poc_mg.L = poc_umol.L*1e-3*12.011,
+  doc_mg.L = doc_umol.L*1e-3*12.011,
   q_L.s = q_m3.s
 )
 
@@ -181,6 +181,26 @@ knitr::kable(summary_tet, digits = 2, caption = "Summary table of tet data") %>%
 
 ```
 
+## Check flux no u
+
+```{r flux-doc-direct}
+tet_direct <- tet_complete %>% mutate(f_doc = doc_mg.L*1e-6*q_L.s, load = f_doc*period, f_poc = poc_mg.L*1e-6*q_L.s, load_poc = f_poc*period)
+tet_direct$qobs <- with(tet_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
+
+annual_flux_direct <- tet_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+                                                                    mean_q = mean(q_L.s * 1e-3, na.rm = T),
+                                                                    mean_qobs = mean(qobs, na.rm = T),
+                                                                    mean_doc = mean(doc_mg.L, na.rm = T), 
+                                                                  mean_poc = mean(poc_mg.L, na.rm = T), 
+                                                                    sum_loadobs = sum(load, na.rm = T), 
+                                                                   sum_loadobs_poc = sum(load_poc, na.rm = T), 
+                                                                    sum_qobs = sum(qobs, na.rm = T), 
+                                                                    sum_q = sum(q_L.s, na.rm = T)) %>%
+  mutate(annual_fdoc = sum_loadobs*sum_q/sum_qobs, annual_fpoc = sum_loadobs_poc*sum_q/sum_qobs)
+
+annual_flux_direct %>% knitr::kable(caption = "Annual flux kg", digits = 5) %>% kable_styling()
+
+```
 
 # Annual and interannual flux POC
 
@@ -220,7 +240,7 @@ q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 period_mat <- matrix(tet_poc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
 
 # Flux per time step
-load_kg.s_mat <- poc_mat*1e-6*q_mat*period_mat # without period
+load_kg.s_mat <- poc_mat*1e-6*q_mat*period_mat 
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(tet_poc$year == y)}) # list of indices corresponding to each year
@@ -285,7 +305,7 @@ total_flux_df$group <- c(rep("annual", nyears), "interannual")
 
 # Q df ----
 
-annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
 annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 

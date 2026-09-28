@@ -1,5 +1,5 @@
 ---
-title: "Gardons"
+title: "gardon"
 output:
   html_document:
     toc: true
@@ -22,6 +22,7 @@ lapply(c("lubridate"), library, character.only = T)
 lapply(c("knitr","kableExtra"), library, character.only = T)
 lapply(c("readxl","writexl"), library, character.only = T)
 library(here)
+library(data.table)
 
 ```
 
@@ -31,7 +32,7 @@ library(here)
 
 ```{r bv-km2}
 bv <- 1855
-unit_flux = "kg"
+unit_flux = "ton"
 ```
 
 
@@ -43,34 +44,63 @@ cmes <- cmes %>% mutate(period = as.numeric(-(DateHeure - lead(DateHeure)))) # p
 fmes <- readxl::read_xlsx(path = "gardon.xlsx", sheet = "FMES", col_types = c("date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
 
 poc <- readxl::read_xlsx(path = "gardon.xlsx", sheet = "POC", col_types = c("date","date","numeric","text")) %>% subset(Qualite == "v") %>% mutate(Qualite = NULL)
-poc$poc_timeinterval <- poc$Debut %--% poc$Fin
 
 debit <- readxl::read_xlsx(path = "gardon.xlsx", sheet = "Debit", col_types = c("date",rep("numeric", 5))) %>% mutate(Statut = NULL, Qualification = NULL, Méthode = NULL, Continuité = NULL) %>%
   setNames(c("DateHeure","q_m3.s")) %>%
   unique()
 
-na_interval <- poc$Fin[dim(poc)[1]] %--% poc$Debut[1]  %>% as.character()
+poc$poc_timeinterval <- poc$Debut %--% poc$Fin
+poc$poc_timeinterval_s <- with(poc, as.numeric(difftime(ymd_hms(Fin), ymd_hms(Debut), units = 'secs')))
+poc$poc_g.kg <- as.numeric(poc$poc_g.kg)
 
-debit_timeinterval <- sapply(debit$DateHeure, FUN = function (x){as.character(poc$poc_timeinterval[x >= poc$Debut & x <= poc$Fin])}, simplify = T)
+na_interval <- poc$Fin[85] %--% poc$Debut[1]  %>% as.character()
+
+debit_timeinterval <- lapply(debit$DateHeure, FUN = function (x){as.character(poc$poc_timeinterval[x >= poc$Debut & x <= poc$Fin])})
 na_timeinterval <- which(lengths(debit_timeinterval) == 0)
 debit_timeinterval[na_timeinterval] <- na_interval
 
+double_timeinterval <- which(lengths(debit_timeinterval) > 1)
+debit_timeinterval[double_timeinterval] <- lapply(debit_timeinterval[double_timeinterval], function(x) x[[1]]) # takes shorter 
 
 debit$poc_timeinterval <- do.call(c, (debit_timeinterval))
 
-gardons <- merge(debit, cmes, by = "DateHeure", all = T) %>% filter(!is.na(q_m3.s)) %>% merge(poc, by = "poc_timeinterval", all = T) %>% unique()
+debit$DateHeure <- ymd_hms(debit$DateHeure)
 
-gardons <- gardons %>% arrange(DateHeure) %>% mutate(
+# merge cmes and Q
+debit_dt <- setDT(debit)
+cmes_dt <- setDT(cmes)
+
+debit_dt[,dhdebit := DateHeure]
+cmes_dt[,dhcmes := DateHeure]
+
+cmes_dt[, cmes_id := .I]
+
+gardon_dt <- cmes_dt[debit_dt, on = "DateHeure", roll = "nearest"
+                    ][, diff := abs(as.numeric(dhdebit - dhcmes, units = "secs"))]
+
+# Colonnes à "vider" pour les lignes non retenues
+cols_cmes <- setdiff(names(cmes_dt), "DateHeure")
+
+# Repérer, par groupe doc_id, la ligne à garder (diff minimal)
+gardon_dt[, keep_row := .I == .I[which.min(diff)], by = cols_cmes]
+
+# Mettre à NA les colonnes de chimie_dt pour les lignes non gardées
+gardon_dt[keep_row == FALSE, (cols_cmes) := NA]
+gardon_dt[, keep_row := NULL]
+gardon <- gardon_dt[order(DateHeure)] %>% filter(!is.na(q_m3.s)) %>% as.data.frame() %>% merge(poc, by = "poc_timeinterval", all = T) %>% unique()
+
+
+gardon <- gardon %>% arrange(DateHeure) %>% mutate(
   year = year(DateHeure),
   Date = as.Date(DateHeure),
   commondate = as.Date(update(DateHeure, year = 2000)),
   period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
-  poc_mg.L = poc_g.kg*cmes_mg.L*1e-6,
+  poc_mg.L = poc_g.kg*1e3*cmes_mg.L*1e-6,
   q_L.s = q_m3.s * 1e3,
   mes_mg.L = cmes_mg.L)
 ```
 
-
+diff max entre CMES et débit (avec POC associé) : 6600 s
 
 ## Visualisation
 
@@ -79,7 +109,7 @@ gardons <- gardons %>% arrange(DateHeure) %>% mutate(
 
 title <- expression(atop("Series of Q and MES by year"))
 plots <- ggarrange(
-ggplot(gardons, aes(x = commondate))+
+ggplot(gardon, aes(x = commondate))+
   geom_point(aes(y = q_m3.s, col = "Débit, m3/s"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("lightblue"), name = "")+
@@ -88,7 +118,7 @@ ggplot(gardons, aes(x = commondate))+
   theme_bw(base_size = 15)+
   theme(legend.position = "none"),
 
-ggplot(gardons, aes(x = commondate))+
+ggplot(gardon, aes(x = commondate))+
   geom_point(aes(y = poc_mg.L, col = "MES, mg.L"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("palegreen4"), name = "")+
@@ -97,7 +127,7 @@ ggplot(gardons, aes(x = commondate))+
   theme_bw(base_size = 15)+
   theme(legend.position = "none"),
 
-ggplot(gardons, aes(x = commondate))+
+ggplot(gardon, aes(x = commondate))+
   geom_point(aes(y = poc_mg.L, col = "POC, mg/L"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("darkred"), name = "")+
@@ -114,59 +144,59 @@ annotate_figure(plots, top = text_grob(title))
 ```
 
 
-```{r gardons-complete-years, fig.dim = c(10,15)}
+```{r gardon-complete-years, fig.dim = c(10,15)}
 complete_years <- c(2018:2023)
-gardons_complete <- gardons %>% subset(year %in% complete_years) %>% filter(!is.na(q_L.s))
+gardon_complete <- gardon %>% subset(year %in% complete_years) %>% filter(!is.na(q_L.s))
 ```
 
 
 ## Characteristics
 
 ```{r summary-data}
-summary_gardons <- merge(
-  gardons %>% subset(!is.na(mes_mg.L)) %>% group_by(year) %>% 
+summary_gardon <- merge(
+  gardon %>% subset(!is.na(mes_mg.L)) %>% group_by(year) %>% 
             summarise("Number of MES observations" = n(), 
                       "MES range, mg/L" = paste(round(quantile(mes_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / ")),
-  gardons %>% subset(!is.na(poc_mg.L)) %>% group_by(year) %>% 
+  gardon %>% subset(!is.na(poc_mg.L)) %>% group_by(year) %>% 
             summarise("Number of POC observations" = n(), 
             "POC, mg/L" = paste(round(quantile(poc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / ")), by = "year", all = T) %>%
 
-  merge(gardons %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% 
+  merge(gardon %>% subset(!is.na(q_m3.s)) %>% group_by(year) %>% 
                   summarise("Number of Q observations" = n(), 
                   "Q range, m3/s" = paste(quantile(q_m3.s, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>% 
-  merge(gardons %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
-  merge(gardons %>% group_by(year) %>% 
+  merge(gardon %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
+  merge(gardon %>% group_by(year) %>% 
                   summarise("Correlation MES/log(Q)" = round(cor(mes_mg.L, log(q_m3.s), use = "pairwise.complete.obs"),2)),
         by = "year", all = T) %>%
-  merge(gardons %>% group_by(year) %>% 
+  merge(gardon %>% group_by(year) %>% 
                   summarise("Correlation POC/log(Q)" = round(cor(poc_mg.L, log(q_m3.s), use = "pairwise.complete.obs"),2)),
         by = "year", all = T) %>%
   rbind(c("All years", 
-          dim(subset(gardons, !is.na(mes_mg.L)))[1], 
-          paste(round(quantile(gardons$mes_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
-          dim(subset(gardons, !is.na(poc_mg.L)))[1], 
-          paste(round(quantile(gardons$poc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / "), 
-          dim(subset(gardons, !is.na(q_m3.s)))[1], 
-          paste(quantile(gardons$q_m3.s, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
-          length(unique(gardons$Date)),
-          round(cor(gardons$mes_mg.L, log(gardons$q_m3.s), use = "pairwise.complete.obs" ),2),
-          round(cor(gardons$poc_mg.L, log(gardons$q_m3.s), use = "pairwise.complete.obs" ),2)
+          dim(subset(gardon, !is.na(mes_mg.L)))[1], 
+          paste(round(quantile(gardon$mes_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
+          dim(subset(gardon, !is.na(poc_mg.L)))[1], 
+          paste(round(quantile(gardon$poc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / "), 
+          dim(subset(gardon, !is.na(q_m3.s)))[1], 
+          paste(quantile(gardon$q_m3.s, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          length(unique(gardon$Date)),
+          round(cor(gardon$mes_mg.L, log(gardon$q_m3.s), use = "pairwise.complete.obs" ),2),
+          round(cor(gardon$poc_mg.L, log(gardon$q_m3.s), use = "pairwise.complete.obs" ),2)
           )) %>%
     rbind(c("Complete years", 
-          dim(subset(gardons_complete, !is.na(mes_mg.L)))[1], 
-          paste(round(quantile(gardons_complete$mes_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
-          dim(subset(gardons_complete, !is.na(poc_mg.L)))[1], 
-          paste(round(quantile(gardons_complete$poc_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
-          dim(subset(gardons_complete, !is.na(q_m3.s)))[1], 
-          paste(round(quantile(gardons_complete$q_m3.s, probs = c(0,0.5,1), na.rm = T),3), collapse = " / "), 
-          length(unique(gardons_complete$Date)),
-          round(cor(gardons_complete$mes_mg.L, log(gardons_complete$q_m3.s), use = "pairwise.complete.obs" ),2),
-          round(cor(gardons_complete$poc_mg.L, log(gardons_complete$q_m3.s), use = "pairwise.complete.obs" ),2)
+          dim(subset(gardon_complete, !is.na(mes_mg.L)))[1], 
+          paste(round(quantile(gardon_complete$mes_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
+          dim(subset(gardon_complete, !is.na(poc_mg.L)))[1], 
+          paste(round(quantile(gardon_complete$poc_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
+          dim(subset(gardon_complete, !is.na(q_m3.s)))[1], 
+          paste(round(quantile(gardon_complete$q_m3.s, probs = c(0,0.5,1), na.rm = T),3), collapse = " / "), 
+          length(unique(gardon_complete$Date)),
+          round(cor(gardon_complete$mes_mg.L, log(gardon_complete$q_m3.s), use = "pairwise.complete.obs" ),2),
+          round(cor(gardon_complete$poc_mg.L, log(gardon_complete$q_m3.s), use = "pairwise.complete.obs" ),2)
           )
           ) %>%
   mutate(`POCobs/Qobs` = round(as.numeric(`Number of POC observations`)/as.numeric(`Number of Q observations`),2)) 
 
-knitr::kable(summary_gardons, digits = 2, caption = "Summary table of gardons data") %>% kableExtra::kable_styling()
+knitr::kable(summary_gardon, digits = 2, caption = "Summary table of gardon data") %>% kableExtra::kable_styling()
 
 ```
 
@@ -175,6 +205,24 @@ knitr::kable(summary_gardons, digits = 2, caption = "Summary table of gardons da
 
  Méthode choisie pour le calcul de flux: ratio. 
 
+## Check flux no u
+
+```{r flux-poc-direct}
+gardon_direct <- gardon_complete %>% mutate(f_poc = poc_mg.L*1e-9*q_L.s, load = f_poc*period)
+gardon_direct$qobs <- with(gardon_direct, ifelse(is.na(poc_mg.L), NA, q_L.s))
+
+annual_flux_direct <- gardon_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+                                                                    mean_q = mean(q_L.s, na.rm = T),
+                                                                    mean_qobs = mean(qobs, na.rm = T),
+                                                                    mean_poc = mean(poc_mg.L, na.rm = T), 
+                                                                    sum_loadobs = sum(load, na.rm = T), 
+                                                                    sum_qobs = sum(qobs, na.rm = T), 
+                                                                    sum_q = sum(q_L.s, na.rm = T)) %>%
+  mutate(annual_fpoc = sum_loadobs*sum_q/sum_qobs)
+
+annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 2) %>% kable_styling()
+
+```
 
 # Annual and interannual flux 
 
@@ -194,28 +242,31 @@ q_u <- 0.1
 Quelle incertitude attribuer au POC ? On ne sait pas par quel instrument il a été mesuré. Faut-il lui attribuer une incertitude similaire à celle des MES dont il est issu ? 
 
 ```{r flux-for-obs}
-gardons_poc <- gardons %>% filter(!is.na(poc_mg.L) & year %in% complete_years)
+gardon_poc <- gardon %>% filter(!is.na(poc_mg.L) & year %in% complete_years)
 
 nrep <- 1000
-nobs <- dim(gardons_poc)[1]
+nobs <- dim(gardon_poc)[1]
 
-poc_meas <- matrix(gardons_poc$poc_mg.L, nrow = nrep, ncol = nobs, byrow = T)
+poc_meas <- matrix(gardon_poc$poc_mg.L, nrow = nrep, ncol = nobs, byrow = T)
 # poc_cv <- 3.3*poc_meas^(-0.6) # from all data available on 29/05/2026
 # poc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
 # poc_noise <- poc_cv*poc_random
 poc_mat <- poc_meas # * (1 + poc_noise/100) # final value of poc, with noise in percent
 
 # Q matrix
-q_meas <- matrix(gardons_poc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_meas <- matrix(gardon_poc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
 q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 
+# period
+period_mat <- matrix(gardon_poc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
+
 # Flux per time step
-load_kg.s_mat <- poc_mat*1e-6*q_mat # without period
+load_ton.s_mat <- poc_mat*1e-9*q_mat * period_mat
 
 # Annual flux
-index_years <- lapply(complete_years, function(y){which(gardons_poc$year == y)}) # list of indices corresponding to each year
-sum_loadobs <- sapply(index_years, function(idx){apply(load_kg.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+index_years <- lapply(complete_years, function(y){which(gardon_poc$year == y)}) # list of indices corresponding to each year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_ton.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
 
 sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
 
@@ -224,15 +275,15 @@ sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm =
 ```{r sum-q-tot, cache.lazy = F}
 
 nrep <- 1000
-nobs <- dim(gardons_complete)[1]
+nobs <- dim(gardon_complete)[1]
 
 # Q matrix
-qtot_meas <- matrix(gardons_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+qtot_meas <- matrix(gardon_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
 qtot_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
 qtot_mat <- qtot_meas * (1 + qtot_noise) # final value of q, with noise
 
 
-index_years_tot <- lapply(complete_years, function(y){which(gardons_complete$year == y)}) # list of indices corresponding to each year
+index_years_tot <- lapply(complete_years, function(y){which(gardon_complete$year == y)}) # list of indices corresponding to each year
 sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)})
 
 
@@ -240,11 +291,11 @@ sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, 
 ```
 
 ```{r compute-flux}
-annual_flux_kg.y <- sum_qtot*sum_loadobs/sum_qobs
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
 
-u_method <- (53-0.53*(summary_gardons$`POCobs/Qobs`*100))/100 # déterminé dans gardons_method
+u_method <- (53-0.53*(summary_gardon$`POCobs/Qobs`*100))/100 # déterminé dans gardon_method
 # add uncertainty due to method, based on % POCobs/Qobs and results 
-sd_by_year <- rep(u_method[match(complete_years, summary_gardons$year)], each = nrep)
+sd_by_year <- rep(u_method[match(complete_years, summary_gardon$year)], each = nrep)
 print(u_method)
 
 flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = sd_by_year), nrow = nrep, ncol = length(complete_years))
@@ -256,12 +307,12 @@ sampling_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = s_u),
 
 
 # annual flux
-annual_flux_kg.y <- annual_flux_kg.y * (1 + flux_noise) * (1 + sampling_noise)
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise) * (1 + sampling_noise)
 
 
-annual_flux_pi <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
-annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
 
 annual_flux_df <- data.frame(year = complete_years, 
                         annual_flux_mean = annual_flux_mean, 
@@ -270,9 +321,9 @@ annual_flux_df <- data.frame(year = complete_years,
                         annual_flux_pi_upper = annual_flux_pi[3,])
 
 # Interannual flux 
-interannual_flux_kg.y <- rowMeans(annual_flux_kg.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_pi <- quantile(interannual_flux_kg.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean <- mean(interannual_flux_kg.y, na.rm = T) # mean interannual flux
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
 interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
 
 interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
@@ -285,7 +336,7 @@ total_flux_df$group <- c(rep("annual", nyears), "interannual")
 
 # Q df ----
 
-annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
 annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
 annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
@@ -308,7 +359,7 @@ ggplot()+
   geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
@@ -339,11 +390,11 @@ ggplot()+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/km2/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/km2/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
-ggsave(here("figures","sflux_gardons_poc.svg"))
+ggsave(here("figures","sflux_gardon_poc.svg"))
 
 knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
 ```
@@ -479,7 +530,7 @@ ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
 
 ```{r exporter-valeurs-dans-csv-commun}
 
-rmd_id <- "Gardons"
+rmd_id <- "gardon"
 
 if(unit_flux == "ton"){
 rmd_values <- data.frame(

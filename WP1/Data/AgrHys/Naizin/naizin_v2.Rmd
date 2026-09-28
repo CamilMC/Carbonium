@@ -20,6 +20,7 @@ lapply(c("ggplot2","ggpubr"), library, character.only = T)
 lapply(c("lubridate"), library, character.only = T)
 lapply(c("knitr","kableExtra"), library, character.only = T)
 library(here)
+library(data.table)
 
 ```
 
@@ -54,22 +55,25 @@ unit_flux = "ton"
 ```
 
 
-```{r load-data-from-excel, message = F}
-discharge <- read.csv("Données brutes/Outlet Exutoire_Rating curve_discharge.csv", sep = ";", col.names = c("DateHeure","q_L.s"))
-discharge$DateHeure <- ymd_hms(discharge$DateHeure)
-doc <- read.csv("Données brutes/Outlet Exutoire_Shimadzu TOC Analyser_dissolved organic carbon.csv", sep = ";")
-doc$DateHeure <- ymd_hms(doc$DateHeure)
+```{r load-data-from-excel-dt, message = F}
+discharge_dt <- setnames(fread("Données brutes/Outlet Exutoire_Rating curve_discharge.csv"), c("DateHeure","q_L.s"))[, DateHeure := ymd_hms(DateHeure)][!is.na(q_L.s)][!is.na(DateHeure)]
 
+discharge_dt2 <- discharge_dt[q_L.s != shift(q_L.s, type = "lag")]
+
+
+doc_dt <- fread("Données brutes/Outlet Exutoire_Shimadzu TOC Analyser_dissolved organic carbon.csv")[, DateHeure := ymd_hms(DateHeure)][!is.na(doc_mg.L)][!is.na(DateHeure)]
+
+naizin_dt <- merge(discharge_dt, doc_dt, by = "DateHeure", all.x = T)[, 
+  c("year", "commondate", "Date") := .(
+    year(DateHeure),
+    as.Date(paste0("2000-", format(DateHeure, "%j")), "%Y-%j"),
+    format(DateHeure, "%Y-%m-%d")
+  )
+]
+
+naizin_dt <- naizin_dt[q_L.s != shift(q_L.s, type = "lag")][, period := as.numeric(-(DateHeure - lead(DateHeure)))]
 ```
 
-
-```{r merge}
-naizin <- merge(discharge,doc,by = "DateHeure")
-naizin$year <- year(naizin$DateHeure)
-naizin$commondate <- as.Date(paste0("2000-", format(naizin$DateHeure,"%j")), "%Y-%j")
-naizin$Date <- format(naizin$DateHeure, "%Y-%m-%d")
-naizin$period <- with(naizin, as.numeric(-(DateHeure - lead(DateHeure)))) # period is calculated in hours
-```
 
 
 ## Visualisation
@@ -78,8 +82,8 @@ naizin$period <- with(naizin, as.numeric(-(DateHeure - lead(DateHeure)))) # peri
 
 title <- expression(atop("Series of DOC and Q by year"))
 plots <- ggarrange(
-ggplot(naizin, aes(x = commondate))+
-  geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
+ggplot(naizin_dt, aes(x = commondate))+
+  geom_point(aes(y = q_L.s * 1e-3, col = "Débit, L/s"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("lightblue"), name = "")+
   facet_grid(rows = vars(year))+
@@ -87,7 +91,7 @@ ggplot(naizin, aes(x = commondate))+
   theme_bw(base_size = 15)+
   theme(legend.position = "none"),
 
-ggplot(naizin, aes(x = commondate))+
+ggplot(naizin_dt, aes(x = commondate))+
   geom_point(aes(y = doc_mg.L, col = "DOC, mg.L"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("palegreen4"), name = "")+
@@ -113,11 +117,13 @@ ggarrange(
 
 ## Complete years
 
-Naizin is intermittent. All years can be used except 1999. 
+Naizin is intermittent. All years can be used except 1999 and 2025. 
 
-```{r complete-years}
-complete_years <- unique(naizin$year)[-which(unique(naizin$year == 1999))]
-naizin_complete <- naizin %>% filter(year %in% complete_years)
+```{r complete_years}
+complete_years <- c(2000:2024)
+naizin_complete <- naizin_dt[year %in% complete_years]
+
+
 ```
 
 
@@ -125,19 +131,19 @@ naizin_complete <- naizin %>% filter(year %in% complete_years)
 
 ```{r summary-data}
 summary_naizin <- merge(
-naizin %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / ")),
-naizin %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
-  merge(naizin %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
-  merge(naizin %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
-  merge(naizin %>% group_by(year) %>% summarise("Median sampling interval, h" = round(median(period, na.rm = T),1)), by = "year", all = T) %>%
+naizin_dt %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / ")),
+naizin_dt %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
+  merge(naizin_dt %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
+  merge(naizin_dt %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
+  merge(naizin_dt %>% group_by(year) %>% summarise("Median sampling interval, min" = round(median(period, na.rm = T),1)), by = "year", all = T) %>%
   rbind(c("All years", 
-          dim(subset(naizin, !is.na(doc_mg.L)))[1], 
-          paste(quantile(naizin$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
-          dim(subset(naizin, !is.na(q_L.s)))[1], 
-          paste(round(quantile(naizin$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
-          length(unique(naizin$Date)),
-          round(cor(naizin$doc_mg.L, naizin$q_L.s, use = "pairwise.complete.obs" ),2),
-          round(median(naizin$period, na.rm = T),1)
+          dim(subset(naizin_dt, !is.na(doc_mg.L)))[1], 
+          paste(quantile(naizin_dt$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(naizin_dt, !is.na(q_L.s)))[1], 
+          paste(round(quantile(naizin_dt$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+          length(unique(naizin_dt$Date)),
+          round(cor(naizin_dt$doc_mg.L, naizin_dt$q_L.s, use = "pairwise.complete.obs" ),2),
+          round(median(naizin_dt$period, na.rm = T),1)
            )) %>%
      rbind(c("Complete years", 
            dim(subset(naizin_complete, !is.na(doc_mg.L)))[1], 
@@ -148,65 +154,129 @@ naizin %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q o
            round(cor(naizin_complete$doc_mg.L, naizin_complete$q_L.s, use = "pairwise.complete.obs" ),2),
            round(median(naizin_complete$period, na.rm = T),1)
            )
-           )
+           ) %>%  mutate(`DOCobs/Qobs` = round(as.numeric(`Number of DOC observations`)/as.numeric(`Number of Q observations`),2)) 
 
 knitr::kable(summary_naizin, caption = "Summary table of naizin data") %>% kableExtra::kable_styling()
 
 ```
 
+## Check flux no u
 
-# Annual and interannual flux 
+```{r flux-doc-direct}
+naizin_direct <- naizin_complete %>% mutate(f_doc = doc_mg.L*1e-9*q_L.s, load = f_doc*period)
+naizin_direct$qobs <- with(naizin_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
+
+annual_flux_direct <- naizin_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+                                                                    mean_q = mean(q_L.s * 1e-3, na.rm = T),
+                                                                    mean_qobs = mean(qobs, na.rm = T),
+                                                                    mean_doc = mean(doc_mg.L, na.rm = T), 
+                                                                    sum_loadobs = sum(load, na.rm = T), 
+                                                                    sum_qobs = sum(qobs, na.rm = T), 
+                                                                    sum_q = sum(q_L.s, na.rm = T)) %>%
+  mutate(annual_fdoc = sum_loadobs*sum_q/sum_qobs)
+
+annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 5) %>% kable_styling()
 
 
-On considère que l'erreur sur DOC vient de la mesure par analyse TOC.
+rm(naizin_dt)
+rm(discharge_dt)
+rm(naizin_direct)
+gc()
+```
+
+# Annual and interannual flux doc
+
+Il y a plus de mesures de Q que de mesures de doc. On utilise l'équivalence sum(load)/sum(q) = sum(load obs)/sum(q obs).
+
+## total flux doc
+
 
 ```{r uncertainties}
 nyears <- length(complete_years)
 
 q_u <- 0.1
 
-nobs <- dim(naizin_complete)[1]
-nrep <- 1000
 ```
 
-## total flux
+```{r flux-for-obs-doc}
+naizin_doc <- naizin_complete[!is.na(doc_mg.L)]
 
-```{r compute-flux}
-#doc matrix
-doc_meas <- matrix(naizin_complete$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
+nrep <- 1000
+nobs <- dim(naizin_doc)[1]
 
-doc_cv <- 3.3*doc_meas^(-0.6) # from all data available on 29/05/2026
-doc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
-doc_noise <- doc_cv*doc_random
-doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
+naizin_doc_dt <- data.table(
+  rep = rep(1:nrep, each = nobs),
+  year = rep(naizin_doc$year, nrep),
+  doc_meas = rep(naizin_doc$doc_mg.L, nrep),
+  q_meas = rep(naizin_doc$q_L.s, nrep),
+  period = rep(naizin_doc$period, nrep)
+)[, 
+  load_ton := {
+    doc_cv <- 3.3 * doc_meas^(-0.6)
+    doc_mat <- doc_meas * (1 + doc_cv * rnorm(.N, mean = 0, sd = 1) / 100)
+    q_mat <- q_meas * (1 + rnorm(.N, mean = 0, sd = q_u))
+    doc_mat * 1e-9 * q_mat * period # load in ton
+  }
+][, q_mat := q_meas * (1 + rnorm(.N, mean = 0, sd = q_u))]  
 
-# Q matrix
-q_meas <- matrix(naizin_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
-q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
-q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+# Sommes annuelles directement
+sum_loadobs_wide <- naizin_doc_dt[, .(load_sum = sum(load_ton, na.rm = TRUE)), 
+                              by = .(rep, year)] |> 
+                   dcast(rep ~ year, value.var = "load_sum")
 
-# period mat
-period_mat <- matrix(naizin_complete$period, nrow = nrep, ncol = nobs, byrow = T) # in hours
+sum_loadobs <- sum_loadobs_wide %>% mutate(rep = NULL)
+                                           
+sum_qobs_wide <- naizin_doc_dt[, .(q_sum = sum(q_mat, na.rm = TRUE)), 
+                           by = .(rep, year)] |>
+                dcast(rep ~ year, value.var = "q_sum")
+sum_qobs <- sum_qobs_wide %>% mutate(rep = NULL)
+```
 
+```{r sum-q-tot-doc, cache.lazy = F}
 
-
-# Flux per time step
-flux_ton_mat <- doc_mat*1e-9*q_mat*period_mat*60*60 # period_mat is in hours -> converted to s 
-flux_ton.s_mat <- doc_mat*1e-9*q_mat # without period
-
-
-
-# Annual flux
-index_years <- lapply(complete_years, function(y){which(naizin_complete$year == y)}) # list of indices corresponding to each year
-annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and n_years columns 
+nrep <- 1000
+nobs <- dim(naizin_complete)[1]
 
 
-# Add uncertainty on years with less frequent sampling
-less_years <- c(2003,2022,2023,2024)
-less_years_noise <- matrix(rnorm(nrep*length(less_years), mean = 0, sd = 0.07), nrow = nrep, ncol = length(less_years))
+noise_matrix <- matrix(rnorm(nobs * nrep, mean = 0, sd = q_u), 
+                       nrow = nobs, ncol = nrep)
 
-less_years_index <- which(complete_years %in% less_years) # list of indices corresponding to less complete years (serves to find the columns of annual_flux_ton.y corresponding to that year)
-annual_flux_ton.y[,less_years_index] <-  annual_flux_ton.y[,less_years_index] * (1 + less_years_noise)
+# Appliquer le bruit vectorisé
+q_noisy <- naizin_complete$q_L.s * (1 + noise_matrix)
+
+# Sommer par année et réplication
+sum_qtot_wide <- data.table(
+  rep = rep(1:nrep, each = length(complete_years)),
+  t(apply(q_noisy, 2, function(col) {
+    tapply(col, naizin_complete$year, sum, na.rm = TRUE)
+  }))
+)
+
+# Format final
+colnames(sum_qtot_wide) <- c("rep", unique(naizin_complete$year))
+
+sum_qtot_long <- melt(sum_qtot_wide, 
+                      id.vars = "rep", 
+                      variable.name = "year", 
+                      value.name = "q")
+
+sum_qtot_long[, year := as.numeric(as.character(year))]
+
+sum_qtot <- sum_qtot_long[, .(qtot = sum(q, na.rm = TRUE)), by = .(rep, year)] %>% dcast(rep ~ year, value.var = "qtot") %>% mutate(rep = NULL)
+```
+
+
+```{r compute-flux-doc}
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
+
+u_method <- (18-0.18*(summary_naizin$`DOCobs/Qobs`*100))/100 # déterminé dans arles_method pour des flux
+# add uncertainty due to method, based on % POCobs/Qobs and results 
+sd_by_year <- rep(u_method[match(complete_years, summary_naizin$year)], each = nrep)
+print(u_method)
+
+flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = sd_by_year), nrow = nrep, ncol = length(complete_years))
+
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
 
 annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
@@ -234,11 +304,10 @@ total_flux_df$group <- c(rep("annual", nyears), "interannual")
 
 # Q df ----
 
-annual_q <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
-annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
-annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
-interannual_q <- rowMeans(annual_q, na.rm = T) # mean interannual flux per iteration of the bootstrap
+annual_q_pi <- apply(sum_qtot, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_q_mean <- colMeans(sum_qtot, na.rm = T) # mean annual flux per year. 1 vector
+annual_q_sd <- apply(sum_qtot, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+interannual_q <- rowMeans(sum_qtot, na.rm = T) # mean interannual flux per iteration of the bootstrap
 interannual_q_pi <- quantile(interannual_q, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
 interannual_q_mean <- mean(interannual_q, na.rm = T) # mean interannual flux
 interannual_q_variability <- sd(annual_q_mean, na.rm = T) # standard deviation of interannual flux per year
@@ -249,8 +318,11 @@ q_df <- data.frame(year = c(complete_years, "interannual"),
                         q_pi_lower = c(annual_q_pi[1,], interannual_q_pi[1]), 
                         q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
                    group = c(rep("annual", nyears), "interannual"))
+```
 
-# Plot -----
+
+```{r plot-flux-doc}
+
 ggplot()+
   geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
     geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
@@ -267,17 +339,20 @@ ggplot()+
   geom_errorbar(data = filter(q_df, year == "interannual"), aes(x = year, ymin = q_mean - q_variability, ymax = q_mean + q_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Discharge (m3/year)", fill = "")+
+   labs(x = "Year", y = "Discharge (L/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
-knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+knitr::kable(total_flux_df, digits = 2, row.names = F, caption = "DOC fluxes, ton/year") %>% kableExtra::kable_styling()
 
 ```
 
-## Specific flux
 
-```{r specific-flux}
+
+
+## Specific flux doc
+
+```{r specific-flux-doc}
 total_sflux_df <- cbind(total_flux_df[,"year"], total_flux_df[,2:5] / bv, total_flux_df[,"group"]) %>% setNames(names(total_flux_df))
 #total_sflux_df <- rbind(annual_sflux_df, interannual_sflux_df)
 total_sflux_df$group <- c(rep("annual", nyears), "interannual")
@@ -288,37 +363,39 @@ ggplot()+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (tons/km2/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/km2/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
-ggsave(here("figures","sflux_naizin.svg"))
+ggsave(here("figures","sflux_naizin_doc.svg"))
 
-knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+knitr::kable(total_sflux_df, digits = 2, row.names = F, caption = "DOC fluxes, ton/km2/year") %>% kableExtra::kable_styling()
 ```
 
 
-## Variance decomposition
+## Variance decomposition doc
 
-Comme flux = DOC × Q × période, on a exactement : ln(flux) = ln(DOC) + ln(Q) + ln(période)
-Et donc, sans approximation : Var(ln flux) = Var(ln DOC) + Var(ln Q) + 2·Cov(ln DOC, ln Q)
-(Claude)
+Aïe aïe le flux est calculé autrement que pour les simples sommes ! 
 
-Les lignes où Q = 0 sont exclues du calcul de variance.
+LOAD = sumQ * sum(load obs) / sum(q obs)
 
-```{r variance}
+log(load) = log(sumQ) + log(sum load obs) - log(sum q obs)
+
+log(load) = log(q1)+...+log(qtot)
+
+```{r variance-doc, eval = F}
 ## Variances par année
 
-list_var <- lapply(index_years, function(idx){
+list_var <- lapply(1:length(complete_years), function(idx){
   
-lnQ <- as.vector(log(q_mat[,idx]))
-lnDOC <- as.vector(log(doc_mat[,idx]))
-lnp <- as.vector(log(period_mat[,idx]))
+lnQtot <- as.vector(log(sum_qtot[,idx]))
+lnloadobs <- as.vector(log(sum_loadobs[,idx]))
+lnQobs <- as.vector(log(sum_qobs[,idx]))
 
-mask <- complete.cases(lnDOC, lnQ, lnp)  &
-        is.finite(lnDOC) & is.finite(lnQ) & is.finite(lnp)
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
 
-M <- cbind(DOC = lnDOC[mask], Q = lnQ[mask], p = lnp[mask])
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
 
 cov_matrix <- cov(M, use = "pairwise.complete.obs") 
 
@@ -337,7 +414,7 @@ var_flux_by_year <- lapply(list_var, function(i){
 vars_by_year <- lapply(list_var, diag) %>% bind_rows(.id = "year") # variance des paramètres par année
 cov_by_year <- lapply(list_var, function(i){
   vals <- i[upper.tri(i)]
-  setNames(as.list(vals), c("cov_qdoc","cov_pdoc","cov_pq"))}) %>% 
+  setNames(as.list(vals), c("cov_loadQtot","cov_QobsQtot","cov_Qobsload"))}) %>% 
   bind_rows(.id = "year") 
 
 annual_variances <- merge(var_flux_by_year, vars_by_year, by = "year") %>% merge(cov_by_year, by = "year")
@@ -346,14 +423,14 @@ annual_variances$year <- complete_years
 
 # Variance interannuelle
 
-lnQ <- as.vector(log(q_mat))
-lnDOC <- as.vector(log(doc_mat))
-lnp <- as.vector(log(period_mat))
+lnQtot <- as.vector(log(sum_qtot))
+lnloadobs <- as.vector(log(sum_loadobs))
+lnQobs <- as.vector(log(sum_qobs))
 
-mask <- complete.cases(lnDOC, lnQ, lnp)  &
-        is.finite(lnDOC) & is.finite(lnQ) & is.finite(lnp)
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
 
-M <- cbind(DOC = lnDOC[mask], Q = lnQ[mask], p = lnp[mask])
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
 
 cov_matrix <- cov(M, use = "pairwise.complete.obs") 
 
@@ -367,7 +444,7 @@ if(var_lnF_check != var_lnF){warning("Attention : les variances ne correspondent
 # put results in df
 vars_interannual <- c(var_lnF, diag(cov_matrix)) # variance des paramètres par année
 cov_interannual <- cov_matrix[upper.tri(cov_matrix)] %>%
-  setNames(c("cov_qdoc","cov_pdoc","cov_pq")) 
+  setNames(c("cov_loadQtot","cov_QobsQtot","cov_Qobsload")) 
 
 interannual_variances <- c(year = "Interrannuel", vars_interannual, cov_interannual)
 
@@ -376,37 +453,39 @@ all_variances <- rbind(annual_variances, interannual_variances) %>% mutate(acros
 
 
 variance_decomposition <- all_variances  %>% 
-  mutate(part_Q = Q/var_lnF, part_DOC = DOC/var_lnF, part_p = p/var_lnF, 
-         part_covqdoc = 2*cov_qdoc/var_lnF, part_covpq = 2*cov_pq/var_lnF, part_covpdoc = 2*cov_pdoc/var_lnF, 
-         part_p_tot = part_p+part_covpq+part_covpdoc, 
-         check = part_Q+part_DOC+part_p+part_covqdoc+part_covpq+part_covpdoc)
+  mutate(part_Qtot = Qtot/var_lnF, part_load = load/var_lnF, part_Qobs = Qobs/var_lnF, 
+         part_covloadQtot = 2*cov_loadQtot/var_lnF, 
+         part_covQobsQtot = 2*cov_QobsQtot/var_lnF, 
+         part_covQobsload = 2*cov_Qobsload/var_lnF, 
+         part_cov = part_covloadQtot + part_covQobsQtot + part_covQobsload,
+         check = part_Qtot+part_load+part_Qobs+part_covloadQtot+part_covQobsQtot+part_covQobsload)
 
 
 vd_long <- variance_decomposition %>%
-  select(year, part_Q, part_DOC, part_covqdoc, part_p_tot) %>%
-  tidyr::pivot_longer(cols = c(part_Q, part_DOC, part_covqdoc, part_p_tot),
+  select(year, part_Qtot, part_load, part_Qobs, part_cov) %>%
+  tidyr::pivot_longer(cols = c(part_Qtot, part_load, part_Qobs, part_cov),
                names_to = "terme", values_to = "part")  %>%
   mutate(terme = recode(terme,
-                         part_Q = "Débit (Q)",
-                         part_DOC = "DOC",
-                         part_covqdoc = "Covariance Q-DOC",
-                        part_p_tot = "Variance due aux intervalles de prélèvement"))
+                         part_Qtot = "Variance Q annuel",
+                         part_load = "Variance flux instantané",
+                         part_Qobs = "Variance Q flux",
+                        part_cov = "Covariances"))
 
 ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
   geom_col(position = "stack") +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
-  scale_fill_manual(values = c("Débit (Q)" = "lightblue",
-                                "DOC" = "indianred",
-                                "Covariance Q-DOC" = "darkblue",
-                               "Variance due aux intervalles de prélèvement" = "darkred")) +
+  scale_fill_manual(values = c("Variance Q annuel" = "lightblue",
+                                "Variance flux instantané" = "indianred",
+                                "Variance Q flux" = "darkblue",
+                               "Covariances" = "darkred")) +
   scale_y_continuous(labels = scales::percent, breaks = c(-0.40,-0.20,0,0.20,0.40,0.60,0.80,1.00,1.2,1.4)) +
   labs(x = "Année", y = "Part de la variance du log-flux",
        fill = "Terme",
-       title = "Contribution de Q, DOC et de leur covariance à la variance du flux") +
+       title = "Décomposition de la variance du flux") +
   theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))
 
 vd_long_abs <- variance_decomposition %>%
-  select(year, Q, DOC, p, cov_qdoc, cov_pq, cov_pdoc) %>%
+  select(year, Qtot, load, Qobs, cov_loadQtot,cov_QobsQtot,cov_Qobsload) %>%
   tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur")
 
 ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
@@ -415,19 +494,16 @@ ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
              inherit.aes = FALSE, shape = 18, size = 3) +
   scale_fill_manual(values = c("darkblue","lightblue","darkred","indianred","palegreen4","cornsilk3"))+
    theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  scale_y_continuous(trans = "log", breaks = )+
   labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
 
 ```
 
 
-# Export données
 
-```{r exporter-valeurs-dans-csv-commun}
+# Export données doc
 
-library(readxl)
-library(writexl)
-
-
+```{r exporter-valeurs-doc-dans-csv-commun}
 rmd_id <- "naizin"
 
 if(unit_flux == "ton"){
@@ -460,6 +536,7 @@ rmd_values <- data.frame(
   )
 }
 
+
 # Lire le fichier existant ou créer un dataframe vide
 if (file.exists(here("resultats.xlsx"))) {
   df_shared <- read_xlsx(here("resultats.xlsx"))
@@ -479,4 +556,3 @@ if (rmd_id %in% df_shared$rmd) {
 # Réécrire
 write_xlsx(df_shared, here("resultats.xlsx"))
 ```
-
