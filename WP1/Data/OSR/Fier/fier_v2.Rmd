@@ -222,6 +222,49 @@ annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 2) %>%
 
 ```
 
+## Export summary
+
+```{r export-summary}
+
+rmd_id <- "fier"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "POC",
+  annees_debit = setdiff(unique(filter(summary_fier, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_fier[nrow(summary_fier) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(fier$period, na.rm = T),
+  range_debit = summary_fier[nrow(summary_fier) - 1, ] %>% select(`Q range, m3/s`) %>% paste(),
+  unit_debit = "m3/s",
+  annees_mes = setdiff(unique(filter(summary_fier, !is.na(`Number of MES observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_mes = summary_fier[nrow(summary_fier) - 1, ] %>% select(`Number of MES observations`) %>% pull(),
+  range_mes = summary_fier[nrow(summary_fier) - 1, ] %>% select(`MES range, mg/L`) %>% paste(),
+  annees_oc = setdiff(unique(filter(summary_fier, !is.na(`Number of POC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(fier$poc_timeinterval) %>% length(),
+  range_oc = summary_fier[nrow(summary_fier) - 1, ] %>% select(`POC, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "time interval, 1 mois")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
+```
 
 # Annual and interannual flux 
 

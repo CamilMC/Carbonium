@@ -197,8 +197,6 @@ knitr::kable(summary_ardeche, digits = 2, caption = "Summary table of ardeche da
 
 ```
 
-
-
 ```{r exporter-summary}
 
 rmd_id <- "ardeche"

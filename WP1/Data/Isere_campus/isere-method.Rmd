@@ -91,6 +91,30 @@ isere$period <- as.numeric(-(isere$DateHeure - lead(isere$DateHeure))) # period 
 
 ```
 
+```{r isere-q-oneyear}
+ggplot()+
+  geom_point(data = filter(isere, year == 2023), aes(x = commondate, y = q_m3.s, col = "2023"), size = 0.5)+
+  geom_point(data = filter(isere, year == 2022), aes(x = commondate, y = q_m3.s, col = "2022"), size = 0.5)+
+  scale_color_manual(values = c("darkblue","orange"))+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  theme_bw()
+
+ggsave(here("Conférences et présentations","debit_isere.svg"))
+```
+
+```{r isere-2007}
+
+ggplot(data = filter(isere, year == 2007))+
+  geom_point(aes(x = DateHeure, y = q_m3.s, col = "discharge"), size = 0.5)+
+  geom_point(aes(x= DateHeure, y = poc_percent*mes_g.L*500, col = "POC, mg/L"))+
+  scale_y_continuous(sec.axis = sec_axis(trans=~./500, name = "POC, mg/L"))+
+  scale_color_manual(values = c("darkblue","orange"))+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  theme_bw()
+
+ggsave(here("Conférences et présentations","debit_isere.svg"))
+```
+
 
 ## Visualization 
 
@@ -200,15 +224,6 @@ isere %>% subset(!is.na(poc_percent)) %>% group_by(year) %>% summarise("Number o
 knitr::kable(summary_isere, caption = "Summary table of Isere data") %>% kableExtra::kable_styling()
 
 ```
-
-
-
-
-
-
-
-
-
 
 
 

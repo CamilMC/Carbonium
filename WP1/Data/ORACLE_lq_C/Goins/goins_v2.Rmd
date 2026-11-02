@@ -119,12 +119,13 @@ annotate_figure(plots, top = text_grob(title))
 ```
 
 
+
 ## Characteristics
 
 ```{r summary-data}
 summary_goins <- merge(
 goins %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(round(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / ")),
-goins %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, m3/s" = paste(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>% 
+goins %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T), collapse = " / ")), by = "year", all = T) %>% 
   merge(goins %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(Date))), by = "year", all = T) %>%
   merge(goins %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
   rbind(c("All years", 
@@ -176,6 +177,50 @@ annual_flux_direct <- goins_direct %>% group_by(year) %>% summarise(mean_period 
 
 annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 5) %>% kable_styling()
 
+```
+
+## Export summary
+
+```{r export-summary}
+
+rmd_id <- "goins"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  annees_debit = setdiff(unique(filter(summary_goins, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_goins[nrow(summary_goins) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(goins$period, na.rm = T),
+  range_debit = summary_goins[nrow(summary_goins) - 1, ] %>% select(`Q range, L/s`) %>% paste(),
+  unit_debit = "L/s",
+  annees_mes = NA,
+  nb_obs_mes = NA,
+  range_mes = NA,
+  annees_oc = setdiff(unique(filter(summary_goins, !is.na(`Number of DOC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(goins$poc_timeinterval) %>% length(),
+  range_oc = summary_goins[nrow(summary_goins) - 1, ] %>% select(`DOC range, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "ponctuel")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
 ```
 
 # Annual and interannual fluxes
