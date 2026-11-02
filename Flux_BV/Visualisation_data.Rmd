@@ -1,0 +1,1800 @@
+---
+title: "Visualisation BV"
+author: "CamilMC"
+date: "2026-09-04"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+```{r libraries}
+
+library(dplyr)
+library(tidyr)
+
+library(readxl)
+library(writexl)
+
+library(ggplot2)
+library(corrplot)
+library(plotly)
+library(htmlwidgets)
+
+library(ggpubr)
+```
+
+```{r col-obs}
+col_obs <- c("AgrHys" = "skyblue", "Aurade"= "springgreen4", "Draix-Bleone" = "darkolivegreen3", "Jurassic Karst"= "brown4", "M-Tropics"=  "goldenrod2",
+            "MOOSE"= "tomato3", "Obs-ERA" = "steelblue", "Oracle" = "lightcyan3", "OSR" = "coral3", "OTHU" = "darkorange2", "SA Ardieres Morcille" ="turquoise3",
+            "SNO Tourbiere" = "thistle3", "ZA Loire" = "grey", "ZABR" = "maroon3")
+```
+
+
+
+# BV pour POC et DOC
+
+```{r get-data}
+flux <- read_xlsx("Flux/resultats_260924.xlsx")
+flux$fullName <- with(flux, paste(Obs, Station, Name, sep = ", "))
+unique_obs <- flux %>% select(c("fullName","Obs")) %>% unique
+
+info <- read_xlsx("../Etat_des_lieux_260928.xlsx", sheet = "Export_bv")%>% unique()
+
+flux_bv <- flux %>% merge(info, by = c("Obs", "Station", "Name", "carbon"), all = T)
+```
+
+
+```{r view-which-is-which}
+ggplot(flux)+
+    geom_vline(xintercept = 1, col = "black")+
+  geom_point(aes(x=flux_ton_km2, y = fullName, col = Obs))+
+  geom_errorbar(aes(xmin = flux_ton_km2_pil, xmax = flux_ton_km2_piu, y = fullName, col = Obs))+
+  facet_grid(cols = vars(carbon), scales = "free_x")+
+  scale_color_manual(values = col_obs)+
+  scale_x_continuous(trans = "log", breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4, 1e5), minor_breaks = NULL)+
+  labs(x = "Flux in ton/km2/year", y = "")+
+  theme_bw()+
+  theme(legend.position = "none", axis.text.y = element_text(color = col_obs[sort(unique_obs$Obs)]), axis.text.x = element_text(angle = 90, v = 0.5))
+
+ggplot(flux)+
+    geom_vline(xintercept = 1, col = "black")+
+  geom_point(aes(x=flux_ton_km2, y = fullName, col = Obs))+
+  geom_errorbar(aes(xmin = flux_ton_km2_pil, xmax = flux_ton_km2_piu, y = fullName, col = Obs))+
+  facet_grid(cols = vars(carbon), scales = "free_x")+
+  scale_color_manual(values = col_obs)+
+  labs(x = "Flux in ton/km2/year", y = "")+
+  theme_bw()+
+  theme(legend.position = "none", axis.text.y = element_text(color = col_obs[sort(unique_obs$Obs)]), axis.text.x = element_text(angle = 90, v = 0.5))
+
+
+ggplot(flux)+geom_point(aes(x=flux_ton, y = fullName, col = Obs))+
+  geom_errorbar(aes(xmin = flux_ton_pil, xmax = flux_ton_piu, y = fullName, col = Obs))+
+  facet_grid(cols = vars(carbon), scales = "free_x")+
+  scale_color_manual(values = col_obs)+
+  scale_x_continuous(trans = "log", breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4, 1e5), minor_breaks = NULL)+
+  labs(x = "Flux in ton/year", y = "")+
+  theme_bw()+
+  theme(legend.position = "none", axis.text.y = element_text(color = col_obs[sort(unique_obs$Obs)]), axis.text.x = element_text(angle = 90, v = 0.5))
+
+```
+
+```{r flux-total}
+ggplot(flux)+
+  geom_col(aes(x=flux_ton_km2, y = fullName, fill = carbon))+
+  geom_errorbar(aes(xmin = flux_ton_km2_pil, xmax = flux_ton_km2_piu, y = fullName, col = carbon))+
+  #scale_x_continuous(trans = "log", breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4, 1e5), minor_breaks = NULL)+
+  labs(x = "Flux in ton/km2/year", y = "")+
+  theme_bw()+
+  theme(legend.position = "bottom")
+
+```
+
+
+
+
+# Comparaison-clc-esa
+
+https://collections.sentinel-hub.com/worldcover/readme.html
+
+Explication des classes ESA: https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/docs/WorldCover_PUM_V2.0.pdf
+
+Technical details CLC https://land.copernicus.eu/en/products/corine-land-cover?tab=technical_summary
+https://land.copernicus.eu/en/technical-library/clc-illustrated-nomenclature-guidelines/@@download/file
+
+```{r read-esa-data}
+esawc_wp1 <- read.csv("Land Cover/World Cover ESA/esa_wp1.csv") %>% mutate(X = NULL)
+clc_wp1 <- read.csv("Land Cover/Corine Land Cover/clc_wide_francemetro_wp1.csv")  %>% mutate(X = NULL)
+
+flux_lc_wp1 <- flux %>% merge(esawc_wp1, by = c("Name","Station","Obs")) %>% merge(clc_wp1, by = c("Name","Station","Obs"), all = T) 
+
+esawc_wp3 <- read.csv("Land Cover/World Cover ESA/esa_wp3.csv") %>% mutate(X = NULL)
+clc_wp3 <- read.csv("Land Cover/Corine Land Cover/clc_wide_francemetro_wp3.csv")  %>% mutate(X = NULL)
+
+flux_lc_wp3 <- flux %>% merge(esawc_wp3, by = c("Name","Station","Obs")) %>% merge(clc_wp3, by = c("Name","Station","Obs"), all = T) 
+
+flux_lc <- rbind(flux_lc_wp1, flux_lc_wp3) %>% unique()
+  
+esawc_classes <- c("X10" = "ESA.Tree.Cover",
+                   "X20" = "ESA.Shrubland",
+                   "X30" = "ESA.Grassland",
+                   "X40" = "ESA.Cropland",
+                   "X50" = "ESA.Built.up",
+                   "X60" = "ESA.Bare",
+                   "X70" = "ESA.Snow.and.ice",
+                   "X80" = "ESA.Permanent.water.bodies",
+                   "X90" = "ESA.Herbaceous.wetland",
+                   "X100" = "ESA.Mangroves",
+                   "X110" = "ESA.Moss.and.lichen")
+
+names_esa <- esawc_classes[names(flux_lc)]
+names(flux_lc) <- ifelse(is.na(names_esa), names(flux_lc), names_esa)
+```
+
+
+## View classes ESA
+
+```{r visualiser-esawc-bv}
+
+esawc <- rbind(esawc_wp1, esawc_wp3) %>% unique()
+esawc_long <- esawc %>% pivot_longer(cols = c("X10", "X20","X30","X40","X50","X60","X70","X80","X90","X100"), names_to = "esa_code")
+
+esawc_classes <- c("X10" = "Tree cover",
+                   "X20" = "Shrubland",
+                   "X30" = "Grassland",
+                   "X40" = "Cropland",
+                   "X50" = "Built up",
+                   "X60" = "Bare",
+                   "X70" = "Snow and ice",
+                   "X80" = "Permanent water bodies",
+                   "X90" = "Herbaceous wetland",
+                   "X100" = "Mangroves",
+                   "X110" = "Moss and lichen")
+
+esawc_long$esa_category <- esawc_classes[as.character(esawc_long$esa_code)]
+esawc_long$fullName <- with(esawc_long, paste(Obs, Station, Name, sep = ", "))
+
+
+```
+
+```{r view-esawc-plotly, fig.dim = c(10,5)}
+esawc_colors <- c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Shrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                  "Marshes and bogs" = "indianred2",
+                            "Mangroves" = "turquoise4",
+                             "Snow and ice" = "lightcyan3")
+
+p1 <- plot_ly(
+  data = esawc_long,
+  y = ~fullName,
+  x = ~value,
+  color = ~esa_category,
+  colors = esawc_colors,   
+  type = "bar",
+  orientation = "h",
+  text = ~esa_category,
+  textposition = "none",
+  hovertemplate = "%{text}<extra></extra>"
+) %>%
+  layout(
+    title = "ESA WC",
+    barmode = "stack",
+    xaxis = list(title = "Part"),
+    yaxis = list(
+      title = "",
+      ticks = "outside",
+      ticklen = 10,                 # espace en pixels entre le label et la barre
+      tickfont = list(size = 8),
+      tickcolor = "rgba(0,0,0,0)"   # tick invisible, seul l'espacement compte
+  ),
+    legend = list(title = list(text = "", font = list(size = 10), itemsizing = "constant", tracegroupgap = 2)))
+  
+
+p1 <- onRender(p1, "
+function(el, x) {
+  el.on('plotly_click', function(d) {
+    var clickedTrace = d.points[0].curveNumber;
+    var nTraces = x.data.length;
+    var visibility = [];
+    for (var i = 0; i < nTraces; i++) {
+      visibility.push(i === clickedTrace ? true : 'legendonly');
+    }
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+
+  // double-clic sur le graphique = réafficher toutes les classes
+  el.on('plotly_doubleclick', function() {
+    var nTraces = x.data.length;
+    var visibility = Array(nTraces).fill(true);
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+}
+")
+
+p1
+```
+
+## View classes CLC
+
+
+```{r esawc-ggplot}
+ggplot(esawc_long)+ geom_col(aes(y = fullName, x = value, fill = esa_category))+
+  scale_fill_manual(values = esawc_colors)+
+  labs(x = "%", y = "", fill = "ESA World Cover category")+
+  theme_bw()
+
+ggsave(here::here("figures","esawc.svg"))
+```
+
+
+```{r visualiser-clc-bv}
+clc_long_francemetro_wp1 <- read.csv("Land Cover/Corine Land Cover/clc_long_francemetro_wp1.csv")
+clc_long_francemetro_wp3 <- read.csv("Land Cover/Corine Land Cover/clc_long_francemetro_wp3.csv")
+
+clc_long_francemetro <- rbind(clc_long_francemetro_wp1, clc_long_francemetro_wp3) %>% mutate(X = NULL) %>% unique()
+
+clc_long_francemetro$fullName <- with(clc_long_francemetro, paste(Obs, Station, Name, sep = ", "))
+
+```
+
+```{r plotly-clc, fig.dim = c(10,5)}
+clc_colors <- c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Schrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                "Mangroves" = "turquoise4",
+                            "Marshes and bogs" = "indianred2",
+                             "Snow and ice" = "lightcyan3")
+
+p2 <- plot_ly(
+  data = clc_long_francemetro,
+  y = ~fullName,
+  x = ~value,
+  color = ~clc_category,
+  colors = clc_colors,   
+  type = "bar",
+  orientation = "h",
+  text = ~clc_category,
+  textposition = "none",
+  hovertemplate = "%{text}<extra></extra>"
+) %>%
+  layout(
+    title = "CLC",
+    barmode = "stack",
+    xaxis = list(title = "Part"),
+    yaxis = list(
+      title = "",
+      ticks = "outside",
+      ticklen = 10,                 # espace en pixels entre le label et la barre
+      tickfont = list(size = 8),
+      tickcolor = "rgba(0,0,0,0)"   # tick invisible, seul l'espacement compte
+  ),
+    legend = list(title = list(text = "", font = list(size = 10), itemsizing = "constant", tracegroupgap = 2)))
+  
+
+p2 <- onRender(p2, "
+function(el, x) {
+  el.on('plotly_click', function(d) {
+    var clickedTrace = d.points[0].curveNumber;
+    var nTraces = x.data.length;
+    var visibility = [];
+    for (var i = 0; i < nTraces; i++) {
+      visibility.push(i === clickedTrace ? true : 'legendonly');
+    }
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+
+  // double-clic sur le graphique = réafficher toutes les classes
+  el.on('plotly_doubleclick', function() {
+    var nTraces = x.data.length;
+    var visibility = Array(nTraces).fill(true);
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+}
+")
+
+p2
+```
+
+```{r side-by-side-plotly, fig.dim = c(10,5)}
+p3 <- plot_ly(
+  data = clc_long_francemetro,
+  y = ~fullName,
+  x = ~value,
+  color = ~clc_category,
+  colors = clc_colors,   
+  type = "bar",
+  orientation = "h",
+  text = ~clc_category,
+  textposition = "none",
+  hovertemplate = "%{text}<extra></extra>",
+  showlegend = F
+) %>%
+  layout(barmode = "stack",
+    xaxis = list(title = "Part"),
+    yaxis = list(
+      title = "",
+      ticks = "outside",
+      ticklen = 10,                 # espace en pixels entre le label et la barre
+      tickcolor = "rgba(0,0,0,0)"   # tick invisible, seul l'espacement compte
+  ),
+    legend = list(title = list(text = "", font = list(size = 10), itemsizing = "constant", tracegroupgap = 2)))
+  
+
+p3 <- onRender(p3, "
+function(el, x) {
+  el.on('plotly_click', function(d) {
+    var clickedTrace = d.points[0].curveNumber;
+    var nTraces = x.data.length;
+    var visibility = [];
+    for (var i = 0; i < nTraces; i++) {
+      visibility.push(i === clickedTrace ? true : 'legendonly');
+    }
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+
+  // double-clic sur le graphique = réafficher toutes les classes
+  el.on('plotly_doubleclick', function() {
+    var nTraces = x.data.length;
+    var visibility = Array(nTraces).fill(true);
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+}
+")
+
+subplot(p1 %>% layout(title = "ESAWC and CLC"),p3,nrows = 1, shareY = T)
+
+```
+
+## Comparison by site
+
+```{r zooms}
+ggpubr::ggarrange(ggplot(filter(clc_long_francemetro, Name == "Loge"))+
+  geom_bar(aes(x="", y = value, fill = clc_category), stat = "identity", width = 1) +
+  coord_polar("y", start = 0)+
+    labs(x="",y="", fill = "Loge",title = "CLC")+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Shrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+
+ggplot(filter(esawc_long, Name == "Loge"))+
+  geom_bar(aes(x="", y = value, fill = esa_category), stat = "identity", width = 1) +
+  labs(x="",y="", fill = "Loge",title = "ESA")+
+  coord_polar("y", start = 0)+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Shrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+ncol = 2, 
+common.legend = T,
+legend = "bottom"
+)
+
+
+ggpubr::ggarrange(ggplot(filter(clc_long_francemetro, Name == "Ratier"))+
+  geom_bar(aes(x="", y = value, fill = clc_category), stat = "identity", width = 1) +
+  coord_polar("y", start = 0)+
+    labs(x="",y="", fill = "Ratier",title = "CLC")+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Shrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+
+ggplot(filter(esawc_long, Name == "Ratier"))+
+  geom_bar(aes(x="", y = value, fill = esa_category), stat = "identity", width = 1) +
+  labs(x="",y="", fill = "Ratier",title = "ESA")+
+  coord_polar("y", start = 0)+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Shrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+ncol = 2, 
+common.legend = T,
+legend = "bottom"
+)
+
+
+ggpubr::ggarrange(ggplot(filter(clc_long_francemetro, Name == "Galabre"))+
+  geom_bar(aes(x="", y = value, fill = clc_category), stat = "identity", width = 1) +
+  coord_polar("y", start = 0)+
+    labs(x="",y="", fill = "Galabre",title = "CLC")+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Schrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+
+ggplot(filter(esawc_long, Name == "Galabre"))+
+  geom_bar(aes(x="", y = value, fill = esa_category), stat = "identity", width = 1) +
+  labs(x="",y="", fill = "Galabre",title = "ESA")+
+  coord_polar("y", start = 0)+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Shrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+ncol = 2, 
+common.legend = T,
+legend = "bottom"
+)
+
+ggpubr::ggarrange(ggplot(filter(clc_long_francemetro, Name == "Fier"))+
+  geom_bar(aes(x="", y = value, fill = clc_category), stat = "identity", width = 1) +
+  coord_polar("y", start = 0)+
+    labs(x="",y="", fill = "Fier",title = "CLC")+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Schrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+
+ggplot(filter(esawc_long, Name == "Fier"))+
+  geom_bar(aes(x="", y = value, fill = esa_category), stat = "identity", width = 1) +
+  labs(x="",y="", fill = "Fier",title = "ESA")+
+  coord_polar("y", start = 0)+
+  scale_fill_manual(values= c("Cropland" = "goldenrod2",
+                             "Tree cover" = "springgreen4",
+                             "Grassland" = "darkolivegreen3",
+                             "Shrubland" = "brown4",
+                             "Herbaceous wetland" = "peachpuff4", 
+                             "Built up" = "grey",
+                              "Bare" = "navajowhite", 
+                              "Permanent water bodies" = "steelblue",
+                             "Snow and ice" = "lightcyan3"
+                             ))+
+  theme_minimal(),
+ncol = 2, 
+common.legend = T,
+legend = "bottom"
+)
+
+
+
+```
+
+
+
+
+
+## Corplots
+
+```{r comparaison-clc-esa, fig.dim = c(8,8)}
+
+
+# Correlations between ESA and CLC categories
+
+mat <- flux_lc %>% select(c("Cropland","Tree.cover","Grassland", "Schrubland","Marshes.and.bogs","Built.up","Bare","Permanent.water.bodies","Snow.and.ice",
+  "ESA.Cropland","ESA.Tree.Cover","ESA.Grassland","ESA.Shrubland","ESA.Herbaceous.wetland","ESA.Built.up","ESA.Bare","ESA.Permanent.water.bodies","ESA.Snow.and.ice") )    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", sig.level = 0.05, diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation between CLC and ESA categories", mar = c(0, 0, 2, 0))
+```
+
+
+```{r correlation-flux-clc-esa, fig.dim = c(8,8)}
+# Correlation flux spécifique POC et ESA 
+
+mat <- flux_lc %>% filter(carbon == "POC") %>% select(c("flux_ton_km2","ESA.Cropland","ESA.Tree.Cover","ESA.Grassland","ESA.Shrubland","ESA.Herbaceous.wetland","ESA.Built.up","ESA.Bare","ESA.Permanent.water.bodies","ESA.Snow.and.ice"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and ESA", mar = c(0, 0, 2, 0))
+
+mat <- flux_lc %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2","ESA.Cropland","ESA.Tree.Cover","ESA.Grassland","ESA.Shrubland","ESA.Herbaceous.wetland","ESA.Built.up","ESA.Bare","ESA.Permanent.water.bodies","ESA.Snow.and.ice"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and ESA", mar = c(0, 0, 2, 0))
+
+# Correlation flux spécifique et CLC (seulement france metro)
+
+mat <- flux_lc %>% filter(carbon == "POC") %>% select(c("flux_ton_km2","Cropland","Tree.cover","Grassland", "Schrubland","Marshes.and.bogs","Built.up","Bare","Permanent.water.bodies","Snow.and.ice"))   
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton and CLC", mar = c(0, 0, 2, 0))
+
+mat <- flux_lc %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2","Cropland","Tree.cover","Grassland", "Schrubland","Marshes.and.bogs","Built.up","Bare","Permanent.water.bodies","Snow.and.ice"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton and CLC", mar = c(0, 0, 2, 0))
+```
+
+```{r scatterplots-lc}
+
+list_plots_esa <- list()
+
+for(i in paste(esawc_classes)){
+  if(!(i %in% names(flux_lc))){
+    message(paste("⚠️ Colonne manquante:", i))
+    next  # Passer à l'itération suivante
+  }
+  
+g <- ggplot(data = filter(flux_lc, !is.na(carbon)))+geom_point(aes(x= .data[[i]] , y = flux_ton_km2, col = Obs))+facet_grid(cols = vars(carbon))+
+  scale_color_manual(values = col_obs)+
+  theme_bw()
+
+list_plots_esa[[i]] <- g
+}
+
+list_plots_esa
+```
+
+# ERA5
+
+## Precip 
+
+```{r data-era5}
+precip_wp1 <- read.csv("ERA5/bassins_precip.csv") %>% mutate(X = NULL)
+temp_wp1 <- read.csv("ERA5/bassins_temp.csv") %>% mutate(X = NULL, year_vec = NULL)
+
+precip_wp3 <- read.csv("ERA5/bassins_precip_wp3.csv") %>% mutate(X = NULL)
+temp_wp3 <- read.csv("ERA5/bassins_temp_wp3.csv") %>% mutate(X = NULL, year_vec = NULL)
+
+era5 <- merge(
+  rbind(precip_wp1, precip_wp3),
+  rbind(temp_wp1, temp_wp3),
+  by = c("Name", "Station", "Obs","carbon") 
+) %>% mutate(fullName = paste(Obs, Station, Name, sep = ", ")) %>% unique()
+
+```
+
+
+
+
+
+
+```{r mean-precip-plot}
+library(RColorBrewer)
+
+n_categories <- length(unique(precip_wp1$Name))
+col_precip <- colorRampPalette(brewer.pal(10, "Spectral"))(n_categories)
+
+
+ggplot(precip_wp1, aes(x=mean.precip_selected*1000,y = mean.precip_30y*1000))+
+  geom_label(aes(label = Name, col = Name), size = 2)+
+  geom_abline(slope = 1, intercept = 0, linetype = 2) + theme_bw()+
+  scale_color_manual(values = col_precip)+
+  theme(legend.position = "none")
+
+ggplot(precip_wp1, aes(x=max.precip_selected,y = max.precip_30y))+
+  geom_label(aes(label = Name, col = Name), size = 2)+
+  geom_abline(slope = 1, intercept = 0, linetype = 2) + theme_bw()+
+  scale_color_manual(values = col_precip)+
+  theme(legend.position = "none")
+```
+
+```{r comparaison-pluvio}
+getwd()
+fseve <- read_xlsx("tableau4_fabien_seve.xlsx") %>% filter(!is.na(cumul_precip))
+
+precip_wp1$fullName <- with(precip_wp1, paste(Obs, Station, Name, sep = ", "))
+fseve$fullName <- with(fseve, paste(Obs, Station, Name, sep = ", ")) 
+
+
+ggplot()+
+  geom_point(data = filter(precip_wp1, fullName %in% fseve$fullName), aes(x=fullName, y = mean.precip_30y*1000, col = "ERA5"))+
+  geom_point(data = fseve, aes(x=fullName, y = cumul_precip, col = "pluvio"))+
+  labs(x="", y = "Cumul des précipitations", col = "Source")+
+  scale_color_manual(values = c(col_precip[2], col_precip[8]))+
+  theme_bw()+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Temp
+
+```{r mean-temp-plot}
+library(RColorBrewer)
+
+n_categories <- length(unique(temp_wp1$Name))
+col_temp <- colorRampPalette(brewer.pal(10, "Spectral"))(n_categories)
+
+
+ggplot(temp_wp1, aes(x=mean.temp_selected*1000,y = mean.temp_30y*1000))+
+  geom_label(aes(label = Name, col = Name), size = 2)+
+  geom_abline(slope = 1, intercept = 0, linetype = 2) + theme_bw()+
+  scale_color_manual(values = col_precip)+
+  theme(legend.position = "none")
+
+ggplot(temp_wp1, aes(x=max.temp_selected*1000,y = max.temp_30y*1000))+
+  geom_label(aes(label = Name, col = Name), size = 2)+
+  geom_abline(slope = 1, intercept = 0, linetype = 2) + theme_bw()+
+  scale_color_manual(values = col_precip)+
+  theme(legend.position = "none")
+```
+
+## Correlation with flux
+
+```{r correlation-with-flux}
+
+era5_flux <- mutate(flux, fullName = NULL) %>% merge(era5, by = c("Name","Station","Obs","carbon"))
+
+# Correlation flux spécifique  et ERA 
+
+mat <- era5_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2","mean.precip_selected","mean.precip_30y", "max.precip_selected", "max.precip_30y", "mean.temp_selected","mean.temp_30y", "max.temp_selected", "max.temp_30y" ))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and ERA5", mar = c(0, 0, 2, 0))
+
+mat <- era5_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2","mean.precip_selected","mean.precip_30y", "max.precip_selected", "max.precip_30y", "mean.temp_selected","mean.temp_30y", "max.temp_selected", "max.temp_30y" ))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and ERA5", mar = c(0, 0, 2, 0))
+
+# Correlation flux total  et ERA 
+
+mat <- era5_flux %>% filter(carbon == "POC") %>% select(c("flux_ton","mean.precip_selected","mean.precip_30y", "max.precip_selected", "max.precip_30y", "mean.temp_selected","mean.temp_30y", "max.temp_selected", "max.temp_30y" ))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/ and ERA5", mar = c(0, 0, 2, 0))
+
+mat <- era5_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton","mean.precip_selected","mean.precip_30y", "max.precip_selected", "max.precip_30y", "mean.temp_selected","mean.temp_30y", "max.temp_selected", "max.temp_30y" ))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton and ERA5", mar = c(0, 0, 2, 0))
+```
+
+## Scatterplots
+
+```{r scatterplots-era5}
+
+list_plots_era5 <- list()
+
+num_cols <- names(era5_flux)[sapply(era5_flux, is.numeric)]
+
+for(i in num_cols){
+g <- ggplot(data = era5_flux)+geom_point(aes(x= .data[[i]] , y = flux_ton_km2, col = Obs))+facet_grid(cols = vars(carbon))+
+  scale_color_manual(values = col_obs)+
+  theme_bw()
+
+list_plots_era5[[i]] <- g
+}
+
+list_plots_era5
+```
+
+
+
+# Safran
+
+## Precip Safran
+
+```{r data-safran}
+liquid_precip_safran_wp1 <- read.csv("SAFRAN/liquid_precip_safran_wp1.csv") %>% mutate(X = NULL)
+solid_precip_safran_wp1 <- read.csv("SAFRAN/solid_precip_safran_wp1.csv") %>% mutate(X = NULL, year_vec = NULL)
+temp_safran_wp1 <- read.csv("SAFRAN/temp_safran_wp1.csv") %>% mutate(X = NULL, year_vec = NULL)
+
+safran_wp1 <- liquid_precip_safran_wp1 %>% merge(solid_precip_safran_wp1, by = c("Name", "Station", "Obs", "carbon")) %>% merge(temp_safran_wp1, by = c("Name", "Station", "Obs", "carbon"))
+
+liquid_precip_safran_wp3 <- read.csv("SAFRAN/liquid_precip_safran_wp3.csv") %>% mutate(X = NULL)
+solid_precip_safran_wp3 <- read.csv("SAFRAN/solid_precip_safran_wp3.csv") %>% mutate(X = NULL, year_vec = NULL)
+temp_safran_wp3 <- read.csv("SAFRAN/temp_safran_wp3.csv") %>% mutate(X = NULL, year_vec = NULL)
+
+
+safran_wp3 <- liquid_precip_safran_wp3 %>% merge(solid_precip_safran_wp3, by = c("Name", "Station", "Obs", "carbon")) %>% merge(temp_safran_wp3, by = c("Name", "Station", "Obs", "carbon"))
+
+safran <- rbind(safran_wp1, safran_wp3) %>% mutate(fullName = paste(Obs, Station, Name, sep = ", ")) %>% mutate(total_precip = mean.lprecip_selected + mean.sprecip_selected)
+
+```
+
+```{r view-safran}
+ggplot(safran)+geom_col(aes(y = fullName, x = mean.lprecip_selected, fill = "liquid"))+
+  geom_col(aes(y = fullName, x = mean.sprecip_selected, fill = "solid"))+
+  facet_grid(cols = vars(carbon))
+
+
+```
+
+
+
+```{r comparaison-era5}
+climat <- safran %>% merge(era5, by = c("Name", "Station", "Obs", "fullName"), all = T)
+
+ggplot(climat) + geom_point(aes(x = mean.precip_selected*1000, y = total_precip, col = Obs))+
+  geom_abline(slope = 1, intercept = 0)+
+  scale_color_manual(values = col_obs)+
+  labs(x = "ERA5", y = "SAFRAN")
+
+
+ggplot(climat) + geom_point(aes(x = mean.temp_selected.y-275, y = mean.temp_selected.x, col = Obs))+
+  geom_abline(slope = 1, intercept = 0)+
+  scale_color_manual(values = col_obs)+
+  labs(x = "ERA5", y = "SAFRAN")
+```
+
+## Correlation with flux
+
+```{r correlation-safran-flux}
+
+safran_flux <- flux %>% merge(mutate(safran, carbon = NULL), by = c("Name","Station","Obs"))
+
+# Correlation flux spécifique  et SAFRAN
+
+mat <- safran_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2", "mean.lprecip_selected","max.lprecip_selected","nb.rain.days","mean.sprecip_selected","max.sprecip_selected","nb.snow.days","mean.temp_selected","max.temp_selected","total_precip"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and safran", mar = c(0, 0, 2, 0))
+
+mat <- safran_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2", "mean.lprecip_selected","max.lprecip_selected","nb.rain.days","mean.sprecip_selected","max.sprecip_selected","nb.snow.days","mean.temp_selected","max.temp_selected","total_precip"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and safran", mar = c(0, 0, 2, 0))
+
+
+# Correlation flux total  et SAFRAN
+
+mat <- safran_flux %>% filter(carbon == "POC") %>% select(c("flux_ton","mean.lprecip_selected","max.lprecip_selected","nb.rain.days","mean.sprecip_selected","max.sprecip_selected","nb.snow.days","mean.temp_selected","max.temp_selected","total_precip"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/ and safran", mar = c(0, 0, 2, 0))
+
+mat <- safran_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton","mean.lprecip_selected","max.lprecip_selected","nb.rain.days","mean.sprecip_selected","max.sprecip_selected","nb.snow.days","mean.temp_selected","max.temp_selected","total_precip"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton and safran", mar = c(0, 0, 2, 0))
+```
+## Scatterplots
+
+```{r scatterplots-safran}
+
+list_plots_safran <- list()
+
+num_cols <- names(safran_flux)[sapply(safran_flux, is.numeric)]
+
+for(i in num_cols){
+g <- ggplot(data = safran_flux)+geom_point(aes(x= .data[[i]] , y = flux_ton_km2, col = Obs))+facet_grid(cols = vars(carbon))+
+  scale_color_manual(values = col_obs)+
+  theme_bw()
+
+list_plots_safran[[i]] <- g
+}
+
+list_plots_safran
+```
+
+# Lithologie
+
+Accès à une seule classe depuis LiMW_GIS 2015.gdb (polygones).
+Source https://agupubs-onlinelibrary-wiley-com.insu.bib.cnrs.fr/doi/full/10.1029/2012GC004370
+
+https://projekte.cen.uni-hamburg.de/lithomap/
+
+
+
+```{r view-litho}
+litho_wp1_long <- read.csv("Lithologie/litho_wp1_long.csv") %>% mutate(X = NULL)
+
+litho_wp3_long <- read.csv("Lithologie/litho_wp3_long.csv") %>% mutate(X = NULL)
+
+litho_long <- rbind(litho_wp1_long, litho_wp3_long) %>% unique()
+
+litho_long$fullName <- with(litho_long, paste(Obs, Station, Name, sep = ", "))
+
+litho_classes <- c("su" =	"Unconsolidated sediments",
+                   "ss" =	"Siliciclastic sedimentary rocks",
+                   "py"	= "Pyroclastics",
+                   "sm"	= "Mixed sedimentary rocks",
+                   "sc" =	"Carbonate sedimentary rocks",
+                   "ev" = "Evaporites",
+                   "va" =	"Acid volcanic rocks",
+                   "vi" = "Intermediate volcanic rocks",
+                   "vb"	= "Basic volcanic rocks",
+                   "pa" =	"Acid plutonic rocks",
+                   "pi" = "Intermediate plutonic rocks",
+                   "pb" = "Basic plutonic rocks",
+                   "mt" = "Metamorphics",
+                   "wb" = "Water Bodies",
+                   "ig" = "Ice and Glaciers",
+                   "nd"	= "No Data")
+
+litho_long$litho_class <- litho_classes[as.character(litho_long$classe)]
+
+litho_class_colors <- c("Ice and Glaciers" = "grey",
+                        "Water Bodies" = "skyblue",
+                             "Metamorphics" = "springgreen4",
+                             "Acid plutonic rocks" = "darkolivegreen3",
+                             "Basic plutonic rocks" = "brown4",
+                             "Intermediate plutonic rocks" = "peachpuff4", 
+                             "Carbonate sedimentary rocks" = "goldenrod2",
+                             "Mixed sedimentary rocks" = "navajowhite", 
+                             "Siliciclastic sedimentary rocks" = "steelblue",
+                             "Unconsolidated sediments" = "lightcyan3",
+                             "Acid volcanic rocks" = "coral3",
+                             "Basic volcanic rocks" = "wheat1",
+                             "Intermediate volcanic rocks" = "darkorange2"
+                             )
+```
+
+```{r view-litho-plotly, fig.dim = c(10,5)}
+library(htmlwidgets)
+
+p <- plot_ly(
+  data = litho_long,
+  y = ~fullName,
+  x = ~pct_classe,
+  color = ~litho_class,
+  colors = litho_class_colors,   # ta palette nommée, réutilisée telle quelle
+  type = "bar",
+  orientation = "h",
+  text = ~litho_class,
+  textposition = "none",
+  hovertemplate = "%{text}<extra></extra>"
+) %>%
+  layout(
+    barmode = "stack",
+    xaxis = list(title = "Part"),
+    yaxis = list(
+      title = "",
+      ticks = "outside",
+      ticklen = 10,                 # espace en pixels entre le label et la barre,
+      tickfont = list(size = 8),
+      tickcolor = "rgba(0,0,0,0)"   # tick invisible, seul l'espacement compte
+  ),
+    legend = list(title = list(text = "", font = list(size = 10), itemsizing = "constant", tracegroupgap = 2)))
+  
+
+p <- onRender(p, "
+function(el, x) {
+  el.on('plotly_click', function(d) {
+    var clickedTrace = d.points[0].curveNumber;
+    var nTraces = x.data.length;
+    var visibility = [];
+    for (var i = 0; i < nTraces; i++) {
+      visibility.push(i === clickedTrace ? true : 'legendonly');
+    }
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+
+  // double-clic sur le graphique = réafficher toutes les classes
+  el.on('plotly_doubleclick', function() {
+    var nTraces = x.data.length;
+    var visibility = Array(nTraces).fill(true);
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+}
+")
+
+p
+```
+
+```{r litho-ggplot}
+ggplot(litho_long) + geom_col(aes(y = fullName, x = pct_classe, fill = litho_class))+
+  scale_fill_manual(values = litho_class_colors)+
+  labs(x = "%", y = "", fill = "Lithological category")+
+  theme_bw()
+
+ggsave(here::here("figures","litho.svg"))
+```
+
+## Correlation with litho
+
+```{r make-flux-litho}
+litho_wide <- litho_long %>% mutate(classe = NULL, X = NULL) %>% pivot_wider(names_from = "litho_class", values_from = "pct_classe", values_fill = 0)
+litho_flux <- flux %>% merge(litho_wide, by = c("Name","Station","Obs"))
+```
+
+```{r scatterplots-litho}
+
+list_plots_litho <- list()
+
+for(i in paste(litho_classes)){
+  if(!(i %in% names(litho_flux))){
+    message(paste("⚠️ Colonne manquante:", i))
+    next  # Passer à l'itération suivante
+  }
+  
+g <- ggplot(data = litho_flux)+geom_point(aes(x= .data[[i]] , y = flux_ton_km2, col = Obs))+facet_grid(cols = vars(carbon))+
+  scale_color_manual(values = col_obs)+
+  theme_bw()
+
+list_plots_litho[[i]] <- g
+}
+
+list_plots_litho
+```
+
+
+
+
+```{r correlation-flux-litho, fig.dim = c(8,8)}
+# Correlation flux spécifique  et ERA 
+
+mat <- litho_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2", "Metamorphics", "Acid plutonic rocks", "Carbonate sedimentary rocks", "Mixed sedimentary rocks", "Siliciclastic sedimentary rocks", "Unconsolidated sediments", "Basic volcanic rocks", "Ice and Glaciers", "Water Bodies", "Basic plutonic rocks", "Acid volcanic rocks", "Intermediate plutonic rocks", "Intermediate volcanic rocks"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and litho", mar = c(0, 0, 2, 0))
+
+mat <- litho_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2", "Metamorphics", "Acid plutonic rocks", "Carbonate sedimentary rocks", "Mixed sedimentary rocks", "Siliciclastic sedimentary rocks", "Unconsolidated sediments", "Basic volcanic rocks", "Ice and Glaciers", "Water Bodies", "Basic plutonic rocks", "Acid volcanic rocks", "Intermediate plutonic rocks", "Intermediate volcanic rocks"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and litho", mar = c(0, 0, 2, 0))
+
+
+# Correlation flux total  et ERA 
+
+mat <- litho_flux %>% filter(carbon == "POC") %>% select(c("flux_ton", "Metamorphics", "Acid plutonic rocks", "Carbonate sedimentary rocks", "Mixed sedimentary rocks", "Siliciclastic sedimentary rocks", "Unconsolidated sediments", "Basic volcanic rocks", "Ice and Glaciers", "Water Bodies", "Basic plutonic rocks", "Acid volcanic rocks", "Intermediate plutonic rocks", "Intermediate volcanic rocks"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/ and litho", mar = c(0, 0, 2, 0))
+
+mat <- litho_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton", "Metamorphics", "Acid plutonic rocks", "Carbonate sedimentary rocks", "Mixed sedimentary rocks", "Siliciclastic sedimentary rocks", "Unconsolidated sediments", "Basic volcanic rocks", "Ice and Glaciers", "Water Bodies", "Basic plutonic rocks", "Acid volcanic rocks", "Intermediate plutonic rocks", "Intermediate volcanic rocks"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton and litho", mar = c(0, 0, 2, 0))
+```
+
+
+
+## Group litho for modelling
+
+Différencier roches sédimentaires carbonatées des roches cristallines
+
+
+```{r grouping}
+litho_globalcategory <- c("Ice and Glaciers" = NA,
+                        "Water Bodies" = NA,
+                             "Metamorphics" = "Metamorphic",
+                             "Acid plutonic rocks" = "Cristalline",
+                             "Basic plutonic rocks" = "Basic cristalline",
+                             "Intermediate plutonic rocks" = "Cristalline", 
+                             "Carbonate sedimentary rocks" = "Carbonated sediment",
+                             "Mixed sedimentary rocks" = "Carbonated sediment", 
+                             "Siliciclastic sedimentary rocks" = "Erodable sediment",
+                             "Unconsolidated sediments" = "Erodable sediment",
+                             "Acid volcanic rocks" = "Cristalline",
+                             "Basic volcanic rocks" = "Basic cristalline",
+                             "Intermediate volcanic rocks" = "Cristalline"
+                             )
+
+litho_long$litho_global_class <- litho_globalcategory[as.character(litho_long$litho_class)]
+
+litho_wide <- litho_long %>% mutate(classe = NULL, X = NULL) %>% pivot_wider(names_from = "litho_global_class", values_from = "pct_classe", values_fill = 0)
+litho_flux <- flux %>% merge(litho_wide, by = c("Name","Station","Obs"))
+
+# Correlation flux spécifique  et itho 
+
+mat <- litho_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2", "Cristalline", "Basic cristalline", "Metamorphic", "Carbonated sediment", "Erodable sediment"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and litho", mar = c(0, 0, 2, 0))
+
+mat <- litho_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2",  "Cristalline", "Basic cristalline", "Metamorphic", "Carbonated sediment", "Erodable sediment"))    
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and litho", mar = c(0, 0, 2, 0))
+
+```
+
+```{r scatterplots-litho-groups}
+
+list_plots_litho <- list()
+
+for(i in paste(litho_globalcategory)){
+  if(!(i %in% names(litho_flux))){
+    message(paste("⚠️ Colonne manquante:", i))
+    next  # Passer à l'itération suivante
+  }
+  
+g <- ggplot(data = litho_flux)+geom_point(aes(x= .data[[i]] , y = flux_ton_km2, col = Obs))+facet_grid(cols = vars(carbon))+
+  scale_color_manual(values = col_obs)+
+  theme_bw()
+
+list_plots_litho[[i]] <- g
+}
+
+list_plots_litho
+```
+
+
+
+
+# Pedologie
+
+
+Résolution: ~1 km
+
+
+Names from FAO90 are matched with the World Reference Base standard for soil classification, see technical report, p35 https://openknowledge.fao.org/server/api/core/bitstreams/149f1562-bf6a-439f-9d3a-eb93940f39cf/content 
+
+Andosols: https://www.bodenkunde-projekte.hu-berlin.de/tropics/pcboku10.agrar.hu-berlin.de/cocoon/tropen/andosols1315.html?section=4
+
+Cambisols: https://www.fao.org/4/y1899e/y1899e08.htm
+Other soils having a cambic B horizon or an umbric A horizon which is more than 25 cm thick.
+
+
+Fluvisols: Other soils developed from recent alluvial deposits, having no diagnostic horizons other than (unless buried by 50 cm or more new material) an ochric or an umbric A horizon, an H horizon, or a sulfuric horizon.
+
+https://www.fao.org/soils-portal/data-hub/soil-classification/fao-legend/key-to-the-fao-soil-units/en/
+
+Histosols: soils formed in organic soil material
+
+https://isric.org/all-about-soil/world-soil-distribution/
+
+
+```{r get-pedo-data, fig.dim = c(10,5)}
+pedo_wp1 <- read_xlsx("Pédologie/resultat_sol.xlsx")
+pedo_wp3 <- read_xlsx("Pédologie/resultat_sol_wp3.xlsx")
+
+pedo_long <- rbind(pedo_wp1, pedo_wp3) %>% unique()
+
+pedo_long$fullName <- with(pedo_long, paste(Obs, Station, Name, sep = ", "))
+
+names_soils <- read_xlsx("Pédologie/names_soils.xlsx")
+
+pedo_long <- pedo_long %>% left_join(names_soils, by = "code_fao90")
+
+```
+
+
+```{r pedo-classes, fig.dim = c(10,5)}
+pedo_classes_colors <- c("Dystric Andosols" = "grey30",  # couleur sombre à noire, matériaux volcaniques. https://wiki.tripleperformance.fr/wiki/
+                         "Umbric Andosols"= "grey40",
+                        
+                          #Le cambisol est caractérisé par l’absence de couches accumulées d’argile, d’humus, de sel soluble ou d’oxydes de fer et d’aluminium. Grâce à leur structure et leur contenu élevé en minéraux, ils sont généralement bien exploitables pour l’agriculture. Sol majoritaire dans le monde, particulièrement présent en Europe.  https://odr.inrae.fr/intranet/carto/cartowiki/index.php/Nomenclature_des_types_de_sols
+                      "Calcaric Cambisols" = "goldenrod", 
+                      "Dystric Cambisols"="goldenrod1",
+                      "Eutric Cambisols"= "goldenrod2",
+                      "Gleyic Cambisols"= "goldenrod3",
+                      "Chromic Cambisols" = "goldenrod4",
+                      "Vertic Cambisols" = "gold2",
+                      
+                      
+                      # Les fluviosols sont des sols issus d’alluvions, matériaux déposés par un cours d’eau. Ils sont constitués de matériaux fins (argiles, limons, sables) pouvant contenir des éléments plus ou moins grossiers (galets, cailloux, blocs). Situés dans le lit actuel ou ancien des rivières, ils sont souvent marqués par la présence d’une nappe alluviale et sont généralement inondables en période de crue.  https://wiki.tripleperformance.fr/wiki/Fluviosol
+                      "Calcaric Fluvisols" = "skyblue1", 
+                      "Dystric Fluvisols"="skyblue2",
+                      "Eutric Fluvisols" = "skyblue3",
+                      
+              # Planosols occur in level landscapes throughout the world often associated with broad river valleys. https://isric.org/all-about-soil/planosols/
+                     "Dystric Planosols" = "skyblue4", 
+                      
+                      
+                      # Les histosols sont des sols composés essentiellement de matières organiques (débris végétaux) sous forme de tourbe. Ils sont engorgés en permanence. On les trouve dans les tourbières mais aussi dans les zones de bas-fond ou de dépressions où l’eau et les débris organiques s’accumulent. https://wiki.tripleperformance.fr/wiki/Histosol
+                      "Fibric Histosols" = "burlywood3",
+                      "Sapric Histosols" = "burlywood4",
+                      
+                      #Leptosols are by far the most extensive group of soils in the world. They are found mainly in mountainous regions and in areas where soil has been eroded to the extent that hard rock comes near to the surface. Other (minor) occurrences are along rivers where gravely deposits have accumulated without substantial admixture of fine earth material. https://isric.org/all-about-soil/leptosols/
+                      "Rendzic Leptosols" = "ivory2",
+                      "Lithic Leptosols" = "ivory3",
+                      "Umbric Leptosols"= "ivory4",
+                                            
+                      # Retisols are characterized by clay migration and an additional specific feature: The clay-poorer and lighter coloured eluvial horizon intercalates netlike into the clay-richer more intensely coloured illuvial horizon. wikipedia
+                      "Eutric Retisols" = "coral1",
+                      "Gleyic Retisols" = "coral2",
+                      "Dystric Retisols" = "coral3",
+                      
+                      #  Le podzosol ou podzol est un type de sol au pH très acide, il est infertile pour l'agriculture. 
+                      "Entic Podzols" = "thistle3",
+                      "Albic Podzols"= "thistle4",
+              
+              # Umbrisols occur mainly in regions where precipitation exceeds considerably the evapotranspiration. They are dominantly associated with acid parent materials.
+                      "Cambic Umbrisols" = "lightpink3",
+                       
+                      #  Le Luvisol est un « sol lessivé ». Les luvisols sont des sols gras et profond ayant une bonne fertilité agricole. Toutefois, en hiver, l'eau a tendance à s'accumuler, ce qui peut provoquer l'asphyxie des semis. Le drainage est souvent nécessaire.                      
+                      "Gleyic Luvisols" = "orange1",
+                      "Chromic Luvisols" = "orange2",
+                      "Albic Luvisols" = "orange3",
+                      "Haplic Luvisols" = "orange4",
+                      
+                      # Gleysols occur throughout the world where groundwater comes near to the surface, causing soils to become wet for a prolonged part of the year. They are particularly abundant in the low-lying river basins. https://isric.org/all-about-soil/gleysols/
+                      "Eutric Gleysols" = "lightsteelblue2",
+                      "Umbric Gleysols"= "lightsteelblue3",
+                      
+                      # Technosols are found throughout the world where human activities has led to the construction of artificial soils, sealing of natural soils, or extraction of materials normally not effected by surface processes https://isric.org/all-about-soil/technosols/
+                      "Undifferentiated Technosols" = "maroon3",
+                      
+                      "Glaciers" = "royalblue2",
+                      "Open Water" = "royalblue3",
+                      
+                     # Ferralsols occur in tropical and subtropical regions of the world, mainly on old and stable land surfaces. https://isric.org/all-about-soil/ferralsols/
+                      "Haplic Ferrasols" = "tomato3",
+                      
+                     # Soils with a loamy sand or coarser texture either to a depth of at least 100 cm from the soil surface, or to a (petro-)plinthic or salic horizon between 50 and 100 cm from the soil surface. https://isric.org/all-about-soil/arenosols/
+                      "Arenosols" = "mistyrose2",
+                     "Protoargic Arenosols" = "mistyrose3",
+                      
+                      # Soils having a mollic horizon (deep, brownish or blackish surface horizon with a significant accumulation of organic matter and high base saturation) https://isric.org/all-about-soil/phaeozems/
+                      "Calcaric Phaeozems" = "wheat4",
+                      
+                      # - le vertisol est un sol riche en argile du type 2/1 c'est-à-dire contenant une couche d'oxyde d'aluminium enserrée par deux couches de tétraèdres de silice. Ces sols sont donc peu adaptés aux constructions. Ils sont difficiles à travailler mais productifs. On les trouve en milieu méditerranéen 
+                      "Haplic Vertisols" = "turquoise3",
+                      
+                     # Acrisols occur dominantly in the wetter parts of the tropics and subtropics and the warm temperate regions in relatively young landscapes. https://isric.org/all-about-soil/acrisols/
+                      "Haplic Acrisols" = "palegreen4",
+                      
+# Solonchaks occur where saline groundwater comes near to the surface, or where through evapo(transpi)ration salts from the soil water accumulate in the soil, e.g. in desert regions. https://isric.org/all-about-soil/solonchaks/
+                      "Haplic Solonchaks" = "darkseagreen3"
+)
+
+```
+
+
+```{r view-pedo-plotly, fig.dim = c(10,5)}
+library(htmlwidgets)
+
+p <- plot_ly(
+  data = pedo_long,
+  y = ~fullName,
+  x = ~proportion,
+  color = ~pedo_class_wrb,
+  colors = pedo_classes_colors,   # ta palette nommée, réutilisée telle quelle
+  type = "bar",
+  orientation = "h",
+  text = ~pedo_class_wrb,
+  textposition = "none",
+  hovertemplate = "%{text}<extra></extra>"
+) %>%
+  layout(
+    barmode = "stack",
+    xaxis = list(title = "Part"),
+    yaxis = list(
+      title = "",
+      ticks = "outside",
+      ticklen = 10,                 # espace en pixels entre le label et la barre
+      tickcolor = "rgba(0,0,0,0)"   # tick invisible, seul l'espacement compte
+  ),
+    legend = list(title = list(text = "", font = list(size = 10), itemsizing = "constant", tracegroupgap = 2)))
+  
+
+p <- onRender(p, "
+function(el, x) {
+  el.on('plotly_click', function(d) {
+    var clickedTrace = d.points[0].curveNumber;
+    var nTraces = x.data.length;
+    var visibility = [];
+    for (var i = 0; i < nTraces; i++) {
+      visibility.push(i === clickedTrace ? true : 'legendonly');
+    }
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+
+  // double-clic sur le graphique = réafficher toutes les classes
+  el.on('plotly_doubleclick', function() {
+    var nTraces = x.data.length;
+    var visibility = Array(nTraces).fill(true);
+    Plotly.restyle(el.id, {visible: visibility});
+  });
+}
+")
+
+p
+```
+
+
+
+
+## Correlation with pedo
+
+```{r make-flux-pedo, fig.dim = c(8,8)}
+pedo_long$main_soil <- ifelse(is.na(stringr::word(pedo_long$pedo_class_wrb, 2)), stringr::word(pedo_long$pedo_class_wrb, 1), stringr::word(pedo_long$pedo_class_wrb, 2))
+
+pedo_wide <- pedo_long %>% group_by(Name, Station, Obs, main_soil) %>% summarise(proportion_main = sum(proportion)) %>% ungroup() %>% mutate(classe = NULL, X = NULL) %>% pivot_wider(names_from = "main_soil", values_from = "proportion_main", values_fill = 0)
+pedo_flux <- flux %>% merge(pedo_wide, by = c("Name","Station","Obs"))
+```
+
+```{r pedo-ggplot}
+main_colors <- c("Andosols" = "grey30",
+             
+                          "Cambisols" = "springgreen4",  
+                  #Le cambisol est caractérisé par l’absence de couches accumulées d’argile, d’humus, de sel soluble ou d’oxydes de fer et d’aluminium. Grâce à leur structure et leur contenu élevé en minéraux, ils sont généralement bien exploitables pour l’agriculture. Sol majoritaire dans le monde, particulièrement présent en Europe.  https://odr.inrae.fr/intranet/carto/cartowiki/index.php/Nomenclature_des_types_de_sols
+                 
+                      "Fluvisols" = "darkolivegreen3", 
+                      # Les fluviosols sont des sols issus d’alluvions, matériaux déposés par un cours d’eau. Ils sont constitués de matériaux fins (argiles, limons, sables) pouvant contenir des éléments plus ou moins grossiers (galets, cailloux, blocs). Situés dans le lit actuel ou ancien des rivières, ils sont souvent marqués par la présence d’une nappe alluviale et sont généralement inondables en période de crue.  https://wiki.tripleperformance.fr/wiki/Fluviosol
+              
+             
+                     "Planosols" = "skyblue4", 
+                  # Planosols occur in level landscapes throughout the world often associated with broad river valleys. https://isric.org/all-about-soil/planosols/     
+                      
+                      
+                      "Histosols" = "burlywood3",
+                      
+                 # Les histosols sont des sols composés essentiellement de matières organiques (débris végétaux) sous forme de tourbe. Ils sont engorgés en permanence. On les trouve dans les tourbières mais aussi dans les zones de bas-fond ou de dépressions où l’eau et les débris organiques s’accumulent. https://wiki.tripleperformance.fr/wiki/Histosol
+                 
+                      #Leptosols are by far the most extensive group of soils in the world. They are found mainly in mountainous regions and in areas where soil has been eroded to the extent that hard rock comes near to the surface. Other (minor) occurrences are along rivers where gravely deposits have accumulated without substantial admixture of fine earth material. https://isric.org/all-about-soil/leptosols/
+                      "Leptosols" = "ivory3",
+                                            
+                      # Retisols are characterized by clay migration and an additional specific feature: The clay-poorer and lighter coloured eluvial horizon intercalates netlike into the clay-richer more intensely coloured illuvial horizon. wikipedia
+                      "Retisols" = "coral3",
+                      
+                      # Le podzosol ou podzol est un type de sol au pH très acide, il est infertile pour l'agriculture. 
+                      "Podzols" = "thistle3",
+                      
+              # Umbrisols occur mainly in regions where precipitation exceeds considerably the evapotranspiration. They are dominantly associated with acid parent materials.
+                      "Umbrisols" = "lightpink3",
+                       
+                      #  Le Luvisol est un « sol lessivé ». Les luvisols sont des sols gras et profond ayant une bonne fertilité agricole. Toutefois, en hiver, l'eau a tendance à s'accumuler, ce qui peut provoquer l'asphyxie des semis. Le drainage est souvent nécessaire.                      
+                      "Luvisols" = "orange2",
+                      
+                      # Gleysols occur throughout the world where groundwater comes near to the surface, causing soils to become wet for a prolonged part of the year. They are particularly abundant in the low-lying river basins. https://isric.org/all-about-soil/gleysols/
+                      "Gleysols" = "lightsteelblue2",
+                      
+                      # Technosols are found throughout the world where human activities has led to the construction of artificial soils, sealing of natural soils, or extraction of materials normally not effected by surface processes https://isric.org/all-about-soil/technosols/
+                      "Technosols" = "maroon3",
+                      
+                      "Glaciers" = "royalblue2",
+                      "Water" = "royalblue3",
+                      
+                     # Ferralsols occur in tropical and subtropical regions of the world, mainly on old and stable land surfaces. https://isric.org/all-about-soil/ferralsols/
+                      "Ferrasols" = "tomato3",
+                      
+                     # Soils with a loamy sand or coarser texture either to a depth of at least 100 cm from the soil surface, or to a (petro-)plinthic or salic horizon between 50 and 100 cm from the soil surface. https://isric.org/all-about-soil/arenosols/
+                      "Arenosols" = "mistyrose2",
+                      
+                      # Soils having a mollic horizon (deep, brownish or blackish surface horizon with a significant accumulation of organic matter and high base saturation) https://isric.org/all-about-soil/phaeozems/
+                      "Phaeozems" = "wheat4",
+                      
+                      # - le vertisol est un sol riche en argile du type 2/1 c'est-à-dire contenant une couche d'oxyde d'aluminium enserrée par deux couches de tétraèdres de silice. Ces sols sont donc peu adaptés aux constructions. Ils sont difficiles à travailler mais productifs. On les trouve en milieu méditerranéen 
+                      "Vertisols" = "turquoise3",
+                      
+                     # Acrisols occur dominantly in the wetter parts of the tropics and subtropics and the warm temperate regions in relatively young landscapes. https://isric.org/all-about-soil/acrisols/
+                      "Acrisols" = "palegreen4",
+                      
+# Solonchaks occur where saline groundwater comes near to the surface, or where through evapo(transpi)ration salts from the soil water accumulate in the soil, e.g. in desert regions. https://isric.org/all-about-soil/solonchaks/
+                      "Solonchaks" = "darkseagreen3"
+)
+
+
+library(forcats)
+
+pedo_long <- pedo_long |>
+  mutate(main_soil = fct_infreq(main_soil, w = proportion))
+
+ggplot(pedo_long) +
+  geom_col(aes(y = fullName, x = proportion, fill = main_soil), position = position_stack(reverse = T)) +
+  scale_fill_manual(values = main_colors, guide = guide_legend(ncol = 2)) +
+  labs(x = "%", y = "", fill = "Soil category") +
+  theme_bw()
+
+ggsave(here::here("figures", "pedo.svg"))
+
+```
+
+```{r scatterplots-pedo}
+
+list_plots_pedo <- list()
+
+for(i in unique(pedo_long$main_soil)){
+  if(!(i %in% names(pedo_flux))){
+    message(paste("⚠️ Colonne manquante:", i))
+    next  # Passer à l'itération suivante
+  }
+  
+g <- ggplot(data = pedo_flux)+geom_point(aes(x= .data[[i]] , y = flux_ton_km2, col = Obs))+facet_grid(cols = vars(carbon))+
+  scale_color_manual(values = col_obs)+
+  theme_bw()
+
+list_plots_pedo[[i]] <- g
+}
+
+list_plots_pedo
+```
+
+
+
+```{r correlation-flux-pedo, fig.dim = c(8,8)}
+# Correlation flux spécifique  et ERA 
+
+mat <- pedo_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2", "Andosols","Cambisols", "Fluvisols", "Histosols", "Leptosols", "Podzols", "Technosols" , "Gleysols", "Luvisols", "Ferrasols", "Retisols", "Phaeozems", "Vertisols", "Water", "Acrisols", "Arenosols", "Planosols", "Solonchaks", "Umbrisols"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and pedo", mar = c(0, 0, 2, 0))
+
+mat <- pedo_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2", "Andosols","Cambisols", "Fluvisols", "Histosols", "Leptosols", "Podzols", "Technosols" , "Gleysols", "Luvisols", "Ferrasols", "Retisols", "Phaeozems", "Vertisols", "Water", "Acrisols", "Arenosols", "Planosols", "Solonchaks", "Umbrisols")) 
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and pedo", mar = c(0, 0, 2, 0))
+
+
+# Correlation flux total  et ERA 
+
+mat <- pedo_flux %>% filter(carbon == "POC") %>% select(c("flux_ton", "Andosols","Cambisols", "Fluvisols", "Histosols", "Leptosols", "Podzols", "Technosols" , "Gleysols", "Luvisols", "Ferrasols", "Retisols", "Phaeozems", "Vertisols", "Water", "Acrisols", "Arenosols", "Planosols", "Solonchaks", "Umbrisols")) 
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/ and pedo", mar = c(0, 0, 2, 0))
+
+mat <- pedo_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton","Andosols","Cambisols", "Fluvisols", "Histosols", "Leptosols", "Podzols", "Technosols" , "Gleysols", "Luvisols", "Ferrasols", "Retisols", "Phaeozems", "Vertisols", "Water", "Acrisols", "Arenosols", "Planosols", "Solonchaks", "Umbrisols")) 
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton and pedo", mar = c(0, 0, 2, 0))
+```
+
+
+## Group pedology
+
+```{r pedo-groups}
+pedo_group <-  pedo_long %>% group_by(Name,Station,Obs, fullName, connecthydro) %>% summarise(prop_connect = sum(proportion, na.rm = T))
+
+pedo_group_wide <- pedo_group %>% group_by(Name, Station, Obs) %>% pivot_wider(names_from = "connecthydro", values_from = "prop_connect", values_fill = 0)
+pedo_group_flux <- flux %>% merge(pedo_group_wide, by = c("Name","Station","Obs"))
+
+
+
+mat <- pedo_group_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2", "connected","not connected"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and pedo", mar = c(0, 0, 2, 0))
+
+mat <- pedo_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2", "connected","not connected")) 
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and pedo", mar = c(0, 0, 2, 0))
+
+
+
+```
+
+
+# DEM
+
+```{r read-dem}
+#dem_wp1 <- read.csv("DEM/dem_wp1_v2.csv")
+
+dem_wp1 <- read_xlsx("DEM/dem_wp1_v2.xlsx")
+dem_wp3 <- read.csv("DEM/dem_wp3.csv")
+
+dem <- rbind(dem_wp1, dem_wp3)
+
+dem$fullName <- with(dem, paste(Obs, Station, Name, sep = ", "))
+
+dem_long <-  pivot_longer(dem, cols = c("pente_moyenne", "pente_max", "altitude_moyenne", "altitude_max"), values_to = "value", names_to = "parametre")
+```
+
+```{r view-dem, fig.dim = c(8,5)}
+ggplot(dem_long)+geom_col(aes(y= fullName, x = value, fill = Obs))+
+  facet_grid(cols = vars(parametre), scales = "free_x")+
+  scale_fill_manual(values = col_obs)+
+  labs(x="Altitude in m, pente in °", y = "")+
+  theme_bw()+
+  theme(legend.position = "none")
+
+```
+
+```{r corrplot-dem}
+
+dem_flux <- flux %>% select(!c("fullName")) %>% merge(dem, by = c("Name","Station","Obs"))
+
+
+# Paramètres entre eux
+
+mat <- dem_flux %>% select(c("altitude_moyenne","altitude_max","pente_moyenne","pente_max"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, title = "Correlations in DEM", mar = c(0, 0, 2, 0))
+
+# Correlation flux spécifique  et DEM
+
+mat <- dem_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2",  "altitude_moyenne","altitude_max","pente_moyenne","pente_max"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, title = "Correlation flux POC ton/km2 and DEM", mar = c(0, 0, 2, 0))
+
+mat <- dem_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2","altitude_moyenne","altitude_max","pente_moyenne","pente_max")) 
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, title = "Correlation flux DOC ton/km2 and DEM", mar = c(0, 0, 2, 0))
+
+# Correlation flux et DEM
+
+mat <- dem_flux %>% filter(carbon == "POC") %>% select(c("flux_ton",  "altitude_moyenne","altitude_max","pente_moyenne","pente_max"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, title = "Correlation flux POC ton/km2 and DEM", mar = c(0, 0, 2, 0))
+
+mat <- dem_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton","altitude_moyenne","altitude_max","pente_moyenne","pente_max")) 
+corrplot(mat %>% cor(use = "pairwise.complete.obs"), method = "number", type = "lower", diag = T, title = "Correlation flux DOC ton/km2 and DEM", mar = c(0, 0, 2, 0))
+
+```
+
+```{r scatterplots}
+ggplot(dem_flux)+geom_point(aes(x=pente_moyenne, y = flux_ton_km2, col = Obs))+
+  scale_color_manual(values = col_obs)+
+  facet_grid(cols = vars(carbon))+
+  theme_bw()
+```
+
+
+
+# Model flux from BV
+
+```{r read-data}
+esawc_wide <- esawc_long %>% mutate(fullName = NULL, esa_code = NULL) %>% pivot_wider(names_from = esa_category, values_from = value) 
+litho_wide <- litho_long %>% group_by(litho_global_class, Name, Station, Obs) %>% summarise(pct_global_class = sum(pct_classe, na.rm = T)) %>% ungroup %>% mutate(classe = NULL, X = NULL, litho_class = NULL) %>% pivot_wider(names_from = "litho_global_class", values_from = "pct_global_class", values_fill = 0)
+
+# virer tous les "fullName"
+
+flux_bv <- flux %>% mutate(fullName = NULL) %>% merge(info, by = c("Obs","Station","Name","carbon")) %>% merge(esawc_wide, by = c("Obs","Station","Name")) %>% merge(select(era5, !"fullName"), by = c("Obs","Station","Name","carbon")) %>% 
+  merge(litho_wide, by = c("Obs","Station","Name")) %>% merge(pedo_wide, by = c("Obs","Station","Name")) %>%
+  merge(mutate(dem, fullName = F), by = c("Obs","Station","Name")) %>% unique()
+
+names(flux_bv) <- gsub(" ", ".", names(flux_bv))
+
+```
+
+# Modèles univariés POC
+
+```{r lm-univarie, fig.dim = c(10,10)}
+
+list_lm_poc <- list()
+
+all_predictors <- names(flux_bv)[17:73]
+
+for(i in all_predictors){
+  lmf <- formula(paste("flux_ton_km2 ~`", i, "`", sep = ""))
+  
+  pval <- tryCatch({
+    lmi <- lm(data = filter(flux_bv, carbon == "POC"), formula = lmf)
+    summary(lmi)$coefficients[2,4]
+    }, error = function(e) NA)
+  list_lm_poc[[i]] <- pval
+}
+
+pval_poc <- unlist(list_lm_poc) %>% sort()
+
+sigvar_poc <- names(pval_poc[pval_poc < 0.2]) 
+
+sigvar_poc_sel <- c( "max.precip_selected", "mean.precip_selected", "pente_moyenne", "Unconsolidated.sediments", "Acid.plutonic.rocks" , "Carbonate.sedimentary.rocks", "Basic.plutonic.rocks", "altitude_moyenne", "Vertisols", "Retisols", "Fluvisols", "Acid.volcanic.rocks", "Cropland", "Phaeozems", "mean.temp_30y", "Andosols", "Glaciers", "Herbaceous.wetland", "Podzols", "max.temp_30y", "Leptosols", "Bare", "Umbrisols", "Intermediate.plutonic.rocks", "Cambisols", "Shrubland", "Siliciclastic.sedimentary.rocks")
+
+flux_bv %>% filter(carbon == "POC") %>% select(c("flux_ton_km2", sigvar_poc_sel)) %>% cor(use = "pairwise.complete.obs") %>% corrplot(method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation selected variables POC", mar = c(0, 0, 2, 0))
+
+```
+
+```{r lm-univarie-doc, fig.dim = c(10,10)}
+
+list_lm_doc <- list()
+
+all_predictors <- names(flux_bv)[17:73]
+
+for(i in all_predictors){
+  lmf <- formula(paste("flux_ton_km2 ~`", i, "`", sep = ""))
+  
+  pval <- tryCatch({
+    lmi <- lm(data = filter(flux_bv, carbon == "DOC"), formula = lmf)
+    summary(lmi)$coefficients[2,4]
+    }, error = function(e) NA)
+  list_lm_doc[[i]] <- pval
+}
+
+pval_doc <- unlist(list_lm_doc) %>% sort()
+
+sigvar_doc <- names(pval_doc[pval_doc < 0.2])
+
+sigvar_doc_sel <- c("mean.temp_selected", "max.precip_selected","altitude_moyenne",  "Tree.cover", "Cambisols",  "Ferrasols", "Metamorphics","Intermediate.volcanic.rocks", "Carbonate.sedimentary.rocks", "Cropland", "Leptosols", "Fluvisols", "Luvisols", "Unconsolidated.sediments", "Mixed.sedimentary.rocks")
+
+flux_bv %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2", sigvar_doc_sel)) %>% cor(use = "pairwise.complete.obs") %>% corrplot(method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation selected variables DOC", mar = c(0, 0, 2, 0))
+
+```
+
+
+
+```{r test-lm}
+lm_esa <- lm(data = filter(flux_bv, carbon == "POC"), flux_ton_km2 ~ Tree.cover+Shrubland+Grassland+Cropland+Built.up+Bare+Snow.and.ice+Permanent.water.bodies+Herbaceous.wetland+Mangroves)
+summary(lm_esa)
+```
+
+
+# Plots for poster
+
+```{r era5-averages}
+era5_plot <- flux_bv %>%
+  select(-carbon) %>%
+  distinct(fullName, .keep_all = TRUE)
+ggplot(era5_plot)+geom_col(aes(x=mean.precip_selected*1000, y = fullName))
+
+era5_plot <- era5 %>%
+  select(-carbon) %>%
+  distinct(fullName, .keep_all = TRUE)
+ggplot(era5_plot)+geom_col(aes(x=mean.temp_selected-275, y = fullName))
+
+
+
+```
+
+```{r by-main-type, eval = F}
+pedo_main <- pedo_long %>% group_by(fullName) %>% slice_max(proportion, n = 1, with_ties = FALSE) %>%   ungroup() %>% select(fullName, main_soil) %>% merge(flux, by = "fullName")
+litho_main <- litho_long %>% group_by(fullName) %>% slice_max(pct_classe, n = 1, with_ties = FALSE) %>%   ungroup() %>% select(fullName, litho_class) %>% merge(flux, by = "fullName")
+
+n_obs <- n_distinct(flux$Obs)
+shapes <- rep_len(c(16, 17, 15, 3, 7, 8), length.out = n_obs)
+
+
+ggpubr::ggarrange(
+ggplot(pedo_main, aes(x = main_soil, y = flux_ton_km2))+geom_boxplot()+geom_point(position = "jitter", aes(col = Obs, shape = Obs))+
+  scale_color_manual(values = col_obs)+
+  scale_shape_manual(values = shapes)+
+  labs(x = "Main Soil Type", y = "Specific carbon flux, ton/year/km2")+
+  scale_y_continuous(trans = "log")+
+  facet_grid(cols = vars(carbon), scales = "free_x")+
+  theme_bw(),
+ggplot(litho_main, aes(x = litho_class, y = flux_ton_km2))+geom_boxplot()+geom_point(position = "jitter", aes(col = Obs, shape = Obs))+
+    scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 12)) +
+  scale_color_manual(values = col_obs)+
+    scale_shape_manual(values = shapes)+
+    scale_y_continuous(trans = "log")+
+  labs(x = "Lithology", y = "Specific carbon flux, ton/year/km2")+
+  facet_grid(cols = vars(carbon), scales = "free_x")+
+  theme_bw(),
+nrow = 2,
+common.legend = T,
+legend = "bottom")
+
+```
+
+```{r selected-bv-litho, fig.dim = c(10,5)}
+
+niveaux <- levels(litho_long$litho_class)
+
+pie_site <- function(site, titre = site) {
+  dat <- litho_long %>%
+    filter(fullName == site) %>%
+    complete(litho_class = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
+
+  ggplot(dat) +
+    geom_bar(aes(x = "", y = pct_classe, fill = litho_class),
+             stat = "identity", width = 1) +
+    labs(x = "", y = "", fill = "Soil type", title = titre) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = litho_class_colors, limits = niveaux, drop = FALSE) +
+    guides(fill = guide_legend(nrow = 3, byrow = TRUE)) +
+    theme_minimal()
+}
+
+ggpubr::ggarrange(
+  pie_site("ZA Loire, Montjean, Loire"),
+  pie_site("ZABR, Campus, Isere"),
+  pie_site("MOOSE, Arles, Rhone"),
+  pie_site("M-Tropics, Mbalmayo, Nyong", "M-Tropics, Mbalmayo,\nNyong"),
+  ncol = 4, nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+
+ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/selected_litho.svg"), width = 10, height = 5)
+
+```
+```{r selected-bv-litho-global, fig.dim = c(10,5)}
+
+niveaux <- levels(litho_long$litho_global_class)
+litho_global_colors <- c("Cristalline" = "#56B4E9", "Basic cristalline" = "#0072B2", "Metamorphic" = "#009E73", "Carbonated sediment" = "#E69F00", "Erodable sediment" = "#D55E00")
+
+pie_site <- function(site, titre = site) {
+  dat <- litho_long %>%
+    filter(fullName == site) %>%
+    complete(litho_class = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
+
+  ggplot(dat) +
+    geom_bar(aes(x = "", y = pct_classe, fill = litho_global_class),
+             stat = "identity", width = 1) +
+    labs(x = "", y = "", fill = "Rock type", title = titre) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = litho_global_colors, limits = niveaux, drop = FALSE) +
+    guides(fill = guide_legend(nrow = 3, byrow = TRUE)) +
+    theme_minimal()
+}
+
+ggpubr::ggarrange(
+  pie_site("ZA Loire, Montjean, Loire"),
+  pie_site("ZABR, Campus, Isere"),
+  pie_site("MOOSE, Arles, Rhone"),
+  pie_site("M-Tropics, Mbalmayo, Nyong", "M-Tropics, Mbalmayo,\nNyong"),
+  ncol = 4, nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/selected_global_litho.svg"), width = 10, height = 5)
+
+```
+```{r selected-bv-pedo, fig.dim = c(10,5)}
+
+niveaux <- levels(pedo_long$main_soil)
+
+pie_site <- function(site, titre = site) {
+  dat <- pedo_long %>%
+    filter(fullName == site) %>%
+    complete(main_soil = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
+
+  ggplot(dat) +
+    geom_bar(aes(x = "", y = proportion, fill = main_soil),
+             stat = "identity", width = 1) +
+    labs(x = "", y = "", fill = "Soil type", title = titre) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = main_colors, limits = niveaux, drop = FALSE) +
+    guides(fill = guide_legend(nrow = 3, byrow = TRUE)) +
+    theme_minimal()
+}
+
+ggpubr::ggarrange(
+  pie_site("ZA Loire, Montjean, Loire"),
+  pie_site("ZABR, Campus, Isere"),
+  pie_site("MOOSE, Arles, Rhone"),
+  pie_site("M-Tropics, Mbalmayo, Nyong", "M-Tropics, Mbalmayo,\nNyong"),
+  ncol = 4, nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/selected_pedo.svg"), width = 10, height = 5)
+
+
+```
+```{r selected-pedo-global, fig.dim = c(10,5)}
+
+pedo_group <-  pedo_long %>% group_by(Name,Station,Obs, fullName, connecthydro) %>% summarise(prop_connect = sum(proportion, na.rm = T))
+
+connect_colors <- c("connected" = "#0072B2", "not connected" = "#D55E00")
+
+niveaux <- levels(pedo_group$connecthydro)
+
+pie_site <- function(site, titre = site) {
+  dat <- pedo_group %>%
+    filter(fullName == site) %>%
+    complete(connecthydro = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
+
+  ggplot(dat) +
+    geom_bar(aes(x = "", y = prop_connect, fill = connecthydro),
+             stat = "identity", width = 1) +
+    labs(x = "", y = "", fill = "Soil connected to hydro", title = titre) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = connect_colors, limits = niveaux, drop = FALSE) +
+    guides(fill = guide_legend(nrow = 3, byrow = TRUE)) +
+    theme_minimal()
+}
+
+ggpubr::ggarrange(
+  pie_site("ZA Loire, Montjean, Loire"),
+  pie_site("ZABR, Campus, Isere"),
+  pie_site("MOOSE, Arles, Rhone"),
+  pie_site("M-Tropics, Mbalmayo, Nyong", "M-Tropics, Mbalmayo,\nNyong"),
+  ncol = 4, nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/selected_pedo.svg"), width = 10, height = 5)
+
+
+```
+
+```{r selected-bv-esa, fig.dim = c(10,5)}
+
+
+niveaux <- levels(esawc_long$esa_category)
+
+pie_site <- function(site, titre = site) {
+  dat <- esawc_long %>%
+    filter(fullName == site) %>%
+    complete(esa_category = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
+
+  ggplot(dat) +
+    geom_bar(aes(x = "", y = value, fill = esa_category),
+             stat = "identity", width = 1) +
+    labs(x = "", y = "", fill = "Soil type", title = titre) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = clc_colors, limits = niveaux, drop = FALSE) +
+    guides(fill = guide_legend(nrow = 3, byrow = TRUE)) +
+    theme_minimal()
+}
+
+ggpubr::ggarrange(
+  pie_site("ZA Loire, Montjean, Loire"),
+  pie_site("ZABR, Campus, Isere"),
+  pie_site("MOOSE, Arles, Rhone"),
+  pie_site("M-Tropics, Mbalmayo, Nyong", "M-Tropics, Mbalmayo,\nNyong"),
+  ncol = 4, nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/selected_landcover.svg"), width = 10, height = 5)
+```
+
+```{r all-fluxes}
+
+col_obs <- c("AgrHys" = "skyblue", "Aurade"= "springgreen4", "Draix-Bleone" = "darkolivegreen3", "Jurassic Karst"= "brown4", "M-Tropics"=  "goldenrod2",
+            "MOOSE"= "tomato3", "Obs-ERA" = "steelblue", "Oracle" = "lightcyan3", "OSR" = "coral3", "OTHU" = "darkorange2", "SA Ardieres Morcille" = "grey",
+            "SNO Tourbiere" = "thistle3", "ZA Loire" = "turquoise3", "ZABR" = "maroon3")
+
+unique_obs <- filter(flux, Name != "Tet") %>%  select(c("fullName","Obs")) %>% unique
+
+ggplot(filter(flux, Name != "Tet"))+
+    geom_vline(xintercept = 1, col = "black")+
+  geom_point(aes(x=flux_ton_km2, y = fullName, col = Obs))+
+  geom_errorbar(aes(xmin = flux_ton_km2_pil, xmax = flux_ton_km2_piu, y = fullName, col = Obs))+
+  facet_grid(cols = vars(carbon), scales = "free_x")+
+  scale_color_manual(values = col_obs)+
+  scale_x_continuous(trans = "log", breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4, 1e5), minor_breaks = NULL)+
+  labs(x = "Flux in ton/year/km2", y = "")+
+  theme_bw()+
+  theme(legend.position = "none", axis.text.y = element_text(color = col_obs[sort(unique_obs$Obs)]), axis.text.x = element_text(angle = 90, v = 0.5))
+
+ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/carbon_fluxes.svg"), width = 10, height = 6)
+
+```
+
+```{r era5-4sites}
+
+era5_plot <- era5 %>%
+  select(-carbon) %>%
+  distinct(fullName, .keep_all = TRUE) %>%
+  filter(fullName %in% c("ZA Loire, Montjean, Loire", "ZABR, Campus, Isere", "MOOSE, Arles, Rhone","M-Tropics, Mbalmayo, Nyong"))
+
+ggpubr::ggarrange(
+ggplot(era5_plot)+geom_col(aes(x=mean.temp_selected-273.15, y = fullName, fill = Obs)) +
+  scale_fill_manual(values = col_obs) + theme_bw() + theme(legend.position = "none") +
+  labs(x = "Average annual temperature, °C", y = ""), 
+
+ggplot(era5_plot)+geom_col(aes(x=mean.precip_selected*1000, y = fullName, fill = Obs)) +
+  scale_fill_manual(values = col_obs) + theme_bw() + theme(legend.position = "none") +
+  labs(x = "Average annual precipitation, mm", y = ""), 
+
+ncol = 2)
+
+ggpubr::ggarrange(
+  ggplot(era5_plot) +
+    geom_col(aes(x = mean.temp_selected - 273.15, y = fullName, fill = Obs)) +
+    scale_fill_manual(values = col_obs) +
+    theme_bw() +
+    theme(legend.position = "none") +
+    labs(x = "Average annual temperature, °C", y = ""),
+
+  ggplot(era5_plot) +
+    geom_col(aes(x = mean.precip_selected * 1000, y = fullName, fill = Obs)) +
+    scale_fill_manual(values = col_obs) +
+    theme_bw() +
+    theme(legend.position = "none",
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    labs(x = "Average annual precipitation, mm", y = ""),
+
+  ncol = 2,
+  align = "h"
+)
+
+library(patchwork)
+
+g1 <- ggplot(era5_plot)+geom_col(aes(x=mean.temp_selected-273.15, y = fullName, fill = Obs)) +
+  scale_fill_manual(values = col_obs) + theme_bw() + theme(legend.position = "none") +
+  labs(x = "Average annual temperature, °C", y = "")
+
+g2 <- ggplot(era5_plot)+geom_col(aes(x=mean.precip_selected*1000, y = fullName, fill = Obs)) +
+  scale_fill_manual(values = col_obs) + theme_bw() + theme(legend.position = "none", axis.text.y = element_blank()) +
+  labs(x = "Average annual precipitation, mm", y = "")
+
+
+g1 + g2
+
+ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/selected_climate.svg"), width = 8, height = 4)
+```
+
+```{r boxplots}
+
+ggarrange(
+ggplot(flux_bv)+geom_boxplot(aes(x="Catchment aera, km2", y = area_km2), fill =  "thistle3" )+
+  labs(x = "", y = "")+theme_bw(),
+ggplot(flux_bv)+geom_boxplot(aes(x="Average elevation, m", y = altitude_moyenne), fill = "darkseagreen3" )+
+  labs(x = "", y = "")+theme_bw(),
+ggplot(flux_bv)+geom_boxplot(aes(x="Average precipitation, mm", y = mean.precip_selected*1000), fill = "lightsteelblue2" )+
+  labs(x = "", y = "")+theme_bw(),
+ggplot(flux_bv)+geom_boxplot(aes(x="Average temperature, °C", y = mean.temp_selected-273.15), fill = "coral3")+
+  labs(x = "", y = "")+theme_bw(),
+
+
+ncol = 4
+)
+
+ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/stats_bv.svg"), width = 8, height = 3)
+```
+```{r test-lm-poster}
+lm(data = filter(flux_bv, carbon == "POC"), formula = flux_ton_km2 ~ mean.precip_30y + Basic.cristalline) %>% summary()
+
+lm(data = filter(flux_bv, carbon == "DOC"), formula = flux_ton_km2 ~ mean.temp_30y + Cropland) %>% summary()
+```
+```{r}
+
+```
+
+
