@@ -28,6 +28,9 @@ library(plotly)
 library(htmlwidgets)
 
 library(ggpubr)
+
+library(factoextra)
+
 ```
 
 ```{r col-obs}
@@ -797,8 +800,8 @@ https://projekte.cen.uni-hamburg.de/lithomap/
 
 
 ```{r view-litho}
-litho_wp1_long <- read.csv("Lithologie/litho_wp1_long.csv") %>% mutate(X = NULL)
-
+#litho_wp1_long <- read.csv("Lithologie/litho_wp1_long.csv") %>% mutate(X = NULL)
+litho_wp1_long <- read_xlsx("Lithologie/litho_wp1_long.xlsx", col_types = c(rep("text",4),"numeric"))
 litho_wp3_long <- read.csv("Lithologie/litho_wp3_long.csv") %>% mutate(X = NULL)
 
 litho_long <- rbind(litho_wp1_long, litho_wp3_long) %>% unique()
@@ -958,8 +961,8 @@ Différencier roches sédimentaires carbonatées des roches cristallines
 
 
 ```{r grouping}
-litho_globalcategory <- c("Ice and Glaciers" = NA,
-                        "Water Bodies" = NA,
+litho_globalcategory <- c("Ice and Glaciers" = "water",
+                        "Water Bodies" = "water",
                              "Metamorphics" = "Metamorphic",
                              "Acid plutonic rocks" = "Cristalline",
                              "Basic plutonic rocks" = "Basic cristalline",
@@ -975,7 +978,7 @@ litho_globalcategory <- c("Ice and Glaciers" = NA,
 
 litho_long$litho_global_class <- litho_globalcategory[as.character(litho_long$litho_class)]
 
-litho_wide <- litho_long %>% mutate(classe = NULL, X = NULL) %>% pivot_wider(names_from = "litho_global_class", values_from = "pct_classe", values_fill = 0)
+litho_wide <- litho_long %>% mutate(classe = NULL) %>% pivot_wider(names_from = "litho_global_class", values_from = "pct_classe", values_fill = 0)
 litho_flux <- flux %>% merge(litho_wide, by = c("Name","Station","Obs"))
 
 # Correlation flux spécifique  et itho 
@@ -1044,7 +1047,7 @@ pedo_long$fullName <- with(pedo_long, paste(Obs, Station, Name, sep = ", "))
 
 names_soils <- read_xlsx("Pédologie/names_soils.xlsx")
 
-pedo_long <- pedo_long %>% left_join(names_soils, by = "code_fao90")
+pedo_long <- pedo_long %>% left_join(names_soils, by = c("code_fao90","FAO90"))
 
 ```
 
@@ -1138,11 +1141,11 @@ p <- plot_ly(
   data = pedo_long,
   y = ~fullName,
   x = ~proportion,
-  color = ~pedo_class_wrb,
+  color = ~long_name,
   colors = pedo_classes_colors,   # ta palette nommée, réutilisée telle quelle
   type = "bar",
   orientation = "h",
-  text = ~pedo_class_wrb,
+  text = ~long_name,
   textposition = "none",
   hovertemplate = "%{text}<extra></extra>"
 ) %>%
@@ -1188,7 +1191,6 @@ p
 ## Correlation with pedo
 
 ```{r make-flux-pedo, fig.dim = c(8,8)}
-pedo_long$main_soil <- ifelse(is.na(stringr::word(pedo_long$pedo_class_wrb, 2)), stringr::word(pedo_long$pedo_class_wrb, 1), stringr::word(pedo_long$pedo_class_wrb, 2))
 
 pedo_wide <- pedo_long %>% group_by(Name, Station, Obs, main_soil) %>% summarise(proportion_main = sum(proportion)) %>% ungroup() %>% mutate(classe = NULL, X = NULL) %>% pivot_wider(names_from = "main_soil", values_from = "proportion_main", values_fill = 0)
 pedo_flux <- flux %>% merge(pedo_wide, by = c("Name","Station","Obs"))
@@ -1329,10 +1331,28 @@ corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method 
 mat <- pedo_flux %>% filter(carbon == "DOC") %>% select(c("flux_ton_km2", "connected","not connected")) 
 corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and pedo", mar = c(0, 0, 2, 0))
 
+ggplot(pedo_group_flux) + geom_point(aes(x=`not connected`, y = flux_ton_km2, col = carbon))
 
-
+ggplot(pedo_group_flux) + geom_point(aes(x=connected, y = flux_ton_km2, col = carbon))
 ```
+```{r pedo-group-stab}
+pedo_group <-  pedo_long %>% group_by(Name,Station,Obs, fullName, stabMO) %>% summarise(propstab = sum(proportion, na.rm = T))
 
+pedo_group_wide <- pedo_group %>% group_by(Name, Station, Obs) %>% pivot_wider(names_from = "stabMO", values_from = "propstab", values_fill = 0)
+pedo_group_flux <- flux %>% merge(pedo_group_wide, by = c("Name","Station","Obs"))
+
+
+
+mat <- pedo_group_flux %>% filter(carbon == "POC") %>% select(c("flux_ton_km2", "high","low","no"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux POC ton/km2 and pedo", mar = c(0, 0, 2, 0))
+
+mat <- pedo_group_flux %>% filter(carbon == "DOC") %>%select(c("flux_ton_km2", "high","low","no"))
+corrplot(mat %>% cor(use = "pairwise.complete.obs", method = "kendall"), method = "number", type = "lower", diag = T, tl.cex = 0.8, number.cex = 0.8, title = "Correlation flux DOC ton/km2 and pedo", mar = c(0, 0, 2, 0))
+
+ggplot(pedo_group_flux) + geom_point(aes(x=high, y = flux_ton_km2, col = carbon))
+
+ggplot(pedo_group_flux) + geom_point(aes(x=low, y = flux_ton_km2, col = carbon))
+```
 
 # DEM
 
@@ -1404,9 +1424,9 @@ litho_wide <- litho_long %>% group_by(litho_global_class, Name, Station, Obs) %>
 
 # virer tous les "fullName"
 
-flux_bv <- flux %>% mutate(fullName = NULL) %>% merge(info, by = c("Obs","Station","Name","carbon")) %>% merge(esawc_wide, by = c("Obs","Station","Name")) %>% merge(select(era5, !"fullName"), by = c("Obs","Station","Name","carbon")) %>% 
-  merge(litho_wide, by = c("Obs","Station","Name")) %>% merge(pedo_wide, by = c("Obs","Station","Name")) %>%
-  merge(mutate(dem, fullName = F), by = c("Obs","Station","Name")) %>% unique()
+flux_bv <- flux %>% merge(info, by = c("Obs","Station","Name","carbon")) %>% merge(esawc_wide, by = c("Obs","Station","Name")) %>% merge(select(era5, !"fullName"), by = c("Obs","Station","Name","carbon")) %>% 
+  merge(litho_wide, by = c("Obs","Station","Name")) %>% merge(select(pedo_group_wide, !"fullName"), by = c("Obs","Station","Name")) %>%
+  merge(mutate(dem, fullName = NULL), by = c("Obs","Station","Name")) %>% unique()
 
 names(flux_bv) <- gsub(" ", ".", names(flux_bv))
 
@@ -1590,15 +1610,15 @@ ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/selected_globa
 ```
 ```{r selected-bv-pedo, fig.dim = c(10,5)}
 
-niveaux <- levels(pedo_long$main_soil)
+niveaux <- levels(pedo_long$main)
 
 pie_site <- function(site, titre = site) {
   dat <- pedo_long %>%
     filter(fullName == site) %>%
-    complete(main_soil = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
+    complete(main = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
 
   ggplot(dat) +
-    geom_bar(aes(x = "", y = proportion, fill = main_soil),
+    geom_bar(aes(x = "", y = proportion, fill = main),
              stat = "identity", width = 1) +
     labs(x = "", y = "", fill = "Soil type", title = titre) +
     coord_polar("y", start = 0) +
@@ -1640,7 +1660,7 @@ pie_site <- function(site, titre = site) {
     labs(x = "", y = "", fill = "Soil connected to hydro", title = titre) +
     coord_polar("y", start = 0) +
     scale_fill_manual(values = connect_colors, limits = niveaux, drop = FALSE) +
-    guides(fill = guide_legend(nrow = 3, byrow = TRUE)) +
+    guides(fill = guide_legend(nrow = 1, byrow = TRUE)) +
     theme_minimal()
 }
 
@@ -1654,7 +1674,44 @@ ggpubr::ggarrange(
   legend = "bottom"
 )
 
-ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/selected_pedo.svg"), width = 10, height = 5)
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/selected_pedo_connecthydro.svg"), width = 10, height = 5)
+
+
+```
+```{r selected-pedo-stabMO, fig.dim = c(10,5)}
+
+pedo_group <-  pedo_long %>% group_by(Name,Station,Obs, fullName, stabMO) %>% summarise(propstab = sum(proportion, na.rm = T))
+
+stab_colors <- c("high" = "#009E73", "low" = "#56B4E9", "no" = "#D55E00")
+
+niveaux <- levels(pedo_group$stabMO)
+
+pie_site <- function(site, titre = site) {
+  dat <- pedo_group %>%
+    filter(fullName == site) %>%
+    complete(stabMO = factor(niveaux, levels = niveaux), fill = list(proportion = 0))
+
+  ggplot(dat) +
+    geom_bar(aes(x = "", y = propstab, fill = stabMO),
+             stat = "identity", width = 1) +
+    labs(x = "", y = "", fill = "Soil ability to stabilize organic matter", title = titre) +
+    coord_polar("y", start = 0) +
+    scale_fill_manual(values = stab_colors, limits = niveaux, drop = FALSE) +
+    guides(fill = guide_legend(nrow = 1, byrow = TRUE)) +
+    theme_minimal()
+}
+
+ggpubr::ggarrange(
+  pie_site("ZA Loire, Montjean, Loire"),
+  pie_site("ZABR, Campus, Isere"),
+  pie_site("MOOSE, Arles, Rhone"),
+  pie_site("M-Tropics, Mbalmayo, Nyong", "M-Tropics, Mbalmayo,\nNyong"),
+  ncol = 4, nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/selected_pedo_stabMO.svg"), width = 10, height = 5)
 
 
 ```
@@ -1664,6 +1721,28 @@ ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Aut
 
 niveaux <- levels(esawc_long$esa_category)
 
+esa_colors <- c(
+  "Cropland"               = "#E69F00",  # orange (= Metamorphic)
+  "Tree cover"             = "#009E73",  # vert (= Basic cristalline)
+  "Grassland"              = "#D55E00",  # jaune (Okabe-Ito)
+  "Schrubland"             = "#F0E442",  # vermillon (= Erodable sediment)
+  "Herbaceous wetland"     = "#882255",  # bordeaux (Tol)
+  "Built up"               = "#8C8C8C",  # gris moyen
+  "Bare"                   = "#D9D9D9",  # gris clair
+  "Permanent water bodies" = "#0072B2",  # bleu (= Carbonated sediment)
+  "Mangroves"              = "#00432F",  # vert très foncé
+  "Marshes and bogs"       = "#56B4E9",  # bleu ciel (= Cristalline)
+  "Snow and ice"           = "#E6F2FA"   # blanc bleuté
+)
+
+library(colorspace)
+swatchplot(
+  "Normal"       = esa_colors,
+  "Deutéranopie" = deutan(esa_colors),
+  "Protanopie"   = protan(esa_colors),
+  "Tritanopie"   = tritan(esa_colors)
+)
+
 pie_site <- function(site, titre = site) {
   dat <- esawc_long %>%
     filter(fullName == site) %>%
@@ -1672,9 +1751,9 @@ pie_site <- function(site, titre = site) {
   ggplot(dat) +
     geom_bar(aes(x = "", y = value, fill = esa_category),
              stat = "identity", width = 1) +
-    labs(x = "", y = "", fill = "Soil type", title = titre) +
+    labs(x = "", y = "", fill = "Land cover", title = titre) +
     coord_polar("y", start = 0) +
-    scale_fill_manual(values = clc_colors, limits = niveaux, drop = FALSE) +
+    scale_fill_manual(values = esa_colors, limits = niveaux, drop = FALSE) +
     guides(fill = guide_legend(nrow = 3, byrow = TRUE)) +
     theme_minimal()
 }
@@ -1689,15 +1768,26 @@ ggpubr::ggarrange(
   legend = "bottom"
 )
 
-ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/selected_landcover.svg"), width = 10, height = 5)
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/selected_landcover.svg"), width = 10, height = 5)
 ```
 
 ```{r all-fluxes}
-
-col_obs <- c("AgrHys" = "skyblue", "Aurade"= "springgreen4", "Draix-Bleone" = "darkolivegreen3", "Jurassic Karst"= "brown4", "M-Tropics"=  "goldenrod2",
-            "MOOSE"= "tomato3", "Obs-ERA" = "steelblue", "Oracle" = "lightcyan3", "OSR" = "coral3", "OTHU" = "darkorange2", "SA Ardieres Morcille" = "grey",
-            "SNO Tourbiere" = "thistle3", "ZA Loire" = "turquoise3", "ZABR" = "maroon3")
-
+col_obs <- c(
+  "AgrHys"               = "#56B4E9",  # bleu ciel (= Cristalline)
+  "Aurade"               = "#009E73",  # vert (= Tree cover)
+  "Draix-Bleone"         = "#CC6677",  # rose corail (Tol)
+  "Jurassic Karst"       = "#882255",  # bordeaux (= Herbaceous wetland)
+  "M-Tropics"            = "#E69F00",  # orange (= Cropland)
+  "MOOSE"                = "#D55E00",  # vermillon (= Schrubland)
+  "Obs-ERA"              = "#0072B2",  # bleu (= Carbonated sediment)
+  "Oracle"               = "#8C8C8C",  # gris moyen (= Built up)
+  "OSR"                  = "#999933",  # olive (Tol)
+  "OTHU"                 = "#8C510A",  # brun
+  "SA Ardieres Morcille" = "#44AA99",  # turquoise (Tol)
+  "SNO Tourbiere"        = "#332288",  # indigo (Tol)
+  "ZA Loire"             = "#00432F",  # vert très foncé (= Mangroves)
+  "ZABR"                 = "#404040"   # gris très foncé
+)
 unique_obs <- filter(flux, Name != "Tet") %>%  select(c("fullName","Obs")) %>% unique
 
 ggplot(filter(flux, Name != "Tet"))+
@@ -1707,11 +1797,11 @@ ggplot(filter(flux, Name != "Tet"))+
   facet_grid(cols = vars(carbon), scales = "free_x")+
   scale_color_manual(values = col_obs)+
   scale_x_continuous(trans = "log", breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4, 1e5), minor_breaks = NULL)+
-  labs(x = "Flux in ton/year/km2", y = "")+
+  labs(x = "Flux in ton/year/km2 (log scale)", y = "")+
   theme_bw()+
   theme(legend.position = "none", axis.text.y = element_text(color = col_obs[sort(unique_obs$Obs)]), axis.text.x = element_text(angle = 90, v = 0.5))
 
-ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/carbon_fluxes.svg"), width = 10, height = 6)
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/carbon_fluxes.svg"), width = 10, height = 6)
 
 ```
 
@@ -1773,28 +1863,63 @@ ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Aut
 ```{r boxplots}
 
 ggarrange(
-ggplot(flux_bv)+geom_boxplot(aes(x="Catchment aera, km2", y = area_km2), fill =  "thistle3" )+
+ggplot(flux_bv)+geom_boxplot(aes(x="Catchment aera, km2", y = area_km2), fill =  "#882255" )+
   labs(x = "", y = "")+theme_bw(),
-ggplot(flux_bv)+geom_boxplot(aes(x="Average elevation, m", y = altitude_moyenne), fill = "darkseagreen3" )+
+ggplot(flux_bv)+geom_boxplot(aes(x="Average elevation, m", y = altitude_moyenne), fill = "#009E73" )+
   labs(x = "", y = "")+theme_bw(),
-ggplot(flux_bv)+geom_boxplot(aes(x="Average precipitation, mm", y = mean.precip_selected*1000), fill = "lightsteelblue2" )+
+ggplot(flux_bv)+geom_boxplot(aes(x="Average precipitation, mm", y = mean.precip_selected*1000), fill = "#56B4E9" )+
   labs(x = "", y = "")+theme_bw(),
-ggplot(flux_bv)+geom_boxplot(aes(x="Average temperature, °C", y = mean.temp_selected-273.15), fill = "coral3")+
+ggplot(flux_bv)+geom_boxplot(aes(x="Average temperature, °C", y = mean.temp_selected-273.15), fill = "#E69F00")+
   labs(x = "", y = "")+theme_bw(),
 
 
 ncol = 4
 )
 
-ggsave(here::here("Conférences et présentations/26-10 Journées FairCarbon Autrans/stats_bv.svg"), width = 8, height = 3)
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/stats_bv.svg"), width = 8, height = 3)
 ```
+
+```{r scatterplot}
+ggplot(data = flux_bv)+geom_point(aes(x= mean.precip_selected , y = flux_ton_km2, col = Obs, size = altitude_moyenne))+facet_grid(cols = vars(carbon))+
+  scale_color_manual(values = col_obs)+
+  theme_bw()
+```
+
+
 ```{r test-lm-poster}
-lm(data = filter(flux_bv, carbon == "POC"), formula = flux_ton_km2 ~ mean.precip_30y + Basic.cristalline) %>% summary()
+lm(data = filter(flux_bv, carbon == "POC"), formula = flux_ton_km2 ~ mean.precip_30y + altitude_moyenne) %>% summary()
 
 lm(data = filter(flux_bv, carbon == "DOC"), formula = flux_ton_km2 ~ mean.temp_30y + Cropland) %>% summary()
 ```
-```{r}
+```{r pca}
 
+all_bv <- info %>% merge(era5, by = c("Obs","Station","Name","carbon")) %>% merge(esawc_wide, by = c("Obs","Station","Name")) %>% 
+  merge(litho_wide, by = c("Obs","Station","Name")) %>% merge(select(pedo_group_wide, !"fullName"), by = c("Obs","Station","Name")) %>%
+  merge(mutate(dem, fullName = NULL), by = c("Obs","Station","Name")) %>% unique()
+
+
+pca_parameters <- all_bv %>% select(!c("Obs", "Station", "Name", "carbon", "WP", "years", "year_vec", "resolution_utilisee", "source", "x", "y", "altitude_max", "pente_max", "mean.precip_selected", "mean.temp_selected", "max.temp_selected","max.temp_30y", "max.precip_selected","max.precip_30y","Mangroves")) %>% unique()
+pca_parameters <- pca_parameters[-11, ] # removes 1/2 occurence of MOOSE, Arles, Rhone
+
+names(pca_parameters)[which(names(pca_parameters) == "high")] <- "soil OM stabilisation"
+names(pca_parameters)[which(names(pca_parameters) == "no")] <- "no soil OM stabilisation"
+names(pca_parameters)[which(names(pca_parameters) == "low")] <- "soil OM preservation"
+
+rownames(pca_parameters) <-  pca_parameters$fullName
+
+pca_parameters[is.na(pca_parameters)] <- 0
+
+
+pca_flux <- pca_parameters %>% mutate(fullName = NULL) %>% scale %>% princomp
+
+
+fviz_pca_var(pca_flux,  col.var = "#0072B2", repel = T)
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/pca_var.svg"), width = 15, height = 12)
+
+fviz_pca_ind(pca_flux, repel = T)
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/pca_ind.svg"), width = 15, height = 12)
+
+fviz_pca_biplot(pca_flux, repel = T, alpha.ind =0.5, geom.var = "text",  labelsize = 4, col.var = "contrib", gradient.cols = c("#009E73", "#56B4E9", "#D55E00"),
+                max.overlaps = Inf, select.var = list(contrib = 15))
+ggsave(here::here("Conférences et présentations/26-11 JMSC Lyon/pca_biplot.svg"), width = 15, height = 12)
 ```
-
-
