@@ -142,6 +142,49 @@ knitr::kable(summary_frasnes, caption = "Summary table of frasnes data") %>% kab
 
 ```
 
+## Export data
+
+```{r summary-data}
+summary_frasnes <- merge(
+frasnes %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(round(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")),
+frasnes %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
+  merge(frasnes %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(as.Date(DateHeure)))), by = "year", all = T) %>%
+  merge(frasnes %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
+  merge(frasnes %>% group_by(year) %>% summarise("Median sampling interval, min" = round(median(period, na.rm = T)/60,1)), by = "year", all = T) %>%
+  rbind(c("All years", 
+          dim(subset(frasnes, !is.na(doc_mg.L)))[1], 
+          paste(round(quantile(frasnes$doc_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
+          dim(subset(frasnes, !is.na(q_L.s)))[1], 
+          paste(round(quantile(frasnes$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+          length(unique(as.Date(frasnes$DateHeure))),
+          round(cor(frasnes$doc_mg.L, frasnes$q_L.s, use = "pairwise.complete.obs" ),2),
+          round(median(frasnes$period, na.rm = T)/60,1)
+           ))  %>%
+      rbind(c("Complete years", 
+            dim(subset(frasnes_complete, !is.na(doc_mg.L)))[1], 
+            paste(round(quantile(frasnes_complete$doc_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
+            dim(subset(frasnes_complete, !is.na(q_L.s)))[1], 
+            paste(round(quantile(frasnes_complete$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+            length(unique(as.Date(frasnes_complete$DateHeure))),
+            round(cor(frasnes_complete$doc_mg.L, frasnes_complete$q_L.s, use = "pairwise.complete.obs" ),2),
+            round(median(frasnes_complete$period, na.rm = T)/60,1)
+            )
+            )  %>%
+      rbind(c("Full years", 
+            dim(subset(frasnes_full, !is.na(doc_mg.L)))[1], 
+            paste(round(quantile(frasnes_full$doc_mg.L, probs = c(0,0.5,1), na.rm = T),2), collapse = " / "), 
+            dim(subset(frasnes_full, !is.na(q_L.s)))[1], 
+            paste(round(quantile(frasnes_full$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+            length(unique(as.Date(frasnes_full$DateHeure))),
+            round(cor(frasnes_full$doc_mg.L, frasnes_full$q_L.s, use = "pairwise.complete.obs" ),2),
+            round(median(frasnes_full$period, na.rm = T)/60,1)
+            )
+            ) %>%
+  mutate(`DOCobs/Qobs` = round(as.numeric(`Number of DOC observations`)/as.numeric(`Number of Q observations`),2))
+
+knitr::kable(summary_frasnes, caption = "Summary table of La Guette data") %>% kableExtra::kable_styling()
+
+```
 
 # Annual and interannual flux 
 
@@ -174,19 +217,13 @@ q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 # period mat
 period_mat <- matrix(frasnes_complete$period, nrow = nrep, ncol = nobs, byrow = T) # in hours
 
-
-
 # Flux per time step
 flux_ton_mat <- doc_mat*1e-9*q_mat*period_mat # period_mat is in s 
 flux_ton.s_mat <- doc_mat*1e-9*q_mat # without period
 
-
-
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(frasnes_complete$year == y)}) # list of indices corresponding to each year
 annual_flux_ton.y <- sapply(index_years, function(idx){apply(flux_ton_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and n_years columns 
-
-
 
 annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
 annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector

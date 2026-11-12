@@ -30,7 +30,7 @@ library(here)
 # Get data
 
 ```{r bv}
-bv <- 7
+bv <- 104
 unit_flux = "kg"
 ```
 
@@ -209,7 +209,7 @@ q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 period_mat <- matrix(theil_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
 
 # Flux per time step
-load_kg.s_mat <- doc_mat*1e-9*q_mat*period_mat 
+load_kg.s_mat <- doc_mat*1e-6*q_mat*period_mat 
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(theil_doc$year == y)}) # list of indices corresponding to each year

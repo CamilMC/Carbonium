@@ -16,10 +16,12 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.alig
 
 
 ```{r libraries}
-lapply(c("dplyr", "data.table", "readxl"), library, character.only = T)
+
 lapply(c("ggplot2","ggpubr"), library, character.only = T)
+lapply(c("dplyr", "data.table", "readxl"), library, character.only = T)
 lapply(c("lubridate"), library, character.only = T)
 lapply(c("knitr","kableExtra"), library, character.only = T)
+library(writexl)
 library(here)
 
 ```
@@ -50,7 +52,7 @@ bernadouze <- readxl::read_xlsx(path = "ber_2016_2024_v4.xlsx", sheet = "ber_sim
 #bernadouze2 <- readxl::read_xlsx(path = "bernadouze.xlsx", sheet = "ber_clean", col_types = c("date", "numeric", "numeric","numeric")) %>% unique() # contient du poc
 
 bernadouze <- bernadouze %>% mutate(
-  year = year(bernadouze$DateHeure),
+  year = year(DateHeure),
   commondate = update(DateHeure, year = 2000),
   period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs"))
   )
@@ -143,11 +145,55 @@ knitr::kable(summary_bernadouze, caption = "Summary table of bernadouze data") %
 
 ```
 
+## Export summary
+
+```{r export-summary}
+
+rmd_id <- "bernadouze"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  annees_debit = setdiff(unique(filter(summary_bernadouze, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_bernadouze[nrow(summary_bernadouze) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(bernadouze$period, na.rm = T),
+  range_debit = summary_bernadouze[nrow(summary_bernadouze) - 1, ] %>% select(`Q range, L/s`) %>% paste(),
+  unit_debit = "L/s",
+  annees_mes = NA,
+  nb_obs_mes = NA,
+  range_mes = NA,
+  annees_oc = setdiff(unique(filter(summary_bernadouze, !is.na(`Number of DOC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(bernadouze$doc_mg.L) %>% length(),
+  range_oc = summary_bernadouze[nrow(summary_bernadouze) - 1, ] %>% select(`DOC range, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "sonde, 30 min")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
+```
+
 
 ## Annual and interannual flux 
 
 
-DOC est mesurée par sonde. Quelle incertitude ? Pour Bernadouze, @Rousset2019 utilise sd = 0.5 mg/L. Je n'ai pas accès aux données de calibration. 
+DOC est mesurée par sonde. Quelle incertitude ? Pour Bernadouze, @Rosset2019 utilise sd = 0.5 mg/L. Je n'ai pas accès aux données de calibration. 
 
 
 ```{r uncertainties}
@@ -161,10 +207,12 @@ nrep <- 1000
 
 ### Total flux
 
+On estime sd à partir des données de Rosset: 0.78
+
 ```{r compute-flux}
 #doc matrix
 doc_meas <- matrix(bernadouze_complete$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
-doc_noise <-  matrix(rnorm(nrep*nobs, mean = 0, sd = 0.5), nrow=nrep, ncol = nobs)
+doc_noise <-  matrix(rnorm(nrep*nobs, mean = 0, sd = 0.78), nrow=nrep, ncol = nobs)
 doc_mat <- doc_meas + doc_noise # final value of doc, with noise in mg/L
 
 # Q matrix
@@ -466,6 +514,16 @@ write_xlsx(df_shared, here("resultats.xlsx"))
 
 ## Get data 
 
+Données de @Rosset2019. 
+Données haute fréquence: sonde
+Prélèvements manuels toutes les 2 semaines + 4 crues (24 échantillons).
+Analytical uncertainty for Shimadzu: +/- 0.1 mg/L (limite: 1 mg/L)*
+
+POC HF déterminé à partir de la turbidité: [POC] = a*ln (Turbidity) + b) described by the following parameters (a = 0.55, b = 0.04, number of observations = 30, r2 = 0.65, p value < 0.01
+
+
+
+
 ```{r load-poc-data-from-excel, message = F}
 
 bernadouze2 <- readxl::read_xlsx(path = "bernadouze.xlsx", sheet = "ber_clean", col_types = c("date", "numeric", "numeric","numeric")) %>% unique() # contient du poc
@@ -511,9 +569,9 @@ annotate_figure(plots, top = text_grob(title))
 ```{r histograms-poc}
 ggarrange(
   ggplot(bernadouze2)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
-  ggplot(bernadouze2)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_bw(),
+  ggplot(bernadouze2)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "POC, mg/L", y = "")+theme_bw(),
   ggplot(bernadouze2)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
-  ggplot(bernadouze2)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_bw()
+  ggplot(bernadouze2)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "POC (log10), mg/L", y = "")+theme_bw()
 )
 ```
 
@@ -534,7 +592,7 @@ bernadouze2_complete <- bernadouze2 %>% filter(year %in% complete_years)
 
 ```{r summary-data-poc}
 summary_bernadouze2 <- merge(
-bernadouze2 %>% subset(!is.na(poc_mg.L)) %>% group_by(year) %>% summarise("Number of POC observations" = n(), "POC range, mg/L" = paste(round(quantile(poc_mg.L, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")),
+bernadouze2 %>% subset(!is.na(poc_mg.L)) %>% group_by(year) %>% summarise("Number of POC observations" = n(), "POC range, mg/L" = paste(round(quantile(poc_mg.L, probs = c(0,0.5,1), na.rm = T),3), collapse = " / ")),
 bernadouze2 %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
   merge(bernadouze2 %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(as.Date(DateHeure)))), by = "year", all = T) %>%
   merge(bernadouze2 %>% group_by(year) %>% summarise("Correlation poc/Q" = round(cor(poc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
@@ -554,7 +612,7 @@ bernadouze2 %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number o
             dim(subset(bernadouze2_complete, !is.na(q_L.s)))[1], 
             paste(round(quantile(bernadouze2_complete$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
             length(unique(as.Date(bernadouze2_complete$DateHeure))),
-            round(cor(bernadouze2_complete$poc_mg.L, bernadouze2_complete$q_L.s, use = "pairwise.complete.obs" ),2),
+            round(cor(bernadouze2_complete$poc_mg.L, bernadouze2_complete$q_L.s, use = "pairwise.complete.obs" ),3),
             round(median(bernadouze2_complete$period, na.rm = T)/60,1)
             )
             ) %>%
@@ -564,11 +622,52 @@ knitr::kable(summary_bernadouze2, caption = "Summary table of bernadouze2 data")
 
 ```
 
+```{r export-summary-poc}
+
+rmd_id <- "bernadouze"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "POC",
+  annees_debit = setdiff(unique(filter(summary_bernadouze2, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_bernadouze[nrow(summary_bernadouze2) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(bernadouze2$period, na.rm = T),
+  range_debit = summary_bernadouze[nrow(summary_bernadouze2) - 1, ] %>% select(`Q range, L/s`) %>% paste(),
+  unit_debit = "L/s",
+  annees_mes = NA,
+  nb_obs_mes = NA,
+  range_mes = NA,
+  annees_oc = setdiff(unique(filter(summary_bernadouze2, !is.na(`Number of POC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(bernadouze2$poc_mg.L) %>% length(),
+  range_oc = summary_bernadouze2[nrow(summary_bernadouze2) - 1, ] %>% select(`POC range, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "unkbiwn, 30 min")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
+```
 
 # Annual and interannual flux 
 
 
-POC est mesurée par sonde. Quelle incertitude ? Sd = 0.5 mg/L in @Rousset2019. 
+POC est mesurée par sonde. Quelle incertitude ? Sd = 0.5 mg/L in @Rosset2019. 
 
 
 ```{r uncertainties-poc}
@@ -582,10 +681,12 @@ nrep <- 1000
 
 ## Total flux
 
+Sd évaluée à partir des données de Rosset: 0.38
+
 ```{r compute-flux-poc}
 #poc matrix
 poc_meas <- matrix(bernadouze2$poc_mg.L, nrow = nrep, ncol = nobs, byrow = T) # repeats nrep lines with observations
-poc_noise <-  matrix(rnorm(nrep*nobs, mean = 0, sd = 0.5), nrow=nrep, ncol = nobs)
+poc_noise <-  matrix(rnorm(nrep*nobs, mean = 0, sd = 0.38), nrow=nrep, ncol = nobs)
 poc_mat <- poc_meas + poc_noise # final value of doc, with noise in mg/L
 
 # Q matrix

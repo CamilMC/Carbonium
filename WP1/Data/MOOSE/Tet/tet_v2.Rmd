@@ -31,7 +31,7 @@ library(here)
 
 ```{r bv}
 bv <- 1388 # QGIS
-unit_flux = "kg"
+unit_flux = "ton"
 ```
 
 
@@ -47,7 +47,7 @@ tet <- tet %>% mutate(
   period = as.numeric(difftime(lead(DateHeure), DateHeure, units = "secs")),
   poc_mg.L = poc_umol.L*1e-3*12.011,
   doc_mg.L = doc_umol.L*1e-3*12.011,
-  q_L.s = q_m3.s
+  q_L.s = q_m3.s*1e3
 )
 
 
@@ -61,11 +61,11 @@ title <- expression(atop("Series of Q and DOC by year"))
 
 plots <- ggarrange(
 ggplot(tet, aes(x = as.Date(commondate)))+
-  geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
+  geom_point(aes(y = q_m3.s, col = "Débit, m3/s"), alpha = 0.5)+
   scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
   scale_color_manual(values = c("darkblue"), name = "")+
   facet_grid(rows = vars(year))+
-  labs(y = "Débit, L/s", col = "")+
+  labs(y = "Débit, m3/s", col = "")+
   theme_bw(base_size = 15)+
   theme(legend.position = "none"),
 
@@ -98,10 +98,10 @@ annotate_figure(plots, top = text_grob(title))
 
 ```{r histograms}
 ggarrange(
-  ggplot(tet)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
+  ggplot(tet)+geom_histogram(aes(q_m3.s),fill = "lightblue")+labs(x= "Débit, m3/s", y = "")+theme_bw(),
   ggplot(tet)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_bw(),
   ggplot(tet)+geom_histogram(aes(poc_mg.L), fill = "indianred")+labs(x= "POC, mg/L", y = "")+theme_bw(),
-  ggplot(tet)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
+  ggplot(tet)+geom_histogram(aes(log10(q_m3.s)),fill = "lightblue")+labs(x= "Débit (log10), m3/s", y = "")+theme_bw(),
   ggplot(tet)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_bw(),
   ggplot(tet)+geom_histogram(aes(log(poc_mg.L)), fill = "indianred")+labs(x= "POC (log10), mg/L", y = "")+theme_bw()
 )
@@ -184,11 +184,11 @@ knitr::kable(summary_tet, digits = 2, caption = "Summary table of tet data") %>%
 ## Check flux no u
 
 ```{r flux-doc-direct}
-tet_direct <- tet_complete %>% mutate(f_doc = doc_mg.L*1e-6*q_L.s, load = f_doc*period, f_poc = poc_mg.L*1e-6*q_L.s, load_poc = f_poc*period)
+tet_direct <- tet_complete %>% mutate(f_doc = doc_mg.L*1e-9*q_L.s, load = f_doc*period, f_poc = poc_mg.L*1e-9*q_L.s, load_poc = f_poc*period)
 tet_direct$qobs <- with(tet_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
 
 annual_flux_direct <- tet_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
-                                                                    mean_q = mean(q_L.s * 1e-3, na.rm = T),
+                                                                    mean_q = mean(q_L.s, na.rm = T),
                                                                     mean_qobs = mean(qobs, na.rm = T),
                                                                     mean_doc = mean(doc_mg.L, na.rm = T), 
                                                                   mean_poc = mean(poc_mg.L, na.rm = T), 
@@ -198,7 +198,7 @@ annual_flux_direct <- tet_direct %>% group_by(year) %>% summarise(mean_period = 
                                                                     sum_q = sum(q_L.s, na.rm = T)) %>%
   mutate(annual_fdoc = sum_loadobs*sum_q/sum_qobs, annual_fpoc = sum_loadobs_poc*sum_q/sum_qobs)
 
-annual_flux_direct %>% knitr::kable(caption = "Annual flux kg", digits = 5) %>% kable_styling()
+annual_flux_direct %>% knitr::kable(caption = "Annual flux, ton", digits = 5) %>% kable_styling()
 
 ```
 
@@ -240,11 +240,11 @@ q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 period_mat <- matrix(tet_poc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
 
 # Flux per time step
-load_kg.s_mat <- poc_mat*1e-6*q_mat*period_mat 
+load_ton_mat <- poc_mat*1e-9*q_mat*period_mat 
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(tet_poc$year == y)}) # list of indices corresponding to each year
-sum_loadobs <- sapply(index_years, function(idx){apply(load_kg.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_ton_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
 
 sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
 
@@ -267,7 +267,7 @@ sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, 
 ```
 
 ```{r compute-flux-poc}
-annual_flux_kg.y <- sum_qtot*sum_loadobs/sum_qobs
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
 
 # add uncertainty due to method, based on % POCobs/Qobs and results 
 u_method <- (53-0.53*(summary_tet$`POCobs/Qobs`*100))/100 # déterminé dans isere_method pour des flux
@@ -277,11 +277,11 @@ print(u_method)
 flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = sd_by_year), nrow = nrep, ncol = length(complete_years))
 
 # Annual flux
-annual_flux_kg.y <- annual_flux_kg.y * (1 + flux_noise)
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
 
-annual_flux_pi <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
-annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
 
 annual_flux_df <- data.frame(year = complete_years, 
                         annual_flux_mean = annual_flux_mean, 
@@ -290,9 +290,9 @@ annual_flux_df <- data.frame(year = complete_years,
                         annual_flux_pi_upper = annual_flux_pi[3,])
 
 # Interannual flux 
-interannual_flux_kg.y <- rowMeans(annual_flux_kg.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_pi <- quantile(interannual_flux_kg.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean <- mean(interannual_flux_kg.y, na.rm = T) # mean interannual flux
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
 interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
 
 interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
@@ -350,7 +350,7 @@ knitr::kable(total_flux_df, digits = 2, row.names = F, caption = "POC fluxes, kg
 ```
 
 ```{r check-sum-load-poc}
-check <- tet_complete %>% mutate(load = poc_mg.L*q_L.s*period) %>% group_by(year) %>% summarise(flux = sum(load, na.rm = T)*1e-6) %>% cbind(POC.Q = summary_tet$`POCobs/Qobs`[2:3]) %>% mutate(average_flux = flux*(1/POC.Q))
+check <- tet_complete %>% mutate(load = poc_mg.L*q_L.s*period) %>% group_by(year) %>% summarise(flux = sum(load, na.rm = T)*1e-9) %>% cbind(POC.Q = summary_tet$`POCobs/Qobs`[2:3]) %>% mutate(average_flux = flux*(1/POC.Q))
 
 knitr::kable(check, digits = 2, caption = "Check flux with sum") %>% kable_styling()
 ```
@@ -370,13 +370,13 @@ ggplot()+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/km2/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/km2/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ggsave(here("figures","sflux_tet_poc.svg"))
 
-knitr::kable(total_sflux_df, digits = 2, row.names = F, caption = "POC fluxes, kg/km2/year") %>% kableExtra::kable_styling()
+knitr::kable(total_sflux_df, digits = 2, row.names = F, caption = "POC fluxes, ton/km2/year") %>% kableExtra::kable_styling()
 ```
 
 
@@ -597,11 +597,11 @@ q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
 period_mat <- matrix(tet_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
 
 # Flux per time step
-load_kg.s_mat <- doc_mat*1e-6*q_mat*period_mat # without period
+load_ton_mat <- doc_mat*1e-9*q_mat*period_mat # without period
 
 # Annual flux
 index_years <- lapply(complete_years, function(y){which(tet_doc$year == y)}) # list of indices corresponding to each year
-sum_loadobs <- sapply(index_years, function(idx){apply(load_kg.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_ton_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
 
 sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
 
@@ -626,7 +626,7 @@ sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, 
 ```
 
 ```{r compute-flux-doc}
-annual_flux_kg.y <- sum_qtot*sum_loadobs/sum_qobs
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
 
 u_method <- (18-0.18*(summary_tet$`DOCobs/Qobs`*100))/100 # déterminé dans arles_method pour des flux
 # add uncertainty due to method, based on % POCobs/Qobs and results 
@@ -635,11 +635,11 @@ print(u_method)
 
 flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = sd_by_year), nrow = nrep, ncol = length(complete_years))
 
-annual_flux_kg.y <- annual_flux_kg.y * (1 + flux_noise)
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
 
-annual_flux_pi <- apply(annual_flux_kg.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
-annual_flux_mean <- colMeans(annual_flux_kg.y, na.rm = T) # mean annual flux per year. 1 vector
-annual_flux_sd <- apply(annual_flux_kg.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
 
 annual_flux_df <- data.frame(year = complete_years, 
                         annual_flux_mean = annual_flux_mean, 
@@ -648,9 +648,9 @@ annual_flux_df <- data.frame(year = complete_years,
                         annual_flux_pi_upper = annual_flux_pi[3,])
 
 # Interannual flux 
-interannual_flux_kg.y <- rowMeans(annual_flux_kg.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
-interannual_flux_pi <- quantile(interannual_flux_kg.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
-interannual_flux_mean <- mean(interannual_flux_kg.y, na.rm = T) # mean interannual flux
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
 interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
 
 interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
@@ -689,7 +689,7 @@ ggplot()+
   geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
@@ -703,7 +703,7 @@ ggplot()+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
-knitr::kable(total_flux_df, digits = 2, row.names = F, caption = "DOC fluxes, kg/year") %>% kableExtra::kable_styling()
+knitr::kable(total_flux_df, digits = 2, row.names = F, caption = "DOC fluxes, ton/year") %>% kableExtra::kable_styling()
 
 ```
 
@@ -728,13 +728,13 @@ ggplot()+
   geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
   scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
   scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
-   labs(x = "Year", y = "Flux (kg/km2/year)", fill = "")+
+   labs(x = "Year", y = "Flux (ton/km2/year)", fill = "")+
   theme_minimal(base_size = 15)+
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 
 ggsave(here("figures","sflux_tet_doc.svg"))
 
-knitr::kable(total_sflux_df, digits = 2, row.names = F, caption = "DOC fluxes, kg/km2/year") %>% kableExtra::kable_styling()
+knitr::kable(total_sflux_df, digits = 2, row.names = F, caption = "DOC fluxes, ton/km2/year") %>% kableExtra::kable_styling()
 ```
 
 

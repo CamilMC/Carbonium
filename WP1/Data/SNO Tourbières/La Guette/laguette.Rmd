@@ -16,17 +16,13 @@ knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.alig
 
 
 ```{r libraries}
-lapply(c("dplyr", "data.table", "readxl"), library, character.only = T)
+lapply(c("dplyr", "data.table", "readxl", "writexl"), library, character.only = T)
 lapply(c("ggplot2","ggpubr"), library, character.only = T)
 lapply(c("lubridate"), library, character.only = T)
 lapply(c("knitr","kableExtra"), library, character.only = T)
 library(here)
 
 ```
-
-# Questions au responsable de site
-
-
 
 # Liens
 
@@ -150,6 +146,50 @@ laguette %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q
 
 knitr::kable(summary_laguette, caption = "Summary table of La Guette data") %>% kableExtra::kable_styling()
 
+```
+
+## Export summary
+
+```{r export-summary}
+
+rmd_id <- "la guette"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  annees_debit = setdiff(unique(filter(summary_laguette, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_laguette[nrow(summary_laguette) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(laguette$period, na.rm = T),
+  range_debit = summary_laguette[nrow(summary_laguette) - 1, ] %>% select(`Q range, L/s`) %>% paste(),
+  unit_debit = "L/s",
+  annees_mes = NA,
+  nb_obs_mes = NA,
+  range_mes = NA,
+  annees_oc = setdiff(unique(filter(summary_laguette, !is.na(`Number of DOC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(laguette$doc_mg.L) %>% length(),
+  range_oc = summary_laguette[nrow(summary_laguette) - 1, ] %>% select(`DOC range, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "sonde, 30 min")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
 ```
 
 

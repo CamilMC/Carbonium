@@ -39,8 +39,6 @@ col_obs <- c("AgrHys" = "skyblue", "Aurade"= "springgreen4", "Draix-Bleone" = "d
             "SNO Tourbiere" = "thistle3", "ZA Loire" = "grey", "ZABR" = "maroon3")
 ```
 
-
-
 # BV pour POC et DOC
 
 ```{r get-data}

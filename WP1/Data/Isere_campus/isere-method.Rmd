@@ -225,9 +225,6 @@ knitr::kable(summary_isere, caption = "Summary table of Isere data") %>% kableEx
 
 ```
 
-
-
-
 ```{r histograms}
 ggarrange(
   ggplot(isere_complete)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),

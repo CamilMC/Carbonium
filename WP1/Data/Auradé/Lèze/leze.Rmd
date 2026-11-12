@@ -1,0 +1,1298 @@
+---
+title: "La Lèze"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    number_section: true
+date: "2025-06-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, error = F, fig.align = "center", collapse = T,
+                      cache = T)
+```
+
+
+```{r libraries}
+lapply(c("dplyr", "data.table", "readxl", "writexl"), library, character.only = T)
+lapply(c("ggplot2","ggpubr"), library, character.only = T)
+lapply(c("lubridate"), library, character.only = T)
+lapply(c("knitr","kableExtra"), library, character.only = T)
+library(here)
+
+```
+# Liens
+
+Données de Clément Fabre. On suppose que le débit est en L/s.
+
+# Data
+
+## Load data
+
+Données fournies par Anne Probst. 
+
+```{r bv}
+bv <- 361.126
+unit_flux = "ton"
+```
+
+
+```{r load-data}
+debit <- read_xlsx("leze.xlsx", sheet = "debit")
+doc <- read_xlsx("leze.xlsx", sheet = "chimie")
+
+```
+
+
+```{r merge}
+# data table ----
+debit_dt <- setDT(debit)
+doc_dt <- setDT(doc)
+
+debit_dt[,dhdebit := DateHeure]
+doc_dt[,dhdoc := DateHeure]
+
+doc_dt[, doc_id := .I]
+
+leze_dt <- doc_dt[debit_dt, on = "DateHeure", roll = "nearest"
+                    ][, diff := abs(as.numeric(dhdebit - dhdoc, units = "secs"))]
+
+# Colonnes à "vider" pour les lignes non retenues
+cols_doc <- setdiff(names(doc_dt), "DateHeure")
+
+# Repérer, par groupe doc_id, la ligne à garder (diff minimal)
+leze_dt[, keep_row := .I == .I[which.min(diff)], by = doc_id]
+
+# Mettre à NA les colonnes de doc_dt pour les lignes non gardées
+leze_dt[keep_row == FALSE, (cols_doc) := NA]
+leze_dt[, keep_row := NULL]
+
+leze <- leze_dt[, .(DateHeure, doc_mg.L, q_L.s,poc_mg.L,mes_mg.L,poc_percent)][order(DateHeure)]
+leze[, `:=`(
+  year = year(DateHeure),
+  commondate = update(DateHeure, year = 2000),
+  period = as.numeric(difftime(shift(DateHeure, type = "lead"), DateHeure, units = "secs"))
+)];
+```
+
+Maximum écart de matchs en secondes: 1800 (30 min )
+
+# DOC
+
+## Expore data
+### Visualisation
+
+```{r plot-by-year-doc, fig.dim = c(10,8)}
+
+title <- expression(atop("Series of Q and DOC by year"))
+
+plots <- ggarrange(
+ggplot(leze, aes(x = as.Date(commondate)))+
+  geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("lightblue"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "Débit, L/s", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none"),
+
+ggplot(leze, aes(x = as.Date(commondate)))+
+  geom_point(aes(y = doc_mg.L, col = "DOC, mg.L"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("palegreen4"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "DOC, mg/L", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none")
+)
+
+annotate_figure(plots, top = text_grob(title))
+
+
+
+```
+
+```{r doc-histograms}
+ggarrange(
+  ggplot(leze)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
+  ggplot(leze)+geom_histogram(aes(doc_mg.L), fill = "palegreen4")+labs(x= "DOC, mg/L", y = "")+theme_bw(),
+  ggplot(leze)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
+  ggplot(leze)+geom_histogram(aes(log(doc_mg.L)), fill = "palegreen4")+labs(x= "DOC (log10), mg/L", y = "")+theme_bw()
+)
+```
+
+### Complete years
+
+```{r doc-complete-years}
+complete_years <- 2025
+leze_complete <- leze %>% filter(year %in% complete_years)
+```
+
+### Characteristics
+
+```{r doc-summary-data}
+summary_leze <- merge(
+leze %>% subset(!is.na(doc_mg.L)) %>% group_by(year) %>% summarise("Number of DOC observations" = n(), "DOC range, mg/L" = paste(round(quantile(doc_mg.L, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")),
+leze %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
+  merge(leze %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(as.Date(DateHeure)))), by = "year", all = T) %>%
+  merge(leze %>% group_by(year) %>% summarise("Correlation DOC/Q" = round(cor(doc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
+  merge(leze %>% group_by(year) %>% summarise("Median sampling interval, min" = round(median(period, na.rm = T)/60,1)), by = "year", all = T) %>%
+  rbind(c("All years", 
+          dim(subset(leze, !is.na(doc_mg.L)))[1], 
+          paste(quantile(leze$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(leze, !is.na(q_L.s)))[1], 
+          paste(round(quantile(leze$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+          length(unique(as.Date(leze$DateHeure))),
+          round(cor(leze$doc_mg.L, leze$q_L.s, use = "pairwise.complete.obs" ),2),
+          round(median(leze$period, na.rm = T)/60,1)
+           ))  %>%
+      rbind(c("Complete years", 
+            dim(subset(leze_complete, !is.na(doc_mg.L)))[1], 
+            paste(quantile(leze_complete$doc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+            dim(subset(leze_complete, !is.na(q_L.s)))[1], 
+            paste(round(quantile(leze_complete$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+            length(unique(as.Date(leze_complete$DateHeure))),
+            round(cor(leze_complete$doc_mg.L, leze_complete$q_L.s, use = "pairwise.complete.obs" ),2),
+            round(median(leze_complete$period, na.rm = T)/60,1)
+            )
+            ) %>%  mutate(`DOCobs/Qobs` = round(as.numeric(`Number of DOC observations`)/as.numeric(`Number of Q observations`),3)) 
+
+knitr::kable(summary_leze, caption = "Summary table of leze data") %>% kableExtra::kable_styling()
+
+```
+
+Moins de 0.10% de données DOC par rapport aux données Q.
+Sur auradé, 10% DOC/Q -> incertitude 25%. d'où vient le 25%???
+Grosse corrélation DOC/Q mais seulement 12 points ???
+
+### Export summary
+
+```{r exporter-doc-summary}
+
+rmd_id <- "leze"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  annees_debit = setdiff(unique(filter(summary_leze, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_leze[nrow(summary_leze) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(leze$period, na.rm = T),
+  range_debit = summary_leze[nrow(summary_leze) - 1, ] %>% select(`Q range, L/s`) %>% paste(),
+  unit_debit = "L/s",
+  annees_mes = NA,
+  nb_obs_mes = NA,
+  range_mes = NA,
+  annees_oc = setdiff(unique(filter(summary_leze, !is.na(`Number of DOC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(leze$poc_timeinterval) %>% length(),
+  range_oc = summary_leze[nrow(summary_leze) - 1, ] %>% select(`DOC range, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "ponctuel")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
+```
+
+### Check flux no u
+
+```{r flux-doc-direct}
+leze_direct <- leze_complete %>% mutate(f_doc = doc_mg.L*1e-9*q_L.s, load = f_doc*period)
+leze_direct$qobs <- with(leze_direct, ifelse(is.na(doc_mg.L), NA, q_L.s))
+
+annual_flux_direct <- leze_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+                                                                    mean_q = mean(q_L.s * 1e-3, na.rm = T),
+                                                                    mean_qobs = mean(qobs, na.rm = T),
+                                                                    mean_doc = mean(doc_mg.L, na.rm = T), 
+                                                                    sum_loadobs = sum(load, na.rm = T), 
+                                                                    sum_qobs = sum(qobs, na.rm = T), 
+                                                                    sum_q = sum(q_L.s, na.rm = T)) %>%
+  mutate(annual_fdoc = sum_loadobs*sum_q/sum_qobs)
+
+annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 5) %>% kable_styling()
+
+```
+
+## Annual and interannual DOC flux 
+
+On considère que l'erreur sur DOC vient de la mesure par analyse. Pas de HF: prélèvements manuels ???
+
+Il y a plus de mesures de Q que de mesures de DOC. On utilise l'équivalence sum(load)/sum(q) = sum(load obs)/sum(q obs).
+No
+
+```{r doc-uncertainties}
+nyears <- length(complete_years)
+
+q_u <- 0.1
+
+```
+
+### total flux
+
+```{r doc-flux-for-obs}
+leze_doc <- leze_complete %>% filter(!is.na(doc_mg.L))
+
+nrep <- 1000
+nobs <- dim(leze_doc)[1]
+
+doc_meas <- matrix(leze_doc$doc_mg.L, nrow = nrep, ncol = nobs, byrow = T)
+doc_cv <- 3.3*doc_meas^(-0.6) # from all data available on 29/05/2026
+doc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
+doc_noise <- doc_cv*doc_random
+doc_mat <- doc_meas * (1 + doc_noise/100) # final value of doc, with noise in percent
+
+# Q matrix
+q_meas <- matrix(leze_doc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+
+# period 
+period_mat <- matrix(leze_doc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
+
+# Flux per time step
+load_ton.s_mat <- doc_mat*1e-9*q_mat*600 # period fixed to 600 s -> otherwise outliers
+
+# Annual flux
+index_years <- lapply(complete_years, function(y){which(leze_doc$year == y)}) # list of indices corresponding to each year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_ton.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+
+sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
+
+```
+
+```{r sum-q-tot, cache.lazy = F}
+
+nrep <- 1000
+nobs <- dim(leze_complete)[1]
+
+# Q matrix
+qtot_meas <- matrix(leze_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+qtot_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+qtot_mat <- qtot_meas * (1 + qtot_noise) # final value of q, with noise
+
+
+index_years_tot <- lapply(complete_years, function(y){which(leze_complete$year == y)}) # list of indices corresponding to each year
+sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)})
+
+
+
+```
+
+```{r compute-doc-flux}
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
+
+# add 25% uncertainty due to method
+flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = 0.25), nrow = nrep, ncol = length(complete_years))
+
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
+
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+
+annual_flux_df <- data.frame(year = complete_years, 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = annual_flux_sd, 
+                        annual_flux_pi_lower = annual_flux_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_pi[3,])
+
+# Interannual flux 
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_pi_lower = interannual_flux_pi[1], 
+                        annual_flux_pi_upper = interannual_flux_pi[3])
+
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", nyears), "interannual")
+
+# Q df ----
+
+annual_q <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
+annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+interannual_q <- rowMeans(annual_q, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_q_pi <- quantile(interannual_q, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_q_mean <- mean(interannual_q, na.rm = T) # mean interannual flux
+interannual_q_variability <- sd(annual_q_mean, na.rm = T) # standard deviation of interannual flux per year
+
+q_df <- data.frame(year = c(complete_years, "interannual"), 
+                        q_mean = c(annual_q_mean, interannual_q_mean),
+                        q_variability = c(annual_flux_sd, interannual_q_variability), 
+                        q_pi_lower = c(annual_q_pi[1,], interannual_q_pi[1]), 
+                        q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
+                   group = c(rep("annual", nyears), "interannual"))
+
+# Plot -----
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggplot()+
+  geom_col(data = q_df, aes(x=year, y = q_mean, fill = group))+
+    geom_errorbar(data = q_df, aes(x = year, ymin = q_pi_lower, ymax = q_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(q_df, year == "interannual"), aes(x = year, ymin = q_mean - q_variability, ymax = q_mean + q_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Discharge (L/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+```
+
+### Specific flux
+
+```{r specific-doc-flux}
+total_sflux_df <- cbind(total_flux_df[,"year"], total_flux_df[,2:5] / bv, total_flux_df[,"group"]) %>% setNames(names(total_flux_df))
+#total_sflux_df <- rbind(annual_sflux_df, interannual_sflux_df)
+total_sflux_df$group <- c(rep("annual", nyears), "interannual")
+
+ggplot()+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
+    geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/km2/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggsave(here("figures","sflux_leze.svg"))
+
+knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
+
+### Variance decomposition
+
+Aïe aïe le flux est calculé autrement que pour les simples sommes ! 
+
+LOAD = sumQ * sum(load obs) / sum(q obs)
+
+log(load) = log(sumQ) + log(sum load obs) - log(sum q obs)
+
+log(load) = log(q1)+...+log(qtot)
+
+```{r variance-doc}
+## Variances par année
+
+list_var <- lapply(1:length(complete_years), function(idx){
+  
+lnQtot <- as.vector(log(sum_qtot[,idx]))
+lnloadobs <- as.vector(log(sum_loadobs[,idx]))
+lnQobs <- as.vector(log(sum_qobs[,idx]))
+
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
+
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
+
+cov_matrix <- cov(M, use = "pairwise.complete.obs") 
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF_direct <- var(rowSums(M))
+
+if(var_lnF_check != var_lnF_direct){warning("Attention : les variances ne correspondent pas")}
+
+return(cov_matrix)
+})
+
+var_flux_by_year <- lapply(list_var, function(i){
+  var_flux = sum(i)
+  setNames(var_flux, "var_lnF")}) %>% bind_rows(.id = "year")
+vars_by_year <- lapply(list_var, diag) %>% bind_rows(.id = "year") # variance des paramètres par année
+cov_by_year <- lapply(list_var, function(i){
+  vals <- i[upper.tri(i)]
+  setNames(as.list(vals), c("cov_loadQtot","cov_QobsQtot","cov_Qobsload"))}) %>% 
+  bind_rows(.id = "year") 
+
+annual_variances <- merge(var_flux_by_year, vars_by_year, by = "year") %>% merge(cov_by_year, by = "year")
+annual_variances$year <- complete_years
+
+
+# Variance interannuelle
+
+lnQtot <- as.vector(log(sum_qtot))
+lnloadobs <- as.vector(log(sum_loadobs))
+lnQobs <- as.vector(log(sum_qobs))
+
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
+
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
+
+cov_matrix <- cov(M, use = "pairwise.complete.obs") 
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF <- var(rowSums(M))
+
+if(var_lnF_check != var_lnF){warning("Attention : les variances ne correspondent pas")}
+
+
+# put results in df
+vars_interannual <- c(var_lnF, diag(cov_matrix)) # variance des paramètres par année
+cov_interannual <- cov_matrix[upper.tri(cov_matrix)] %>%
+  setNames(c("cov_loadQtot","cov_QobsQtot","cov_Qobsload")) 
+
+interannual_variances <- c(year = "Interrannuel", vars_interannual, cov_interannual)
+
+all_variances <- rbind(annual_variances, interannual_variances) %>% mutate(across(where(is.character) & !any_of("year"), as.numeric))
+
+
+
+variance_decomposition <- all_variances  %>% 
+  mutate(part_Qtot = Qtot/var_lnF, part_load = load/var_lnF, part_Qobs = Qobs/var_lnF, 
+         part_covloadQtot = 2*cov_loadQtot/var_lnF, 
+         part_covQobsQtot = 2*cov_QobsQtot/var_lnF, 
+         part_covQobsload = 2*cov_Qobsload/var_lnF, 
+         part_cov = part_covloadQtot + part_covQobsQtot + part_covQobsload,
+         check = part_Qtot+part_load+part_Qobs+part_covloadQtot+part_covQobsQtot+part_covQobsload)
+
+
+vd_long <- variance_decomposition %>%
+  select(year, part_Qtot, part_load, part_Qobs, part_cov) %>%
+  tidyr::pivot_longer(cols = c(part_Qtot, part_load, part_Qobs, part_cov),
+               names_to = "terme", values_to = "part")  %>%
+  mutate(terme = recode(terme,
+                         part_Qtot = "Variance Q annuel",
+                         part_load = "Variance flux instantané",
+                         part_Qobs = "Variance Q flux",
+                        part_cov = "Covariances"))
+
+ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
+  geom_col(position = "stack") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_fill_manual(values = c("Variance Q annuel" = "lightblue",
+                                "Variance flux instantané" = "indianred",
+                                "Variance Q flux" = "darkblue",
+                               "Covariances" = "darkred")) +
+  scale_y_continuous(labels = scales::percent, breaks = c(-0.40,-0.20,0,0.20,0.40,0.60,0.80,1.00,1.2,1.4)) +
+  labs(x = "Année", y = "Part de la variance du log-flux",
+       fill = "Terme",
+       title = "Décomposition de la variance du flux") +
+  theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))
+
+vd_long_abs <- variance_decomposition %>%
+  select(year, Qtot, load, Qobs, cov_loadQtot,cov_QobsQtot,cov_Qobsload) %>%
+  tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur")
+
+ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
+  geom_col(position = "dodge") +
+  geom_point(data = variance_decomposition, aes(x = year, y = var_lnF),
+             inherit.aes = FALSE, shape = 18, size = 3) +
+  scale_fill_manual(values = c("darkblue","lightblue","darkred","indianred","palegreen4","cornsilk3"))+
+   theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  scale_y_continuous(trans = "log", breaks = )+
+  labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
+
+```
+
+
+## Export DOC data
+
+```{r exporter-valeurs-doc-dans-csv-commun}
+
+library(readxl)
+library(writexl)
+
+
+rmd_id <- "leze"
+
+if(unit_flux == "ton"){
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+  nb_years = length(complete_years)
+)
+} else if(unit_flux == "kg"){
+  rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "DOC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+  nb_years = length(complete_years)
+  )
+}
+
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("resultats.xlsx"))) {
+  df_shared <- read_xlsx(here("resultats.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("resultats.xlsx"))
+```
+
+# POC
+
+## Explore data
+### Visualisation
+
+```{r plot-by-year-poc, fig.dim = c(10,8)}
+
+title <- expression(atop("Series of Q and POC by year"))
+
+plots <- ggarrange(
+ggplot(leze, aes(x = as.Date(commondate)))+
+  geom_point(aes(y = q_L.s, col = "Débit, L/s"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("lightblue"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "Débit, L/s", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none"),
+
+ggplot(leze, aes(x = as.Date(commondate)))+
+  geom_point(aes(y = poc_mg.L, col = "POC, mg.L"), alpha = 0.5)+
+  scale_x_date(labels = function(x) format(x, "%d-%b"), date_minor_breaks = "1 month", name = "")+
+  scale_color_manual(values = c("palegreen4"), name = "")+
+  facet_grid(rows = vars(year))+
+  labs(y = "POC, mg/L", col = "")+
+  theme_bw(base_size = 15)+
+  theme(legend.position = "none")
+)
+
+annotate_figure(plots, top = text_grob(title))
+
+```
+
+```{r poc-histograms}
+ggarrange(
+  ggplot(leze)+geom_histogram(aes(q_L.s),fill = "lightblue")+labs(x= "Débit, L/s", y = "")+theme_bw(),
+  ggplot(leze)+geom_histogram(aes(poc_mg.L), fill = "palegreen4")+labs(x= "POC, mg/L", y = "")+theme_bw(),
+  ggplot(leze)+geom_histogram(aes(log10(q_L.s)),fill = "lightblue")+labs(x= "Débit (log10), L/s", y = "")+theme_bw(),
+  ggplot(leze)+geom_histogram(aes(log(poc_mg.L)), fill = "palegreen4")+labs(x= "POC (log10), mg/L", y = "")+theme_bw()
+)
+```
+
+### Complete years
+
+```{r poc-complete-years}
+complete_years <- 2025
+leze_complete <- leze %>% filter(year %in% complete_years)
+```
+
+### Characteristics
+
+```{r poc-summary-data}
+summary_leze <- merge(
+leze %>% subset(!is.na(poc_mg.L)) %>% group_by(year) %>% summarise("Number of POC observations" = n(), "POC range, mg/L" = paste(round(quantile(poc_mg.L, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")),
+leze %>% subset(!is.na(q_L.s)) %>% group_by(year) %>% summarise("Number of Q observations" = n(), "Q range, L/s" = paste(round(quantile(q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / ")), by = "year", all = T) %>% 
+  merge(leze %>% group_by(year) %>% summarise("Number of days sampled" = length(unique(as.Date(DateHeure)))), by = "year", all = T) %>%
+  merge(leze %>% group_by(year) %>% summarise("Correlation POC/Q" = round(cor(poc_mg.L, q_L.s, use = "pairwise.complete.obs"),2)), by = "year", all = T) %>%
+  merge(leze %>% group_by(year) %>% summarise("Median sampling interval, min" = round(median(period, na.rm = T)/60,1)), by = "year", all = T) %>%
+  rbind(c("All years", 
+          dim(subset(leze, !is.na(poc_mg.L)))[1], 
+          paste(quantile(leze$poc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+          dim(subset(leze, !is.na(q_L.s)))[1], 
+          paste(round(quantile(leze$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+          length(unique(as.Date(leze$DateHeure))),
+          round(cor(leze$poc_mg.L, leze$q_L.s, use = "pairwise.complete.obs" ),2),
+          round(median(leze$period, na.rm = T)/60,1)
+           ))  %>%
+      rbind(c("Complete years", 
+            dim(subset(leze_complete, !is.na(poc_mg.L)))[1], 
+            paste(quantile(leze_complete$poc_mg.L, probs = c(0,0.5,1), na.rm = T), collapse = " / "), 
+            dim(subset(leze_complete, !is.na(q_L.s)))[1], 
+            paste(round(quantile(leze_complete$q_L.s, probs = c(0,0.5,1), na.rm = T),1), collapse = " / "), 
+            length(unique(as.Date(leze_complete$DateHeure))),
+            round(cor(leze_complete$poc_mg.L, leze_complete$q_L.s, use = "pairwise.complete.obs" ),2),
+            round(median(leze_complete$period, na.rm = T)/60,1)
+            )
+            ) %>%  mutate(`POCobs/Qobs` = round(as.numeric(`Number of POC observations`)/as.numeric(`Number of Q observations`),3)) 
+
+knitr::kable(summary_leze, caption = "Summary table of leze data") %>% kableExtra::kable_styling()
+
+```
+
+Moins de 0.10% de données POC par rapport aux données Q.
+Sur auradé, 10% POC/Q -> incertitude 25%. d'où vient le 25%???
+Grosse corrélation POC/Q mais seulement 9 points ???
+
+### Export summary
+
+```{r exporter-poc-summary}
+
+rmd_id <- "leze"
+
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "POC",
+  annees_debit = setdiff(unique(filter(summary_leze, !is.na(`Number of Q observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_debit = summary_leze[nrow(summary_leze) - 1, ] %>% select(`Number of Q observations`) %>% pull(),
+  frequence_debit = median(leze$period, na.rm = T),
+  range_debit = summary_leze[nrow(summary_leze) - 1, ] %>% select(`Q range, L/s`) %>% paste(),
+  unit_debit = "L/s",
+  annees_mes = NA,
+  nb_obs_mes = NA,
+  range_mes = NA,
+  annees_oc = setdiff(unique(filter(summary_leze, !is.na(`Number of POC observations`))$year), c("All years", "Complete years")) %>% paste(collapse = ", "),
+  nb_obs_oc = unique(leze$poc_timeinterval) %>% length(),
+  range_oc = summary_leze[nrow(summary_leze) - 1, ] %>% select(`POC range, mg/L`) %>% paste(),
+  complete_years = paste(complete_years, collapse = " , "),
+  type_oc = "ponctuel")
+  
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("summary.xlsx"))) {
+  df_shared <- read_xlsx(here("summary.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("summary.xlsx"))
+```
+
+### Check flux no u
+
+```{r flux-poc-direct}
+leze_direct <- leze_complete %>% mutate(f_poc = poc_mg.L*1e-9*q_L.s, load = f_poc*period)
+leze_direct$qobs <- with(leze_direct, ifelse(is.na(poc_mg.L), NA, q_L.s))
+
+annual_flux_direct <- leze_direct %>% group_by(year) %>% summarise(mean_period = mean(period, na.rm = T),
+                                                                    mean_q = mean(q_L.s * 1e-3, na.rm = T),
+                                                                    mean_qobs = mean(qobs, na.rm = T),
+                                                                    mean_poc = mean(poc_mg.L, na.rm = T), 
+                                                                    sum_loadobs = sum(load, na.rm = T), 
+                                                                    sum_qobs = sum(qobs, na.rm = T), 
+                                                                    sum_q = sum(q_L.s, na.rm = T)) %>%
+  mutate(annual_fpoc = sum_loadobs*sum_q/sum_qobs)
+
+annual_flux_direct %>% knitr::kable(caption = "Annual flux ton", digits = 5) %>% kable_styling()
+
+```
+
+## MES-POC relationship
+
+```{r mes-poc, eval = F}
+leze_poc <- leze %>% subset(!is.na(poc_percent))
+
+ggplot(leze_poc)+geom_point(aes(x = log(mes_mg.L), y = poc_percent))
+
+aspt_value <- leze_poc[order(leze_poc$mes_mg.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(leze_poc)[1]/10) %>% mean(na.rm = T) 
+aspt_value_sd <- leze_poc[order(leze_poc$mes_mg.L, decreasing = T),] %>% pull(poc_percent) %>% head(dim(leze_poc)[1]/10) %>% sd() 
+
+leze_poc$aspt <- aspt_value
+
+pocfit <- lm(log(poc_percent)~log(mes_mg.L), data = select(leze_poc, c(poc_percent, mes_mg.L)))
+
+summary(pocfit)
+
+
+library(nlme)
+
+# fit gnls
+pocfitg <- gnls(
+  poc_percent ~ a*mes_mg.L^b + aspt,
+  data = select(leze_poc, c(mes_mg.L, poc_percent, aspt)),
+  start = list(a = coef(pocfit)[[2]], b = coef(pocfit)[[1]]), # on utilise les valeurs de pocfit comme coefficients initiaux
+  weights = varPower(value = 1, form = ~ fitted(.)),
+  control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4)
+)
+
+# summary 
+summary(pocfitg) %>% print()
+
+# variance parameters
+theta <- as.numeric(coef(pocfitg$modelStruct$varStruct, unconstrained = F))
+sigma_gnls <- pocfitg$sigma
+
+# formula
+formula_pocfitg <- paste("GNLS:", round(coef(pocfitg)[1], 3), "x MES ^", round(coef(pocfitg)[2],3), "+", round(aspt_value, 3), sep = "")
+
+## model function 
+f <- function(x, a, b, aspt){
+  a * x ^ b + aspt
+}
+
+# prepare dataframe
+leze_gnls <- leze 
+
+na_lines <- which(is.na(leze_gnls$mes_mg.L)) # 0
+zero_lines <- which(leze_gnls$mes_mg.L == 0)
+fit_lines <- which(leze_gnls$mes_mg.L != 0 & !is.na(leze_gnls$mes_mg.L))
+
+leze_nas_gnls <- leze_gnls[fit_lines, ]
+leze_nas_gnls$aspt <- aspt_value # from nls fitting
+
+# predict POC pour mes > 0
+poc_fitted <- predict(pocfitg, newdata = leze_nas_gnls, na.action = na.pass)
+leze_gnls$poc_fitted <- NA_real_
+leze_gnls[fit_lines, ]$poc_fitted <- as.numeric(poc_fitted)
+leze_gnls[zero_lines, ]$poc_fitted <- 0
+leze_gnls[na_lines, ]$poc_fitted <- NA
+
+ggplot(leze_gnls)+geom_point(aes(x=mes_mg.L, y = poc_fitted))+
+  geom_point(aes(x=mes_mg.L, y = poc_percent, col = "measured"))+
+  labs(y = "POC %, fitted", x = "MES, g/L")+theme_bw()
+```
+
+```{r intervalles-de-confiance-coefficients-bootstrap, eval = F}
+n_boot <- 1000
+n_obs <- dim(leze_poc)[1]
+
+coefs_boot <- matrix(NA, nrow = n_boot, ncol = 2, dimnames = list(NULL, c("a","b")))
+                     
+
+for(i in seq_len(n_boot)){
+  
+  idx_boot <- sample(n_obs, replace = T)
+  df_boot <- leze_poc[idx_boot, c("mes_mg.L","poc_percent","aspt")]
+  
+  tryCatch(
+    {fit_init <- nls(
+      poc_percent ~ a * mes_mg.L^b + aspt,
+      data = df_boot,
+      start = coef(pocfitg))
+      # fit init is necessary to find the correct starting values for gnls. Otherwise, too much convergence result in extreme values in a and b
+
+      pocfit_bg <- gnls(
+      poc_percent~a*mes_mg.L^b+aspt,
+      data = df_boot,
+      start = coef(fit_init),
+      weights = varPower(form = ~fitted(.)),
+      control = gnlsControl(nlsTol = 1e-3, tolerance = 1e-4, maxIter = 200))
+      
+      coefs_boot[i,] <- coef(pocfit_bg)
+      }, 
+    error = function(e) NULL) 
+}
+
+# removes NA
+coefs_boot <- na.omit(coefs_boot)
+apply(coefs_boot, 2, quantile, probs = c(0.025, 0.975)) %>% knitr::kable() #ic coef
+ggplot(as.data.frame(coefs_boot))+
+  geom_point(aes(x = a, y = b))+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "none")
+
+# adds uncertainty around aspt
+coefs_boot <- cbind(coefs_boot, "aspt" = aspt_value)
+
+# compute POC
+fitted_boot <- apply(coefs_boot, 1, function(p){p["a"] * leze_poc$mes_mg.L^p["b"] + p["aspt"]}) # MC worlds in columns
+fitted_boot_ic <- apply(fitted_boot, 1, quantile, 
+                 probs = c(0.025, 0.5, 0.975), na.rm = TRUE) # prediction intervals
+fitted_boot_mean <- apply(fitted_boot, 1, mean) # meet bottstrapped valur
+
+# intergrates in leze
+poc_leze_boot_gnls <- leze_poc %>% mutate(poc_fitted = fitted_boot_mean, upr = fitted_boot_ic[3, ], lwr = fitted_boot_ic[1,])
+
+ggplot(poc_leze_boot_gnls)+
+  geom_point(aes(x=mes_mg.L, y = poc_percent, col = "measured", shape = "measured"))+ 
+  geom_point(aes(x=mes_mg.L, y = poc_fitted, col = "fitted", shape = "fitted"))+ 
+  geom_ribbon(aes(x = mes_mg.L, ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  scale_color_manual(values = c("darkblue", "lightblue"))+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC% measured and fitted vs MES measured",subtitle = "Confidence interval in grey")+
+  theme_minimal(base_size = 15)
+
+ggplot(poc_leze_boot_gnls, aes(x=poc_percent))+
+  geom_point(aes(y=poc_fitted), col = "darkblue")+ 
+  geom_errorbar(aes(ymin = lwr, ymax = upr), fill = "gray80", alpha = 0.5)+
+  geom_abline(slope = 1, intercept = 0, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "POC measured", y = "POC fitted", colour = "", shape = "", title = "POC fitted vs measured",subtitle = "Confidence interval in grey")+
+  theme_minimal(base_size = 15)
+```
+
+```{r pred-poc-gnls, eval = F}
+nrow_boot <- nrow(coefs_boot)
+nrow_leze <- nrow(leze)
+mes_u <- 0.5
+
+
+# MES matrix
+mes_meas <- matrix(leze$mes_mg.L, nrow = nrow_boot, ncol = nrow_leze, byrow = T) # repeats nrow_boot times the vector leze$mes_mg.L
+mes_noise <- matrix(rnorm(nrow_boot*nrow_leze, mean = 0, sd = mes_u), nrow = nrow_boot, ncol = nrow_leze) # 
+mes_mat <- mes_meas * (1 + mes_noise) # final value of q, with noise. 
+
+
+# Prediction matrix, no model noise
+mu_gnls <- f(mes_mat, coefs_boot[,"a"], coefs_boot[,"b"], coefs_boot[,"aspt"])
+
+# Prediction matrix, with noise
+noise_mat_gnls <- matrix(NA_real_, nrow = nrow_boot, ncol = nrow_leze)
+sigma_mat_gnls <- sigma_gnls * abs(mu_gnls)^theta # variance depends on predicted value
+
+noise_mat_gnls <- matrix(rnorm(nrow_boot*nrow_leze, mean = 0, sd = 1), nrow = nrow_boot, ncol = nrow_leze)
+noise_mat_gnls <- noise_mat_gnls*sigma_mat_gnls
+
+pred_gnls <- mu_gnls + noise_mat_gnls
+
+mes_mat_zeros <- which(mes_mat == 0)
+pred_gnls[mes_mat_zeros] <- 0
+pred_gnls <- pmin(pmax(pred_gnls, 0), 100) # clampe pred_nls pour éviter les intervalles de prédiction en dessous de zéro et au dessus de 100 (no case)
+
+# Prediction interval 
+pi <- t(apply(pred_gnls, 2, quantile, probs = c(0.025, 0.975), na.rm = T))
+colnames(pi) <- c("lower", "upper")
+
+# Mean bootstrap value
+boot_pred_gnls <- colMeans(pred_gnls, na.rm = T)
+
+## insert in leze
+leze <- leze %>% mutate(poc_boot_pred = boot_pred_gnls,
+                          poc_pred_lower = pi[,1],
+                          poc_pred_upper = pi[,2])
+
+# variances
+leze$poc_var_mean <- apply(mu_gnls, 2, var, na.rm = T) # variance of fit parameters + MES 
+leze$poc_var_tot <- apply(pred_gnls, 2, var, na.rm = T) # total variance per prediction, for prediction total uncertainty
+
+# plot
+ggplot(leze, aes(x = mes_mg.L))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5, size = 0.5)+
+  geom_point(aes(y = 118.6*mes_mg.L^(-1.29)+aspt_value, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+# plot
+ggplot(leze, aes(x = mes_mg.L))+
+  geom_line(aes(y = poc_pred_lower, ymax = poc_pred_upper), col = "gray50")+
+  geom_line(aes(y = poc_pred_upper), col = "gray50")+
+  geom_point(aes(y = poc_percent, col = "measured"), alpha = 0.5, size = 0.5)+
+  geom_point(aes(y = 118.6*mes_mg.L^(-1.29)+aspt_value, col = "fitted with all events"), size = 2)+
+  geom_point(aes(y = poc_boot_pred, col ="poc_boot_pred"), alpha = 0.5, size = 1)+
+  scale_color_manual(values = c("darkblue","gray50","lightblue"))+
+  geom_abline(slope = 0, intercept = aspt_value, col = "darkred")+
+  annotate(geom = "label", label = formula_pocfitg, x = Inf, y = Inf, hjust = 1.1, vjust = 1.1)+
+  labs(x = "MES, mg/L", y = "POC, %", colour = "", shape = "", title = "POC predicted from MES",subtitle = "Prediction interval in grey")+
+  scale_y_continuous(trans = "log")+
+  theme_minimal(base_size = 15)+
+  theme(legend.position = "bottom")
+
+```
+
+
+bootstrapping has very different results then direct fitting
+
+
+## Annual and interannual POC flux 
+
+On considère que l'erreur sur POC vient de la mesure par analyse. Pas de HF: prélèvements manuels ???
+
+Il y a plus de mesures de Q que de mesures de POC. On utilise l'équivalence sum(load)/sum(q) = sum(load obs)/sum(q obs).
+No
+
+```{r poc-uncertainties}
+nyears <- length(complete_years)
+
+q_u <- 0.1
+
+```
+
+### total flux
+
+```{r poc-flux-for-obs}
+leze_poc <- leze_complete %>% filter(!is.na(poc_mg.L)) %>% mutate(poc_percent_fitted = 118.6*mes_mg.L^(-1.29)+0.18, poc_fitted = mes_mg.L*poc_percent_fitted)
+
+  
+nrep <- 1000
+nobs <- dim(leze_poc)[1]
+
+poc_meas <- matrix(leze_poc$poc_fitted, nrow = nrep, ncol = nobs, byrow = T)
+poc_cv <- 3.3*poc_meas^(-0.6) # from all data available on 29/05/2026
+poc_random <- matrix(rnorm(nrep*nobs, mean = 0, sd = 1), nrow=nrep, ncol = nobs)
+poc_noise <- poc_cv*poc_random
+poc_mat <- poc_meas * (1 + poc_noise/100) # final value of poc, with noise in percent
+
+# Q matrix
+q_meas <- matrix(leze_poc$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+q_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+q_mat <- q_meas * (1 + q_noise) # final value of q, with noise
+
+# period 
+period_mat <- matrix(leze_poc$period, nrow = nrep, ncol = nobs, byrow = T) # in seconds
+
+# Flux per time step
+load_ton.s_mat <- poc_mat*1e-9*q_mat*600 # period fixed to 600 s -> otherwise outliers
+
+# Annual flux
+index_years <- lapply(complete_years, function(y){which(leze_poc$year == y)}) # list of indices corresponding to each year
+sum_loadobs <- sapply(index_years, function(idx){apply(load_ton.s_mat[,idx], 1, sum, na.rm = T)}) # 1 col per year
+
+sum_qobs <- sapply(index_years, function(idx){apply(q_mat[,idx], 1, sum, na.rm = T)})
+
+```
+
+```{r sum-q-tot-poc, cache.lazy = F}
+
+nrep <- 1000
+nobs <- dim(leze_complete)[1]
+
+# Q matrix
+qtot_meas <- matrix(leze_complete$q_L.s, nrow = nrep, ncol = nobs, byrow = T) # repeats nrow_boot times the vector q_L.s
+qtot_noise <- matrix(rnorm(nrep*nobs, mean = 0, sd = q_u), nrow = nrep, ncol = nobs) # creates a noise in percent (proportion), between 0 and 10%
+qtot_mat <- qtot_meas * (1 + qtot_noise) # final value of q, with noise
+
+
+index_years_tot <- lapply(complete_years, function(y){which(leze_complete$year == y)}) # list of indices corresponding to each year
+sum_qtot <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)})
+
+
+
+```
+
+```{r compute-poc-flux}
+annual_flux_ton.y <- sum_qtot*sum_loadobs/sum_qobs
+
+# add 25% uncertainty due to method
+flux_noise <- matrix(rnorm(nrep*length(complete_years), mean = 0, sd = 0.25), nrow = nrep, ncol = length(complete_years))
+
+annual_flux_ton.y <- annual_flux_ton.y * (1 + flux_noise)
+
+annual_flux_pi <- apply(annual_flux_ton.y, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_flux_mean <- colMeans(annual_flux_ton.y, na.rm = T) # mean annual flux per year. 1 vector
+annual_flux_sd <- apply(annual_flux_ton.y, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+
+annual_flux_df <- data.frame(year = complete_years, 
+                        annual_flux_mean = annual_flux_mean, 
+                        annual_flux_variability = annual_flux_sd, 
+                        annual_flux_pi_lower = annual_flux_pi[1,], 
+                        annual_flux_pi_upper = annual_flux_pi[3,])
+
+# Interannual flux 
+interannual_flux_ton.y <- rowMeans(annual_flux_ton.y, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_flux_pi <- quantile(interannual_flux_ton.y, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_flux_mean <- mean(interannual_flux_ton.y, na.rm = T) # mean interannual flux
+interannual_flux_variability <- sd(annual_flux_mean, na.rm = T) # standard deviation of interannual flux per year
+
+interannual_flux_df <- data.frame(year = "interannual", annual_flux_mean = interannual_flux_mean, 
+                                  annual_flux_variability = interannual_flux_variability,
+                        annual_flux_pi_lower = interannual_flux_pi[1], 
+                        annual_flux_pi_upper = interannual_flux_pi[3])
+
+total_flux_df <- rbind(annual_flux_df, interannual_flux_df)
+total_flux_df$group <- c(rep("annual", nyears), "interannual")
+
+# Q df ----
+
+annual_q <- sapply(index_years_tot, function(idx){apply(qtot_mat[,idx], 1, sum, na.rm = T)}) # sum of fluxes per year, for each iteration of the bootstrap. Result is a matrix with nrow_boot rows and 19 columns (1 per year)
+annual_q_pi <- apply(annual_q, 2, quantile, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval for annual fluxes, per year. 3 lignes, 19 columns
+annual_q_mean <- colMeans(annual_q, na.rm = T) # mean annual flux per year. 1 vector
+annual_q_sd <- apply(annual_q, 2, sd, na.rm = T) # standard deviation of annual flux per year. Is just an estimate of goodness of mean, not as good as than the confidence interval. 
+interannual_q <- rowMeans(annual_q, na.rm = T) # mean interannual flux per iteration of the bootstrap
+interannual_q_pi <- quantile(interannual_q, probs = c(0.025, 0.5, 0.975), na.rm = T) # prediction interval
+interannual_q_mean <- mean(interannual_q, na.rm = T) # mean interannual flux
+interannual_q_variability <- sd(annual_q_mean, na.rm = T) # standard deviation of interannual flux per year
+
+q_df <- data.frame(year = c(complete_years, "interannual"), 
+                        q_mean = c(annual_q_mean, interannual_q_mean),
+                        q_variability = c(annual_flux_sd, interannual_q_variability), 
+                        q_pi_lower = c(annual_q_pi[1,], interannual_q_pi[1]), 
+                        q_pi_upper = c(annual_q_pi[3,], interannual_q_pi[3]),
+                   group = c(rep("annual", nyears), "interannual"))
+
+# Plot -----
+ggplot()+
+  geom_col(data = total_flux_df, aes(x=year, y = annual_flux_mean, fill = group))+
+    geom_errorbar(data = total_flux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_flux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggplot()+
+  geom_col(data = q_df, aes(x=year, y = q_mean, fill = group))+
+    geom_errorbar(data = q_df, aes(x = year, ymin = q_pi_lower, ymax = q_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(q_df, year == "interannual"), aes(x = year, ymin = q_mean - q_variability, ymax = q_mean + q_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Discharge (L/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+knitr::kable(total_flux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+
+```
+
+### Specific flux
+
+```{r specific-poc-flux}
+total_sflux_df <- cbind(total_flux_df[,"year"], total_flux_df[,2:5] / bv, total_flux_df[,"group"]) %>% setNames(names(total_flux_df))
+#total_sflux_df <- rbind(annual_sflux_df, interannual_sflux_df)
+total_sflux_df$group <- c(rep("annual", nyears), "interannual")
+
+ggplot()+
+  geom_col(data = total_sflux_df, aes(x=year, y = annual_flux_mean, fill = group), width = 0.8)+
+    geom_errorbar(data = total_sflux_df, aes(x = year, ymin = annual_flux_pi_lower, ymax = annual_flux_pi_upper, col = "prediction interval"), width = 0.3, size = 0.8)+
+  geom_errorbar(data = filter(total_sflux_df, year == "interannual"), aes(x = year, ymin = annual_flux_mean - annual_flux_variability, ymax = annual_flux_mean + annual_flux_variability, col = "interannual variability"), width = 0.2, size = 0.8, linetype = 2)+
+  scale_fill_manual(values = c("annual" = "lightblue", "interannual" = "indianred"))+
+  scale_color_manual(values = c("prediction interval" = "darkblue", "interannual variability" = "darkred"), name = "")+
+   labs(x = "Year", y = "Flux (ton/km2/year)", fill = "")+
+  theme_minimal(base_size = 15)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+
+ggsave(here("figures","sflux_leze_poc.svg"))
+
+knitr::kable(total_sflux_df, digits = 2, row.names = F) %>% kableExtra::kable_styling()
+```
+
+
+### Variance decomposition
+
+Aïe aïe le flux est calculé autrement que pour les simples sommes ! 
+
+LOAD = sumQ * sum(load obs) / sum(q obs)
+
+log(load) = log(sumQ) + log(sum load obs) - log(sum q obs)
+
+log(load) = log(q1)+...+log(qtot)
+
+```{r variance-poc}
+## Variances par année
+
+list_var <- lapply(1:length(complete_years), function(idx){
+  
+lnQtot <- as.vector(log(sum_qtot[,idx]))
+lnloadobs <- as.vector(log(sum_loadobs[,idx]))
+lnQobs <- as.vector(log(sum_qobs[,idx]))
+
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
+
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
+
+cov_matrix <- cov(M, use = "pairwise.complete.obs") 
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF_direct <- var(rowSums(M))
+
+if(var_lnF_check != var_lnF_direct){warning("Attention : les variances ne correspondent pas")}
+
+return(cov_matrix)
+})
+
+var_flux_by_year <- lapply(list_var, function(i){
+  var_flux = sum(i)
+  setNames(var_flux, "var_lnF")}) %>% bind_rows(.id = "year")
+vars_by_year <- lapply(list_var, diag) %>% bind_rows(.id = "year") # variance des paramètres par année
+cov_by_year <- lapply(list_var, function(i){
+  vals <- i[upper.tri(i)]
+  setNames(as.list(vals), c("cov_loadQtot","cov_QobsQtot","cov_Qobsload"))}) %>% 
+  bind_rows(.id = "year") 
+
+annual_variances <- merge(var_flux_by_year, vars_by_year, by = "year") %>% merge(cov_by_year, by = "year")
+annual_variances$year <- complete_years
+
+
+# Variance interannuelle
+
+lnQtot <- as.vector(log(sum_qtot))
+lnloadobs <- as.vector(log(sum_loadobs))
+lnQobs <- as.vector(log(sum_qobs))
+
+mask <- complete.cases(lnQtot, lnloadobs, lnQobs)  &
+        is.finite(lnQtot) & is.finite(lnloadobs) & is.finite(lnQobs)
+
+M <- cbind(Qtot = lnQtot[mask], load = lnloadobs[mask], Qobs = lnQobs[mask])
+
+cov_matrix <- cov(M, use = "pairwise.complete.obs") 
+
+# verif
+var_lnF_check <- sum(cov_matrix)
+var_lnF <- var(rowSums(M))
+
+if(var_lnF_check != var_lnF){warning("Attention : les variances ne correspondent pas")}
+
+
+# put results in df
+vars_interannual <- c(var_lnF, diag(cov_matrix)) # variance des paramètres par année
+cov_interannual <- cov_matrix[upper.tri(cov_matrix)] %>%
+  setNames(c("cov_loadQtot","cov_QobsQtot","cov_Qobsload")) 
+
+interannual_variances <- c(year = "Interrannuel", vars_interannual, cov_interannual)
+
+all_variances <- rbind(annual_variances, interannual_variances) %>% mutate(across(where(is.character) & !any_of("year"), as.numeric))
+
+
+
+variance_decomposition <- all_variances  %>% 
+  mutate(part_Qtot = Qtot/var_lnF, part_load = load/var_lnF, part_Qobs = Qobs/var_lnF, 
+         part_covloadQtot = 2*cov_loadQtot/var_lnF, 
+         part_covQobsQtot = 2*cov_QobsQtot/var_lnF, 
+         part_covQobsload = 2*cov_Qobsload/var_lnF, 
+         part_cov = part_covloadQtot + part_covQobsQtot + part_covQobsload,
+         check = part_Qtot+part_load+part_Qobs+part_covloadQtot+part_covQobsQtot+part_covQobsload)
+
+
+vd_long <- variance_decomposition %>%
+  select(year, part_Qtot, part_load, part_Qobs, part_cov) %>%
+  tidyr::pivot_longer(cols = c(part_Qtot, part_load, part_Qobs, part_cov),
+               names_to = "terme", values_to = "part")  %>%
+  mutate(terme = recode(terme,
+                         part_Qtot = "Variance Q annuel",
+                         part_load = "Variance flux instantané",
+                         part_Qobs = "Variance Q flux",
+                        part_cov = "Covariances"))
+
+ggplot(vd_long, aes(x = year, y = part, fill = terme)) +
+  geom_col(position = "stack") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_fill_manual(values = c("Variance Q annuel" = "lightblue",
+                                "Variance flux instantané" = "indianred",
+                                "Variance Q flux" = "darkblue",
+                               "Covariances" = "darkred")) +
+  scale_y_continuous(labels = scales::percent, breaks = c(-0.40,-0.20,0,0.20,0.40,0.60,0.80,1.00,1.2,1.4)) +
+  labs(x = "Année", y = "Part de la variance du log-flux",
+       fill = "Terme",
+       title = "Décomposition de la variance du flux") +
+  theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))
+
+vd_long_abs <- variance_decomposition %>%
+  select(year, Qtot, load, Qobs, cov_loadQtot,cov_QobsQtot,cov_Qobsload) %>%
+  tidyr::pivot_longer(cols = -year, names_to = "terme", values_to = "valeur")
+
+ggplot(vd_long_abs, aes(x = year, y = valeur, fill = terme)) +
+  geom_col(position = "dodge") +
+  geom_point(data = variance_decomposition, aes(x = year, y = var_lnF),
+             inherit.aes = FALSE, shape = 18, size = 3) +
+  scale_fill_manual(values = c("darkblue","lightblue","darkred","indianred","palegreen4","cornsilk3"))+
+   theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, vjust = 0.5))+
+  scale_y_continuous(trans = "log", breaks = )+
+  labs(y = "Variance (échelle log)", title = "Termes de la décomposition (valeurs absolues)")
+
+```
+
+
+## Export POC data
+
+```{r exporter-valeurs-poc-dans-csv-commun}
+
+library(readxl)
+library(writexl)
+
+
+rmd_id <- "leze"
+
+if(unit_flux == "ton"){
+rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "POC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"],
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"],
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"],
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"],
+  nb_years = length(complete_years)
+)
+} else if(unit_flux == "kg"){
+  rmd_values <- data.frame(
+  rmd = rmd_id,
+  carbon  = "POC",
+  flux_ton = total_flux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_sd = total_flux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_pil = total_flux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_piu = total_flux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+    flux_ton_km2 = total_sflux_df$annual_flux_mean[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_sd = total_sflux_df$annual_flux_variability[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_pil = total_sflux_df$annual_flux_pi_lower[total_flux_df$year == "interannual"]*1e-3,
+   flux_ton_km2_piu = total_sflux_df$annual_flux_pi_upper[total_flux_df$year == "interannual"]*1e-3,
+  nb_years = length(complete_years)
+  )
+}
+
+
+# Lire le fichier existant ou créer un dataframe vide
+if (file.exists(here("resultats.xlsx"))) {
+  df_shared <- read_xlsx(here("resultats.xlsx"))
+} else {
+  df_shared <- data.frame()
+}
+
+# Mettre à jour la ligne du Rmd ou l'ajouter si absente
+if (rmd_id %in% df_shared$rmd) {
+  df_shared[df_shared$rmd == rmd_id, ] <- rmd_values  # mise à jour
+} else {
+  df_shared <- rbind(df_shared, rmd_values)            # ajout
+}
+
+
+
+# Réécrire
+write_xlsx(df_shared, here("resultats.xlsx"))
+```
+
